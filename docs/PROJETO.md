@@ -245,7 +245,7 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 
 | Métrica | Definição |
 |---|---|
-| **P/VP em t** | `preco_em_t / vp_vigente(data_entrega <= t)` |
+| **P/VP em t** | `preco_em_t / vp_vigente(data_entrega <= t)` — VP do último relatório CVM entregue antes de t; não ajustado entre relatórios (dividendos pagos reduzem o VP, mas rendimentos dos títulos compensam parcialmente — ajuste líquido indeterminado) |
 | **Percentil P/VP rolling** | Posição do P/VP atual na distribuição da janela até t−1 (252d, 504d, 756d) |
 | **DY N-meses** (12/24/36) | Soma dividendos com data-com em `[t−N meses, t]` / preço médio aritmético no mesmo intervalo |
 | **DY Gap** | `DY 12m − CDI acumulado 12m` (configurável em YAML) |
