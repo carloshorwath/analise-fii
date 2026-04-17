@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.offsets import BDay
 
 
 def make_splits(
@@ -42,15 +43,20 @@ def make_splits(
     val_df = df.iloc[n_train : n_train + n_val].copy()
     test_df = df.iloc[n_train + n_val : n_train + n_val + n_test].copy()
 
-    gap = timedelta(days=gap_days)
+    gap_bday = BDay(30)
 
     train_end = train_df["data_com"].max()
     val_start_raw = val_df["data_com"].min()
     val_end = val_df["data_com"].max()
     test_start_raw = test_df["data_com"].min()
 
-    val_df = val_df[val_df["data_com"] >= train_end + gap].copy()
-    test_df = test_df[test_df["data_com"] >= val_df["data_com"].max() + gap].copy() if len(val_df) > 0 else pd.DataFrame(columns=events.columns)
+    train_end_ts = pd.Timestamp(train_end)
+    val_df = val_df[val_df["data_com"] >= (train_end_ts + gap_bday).date()].copy()
+    if len(val_df) > 0:
+        val_end_ts = pd.Timestamp(val_df["data_com"].max())
+        test_df = test_df[test_df["data_com"] >= (val_end_ts + gap_bday).date()].copy()
+    else:
+        test_df = pd.DataFrame(columns=events.columns)
 
     val_start = val_df["data_com"].min() if len(val_df) > 0 else None
     test_start = test_df["data_com"].min() if len(test_df) > 0 else None
