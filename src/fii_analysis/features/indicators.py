@@ -37,31 +37,28 @@ def get_vp_point_in_time(cnpj: str, ticker: str, data: date, session) -> dict | 
     cotas = int(rel.cotas_emitidas) if rel.cotas_emitidas is not None else None
     data_ref = rel.data_referencia
 
+    if pl is None or cotas is None:
+        return {
+            "vp_relatorio": vp_relatorio,
+            "pl_ajustado": None,
+            "vp_ajustado": vp_relatorio,
+            "dividendos_subtraidos": 0,
+            "valor_subtraido": 0.0,
+        }
+
     divs = session.execute(
         select(Dividendo.valor_cota)
         .where(
             Dividendo.ticker == ticker,
             Dividendo.data_com > data_ref,
-            Dividendo.data_com < data,
+            Dividendo.data_com <= data,
             Dividendo.valor_cota.isnot(None),
         )
     ).scalars().all()
 
-    soma_div_cota = sum(float(v) for v in divs)
-
-    if pl is None or cotas is None:
-        vp_ajustado = vp_relatorio - soma_div_cota
-        return {
-            "vp_relatorio": vp_relatorio,
-            "pl_ajustado": None,
-            "vp_ajustado": vp_ajustado,
-            "dividendos_subtraidos": len(divs),
-            "valor_subtraido": soma_div_cota,
-        }
-
-    valor_subtraido = soma_div_cota * cotas
+    valor_subtraido = sum(float(v) * cotas for v in divs)
     pl_ajustado = pl - valor_subtraido
-    vp_ajustado = pl_ajustado / cotas if cotas > 0 else vp_relatorio - soma_div_cota
+    vp_ajustado = pl_ajustado / cotas if cotas > 0 else vp_relatorio
 
     return {
         "vp_relatorio": vp_relatorio,
