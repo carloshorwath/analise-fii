@@ -42,13 +42,23 @@ Funções auxiliares: `get_engine()`, `get_session()`, `create_tables()`.
 |---|---|
 | `features/dividend_window.py` | **Implementado** — `get_dividend_windows()` (janela ±10 pregões com retornos) e `get_abnormal_returns()` (subtrai benchmark). |
 | `features/indicators.py` | **Implementado** — `get_pvp()` (point-in-time via `data_entrega`), `get_dy_trailing()`, `get_pvp_serie()`, `get_dy_serie()`. |
+| `features/valuation.py` | **Implementado** — `get_pvp_percentil_rolling()`, `get_dy_n_meses()`, `get_dy_gap()`. |
+| `features/portfolio.py` | **Implementado** — panorama da carteira, alocacao, retorno vs IFIX, indice Herfindahl. |
+| `features/saude.py` | **Implementado** — tendencia PL, flag destruicao capital, analise emissoes. |
+| `features/composicao.py` | **Implementado** — classificacao Tijolo/Papel/Hibrido com base em ativo_passivo CVM. |
+| `features/radar.py` | **Implementado** — matriz booleana de criterios (sem score numerico ponderado). |
+| `evaluation/panorama.py` | **Implementado** — rich.Table: render carteira, calendario de dividendos. |
+| `evaluation/alertas.py` | **Implementado** — alertas diarios em Markdown + terminal. |
+| `evaluation/radar.py` | **Implementado** — render da matriz booleana do radar. |
+| `evaluation/reporter.py` | **Implementado** — `print_report()` com P/VP, DY, event study, testes estatísticos. |
 | `models/statistical.py` | **Implementado** — `event_study()` (CAR), `test_pre_vs_post()` (t-test pareado + Mann-Whitney), `test_day0_return()` (t-test 1 amostra). |
 | `models/walk_forward.py` | **Implementado** — `make_splits()` (split temporal 60/20/20 com gap), `validate_no_leakage()` (detecta sobreposição), `print_splits_summary()`. |
 | `models/critic.py` | **Implementado** — `shuffle_test()` (permutação de sinais), `placebo_test()` (datas aleatórias), `subperiod_stability()` (1ª vs 2ª metade), `run_critic()` (orchestrador com veredito). |
 | `models/strategy.py` | **Implementado** — `simulate_strategy()` (dividend capture com preço ajustado), `compute_risk_metrics()` (Sharpe, Sortino, drawdown, perdas consecutivas), `optimize_strategy()` (grid search), `buy_and_hold_return()`, `print_strategy_report()`. |
-| `evaluation/reporter.py` | **Implementado** — `print_report()` com P/VP, DY, event study, testes estatísticos. |
 | `mcp_server/server.py` | **Implementado** — MCP com 4 tools: `validate_split`, `detect_leakage`, `check_window_overlap`, `summary_report`. |
 | `config.py` | **Implementado** — Tickers (CPTS11, CPSH11, GARE11, HSRE11, KNIP11), períodos treino/teste, ranges de otimização, custos, IR. |
+| `config_yaml.py` | **Implementado** — loader do config.yaml (thresholds e janelas runtime). |
+| `cli.py` | **Implementado** — CLI typer com comandos: panorama, fii, carteira, calendario, radar, alertas. |
 
 ## 5. Testes
 
@@ -61,7 +71,17 @@ Não existe diretório `tests/` nem arquivos de teste.
 - **.env** — não existe no projeto (token brapi carregado de `C:\Modelos-AI\Brapi\.env` externo).
 - **docs/** — `PROJETO.md`, `PLANO_EXPANSAO.md`, `PLANO_EXPANSAO_V2.md`.
 
-## 7. Dados coletados (fii_data.db)
+## 7. CLI (cli.py)
+
+Comandos do typer CLI disponíveis:
+- `panorama`: Panorama geral do mercado de FIIs
+- `fii`: Análise detalhada de um FII específico
+- `carteira`: Posições da carteira, alocação e retorno vs IFIX
+- `calendario`: Próximos dividendos (data com, data ex, pagamento)
+- `radar`: Matriz de FIIs baseada em critérios booleanos
+- `alertas`: Alertas diários com base em thresholds
+
+## 8. Dados coletados (fii_data.db)
 
 Banco existe com **8.771 registros** no total:
 
