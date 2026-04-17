@@ -1,0 +1,10 @@
+piso_liquidez_21d: 500000.0
+cdi_anual_pct: 10.5
+janelas_percentil:
+  - 252
+  - 504
+  - 756
+janela_dy_meses:
+  - 12
+  - 24
+  - 36
