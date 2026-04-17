@@ -251,6 +251,26 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 | **DY Gap** | `DY 12m − CDI acumulado 12m` (configurável em YAML) |
 | **Percentil DY Gap** | Mesma regra rolling até t−1 |
 
+### 5.1.1 VP e PL Ajustado (point-in-time com dividendos)
+
+O VP reportado pela CVM refere-se ao fim do mês da `data_referencia`. Entre relatórios, o fundo distribui dividendos que reduzem o patrimônio real. O sistema corrige isso via `get_vp_point_in_time()`:
+
+```
+PL_ajustado(t) = PL_relatório
+                 − Σ ( valor_cota × cotas_emitidas )
+                   para cada dividendo com data_com > data_referencia AND data_com ≤ t
+
+VP_ajustado(t) = PL_ajustado(t) / cotas_emitidas
+```
+
+**Restrições anti-lookahead (obrigatórias):**
+- Apenas dividendos com `data_com ≤ t` são subtraídos
+- `cotas_emitidas` vem do mesmo relatório (point-in-time)
+- `PL_ajustado` **não** captura valorização/desvalorização dos ativos entre relatórios — limitação aceita e documentada
+
+> Implementação: `get_vp_point_in_time()` em `features/indicators.py`
+> Retorna: `vp_relatorio`, `pl_ajustado`, `vp_ajustado`, `dividendos_subtraidos`, `valor_subtraido`
+
 ### 5.2 Saúde financeira
 
 | Métrica | Definição |
