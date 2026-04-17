@@ -12,63 +12,6 @@ def _get_cnpj(ticker: str, session) -> str | None:
     ).scalar_one_or_none()
 
 
-# VP/PL ajustado: subtrai dividendos pagos apos data_referencia do relatorio e antes de t (point-in-time)
-def get_vp_point_in_time(cnpj: str, ticker: str, data: date, session) -> dict | None:
-    rel = session.execute(
-        select(
-            RelatorioMensal.data_referencia,
-            RelatorioMensal.vp_por_cota,
-            RelatorioMensal.patrimonio_liq,
-            RelatorioMensal.cotas_emitidas,
-        )
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.data_entrega <= data,
-            RelatorioMensal.vp_por_cota.isnot(None),
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(1)
-    ).first()
-    if rel is None:
-        return None
-
-    vp_relatorio = float(rel.vp_por_cota)
-    pl = float(rel.patrimonio_liq) if rel.patrimonio_liq is not None else None
-    cotas = int(rel.cotas_emitidas) if rel.cotas_emitidas is not None else None
-    data_ref = rel.data_referencia
-
-    if pl is None or cotas is None:
-        return {
-            "vp_relatorio": vp_relatorio,
-            "pl_ajustado": None,
-            "vp_ajustado": vp_relatorio,
-            "dividendos_subtraidos": 0,
-            "valor_subtraido": 0.0,
-        }
-
-    divs = session.execute(
-        select(Dividendo.valor_cota)
-        .where(
-            Dividendo.ticker == ticker,
-            Dividendo.data_com > data_ref,
-            Dividendo.data_com <= data,
-            Dividendo.valor_cota.isnot(None),
-        )
-    ).scalars().all()
-
-    valor_subtraido = sum(float(v) * cotas for v in divs)
-    pl_ajustado = pl - valor_subtraido
-    vp_ajustado = pl_ajustado / cotas if cotas > 0 else vp_relatorio
-
-    return {
-        "vp_relatorio": vp_relatorio,
-        "pl_ajustado": pl_ajustado,
-        "vp_ajustado": vp_ajustado,
-        "dividendos_subtraidos": len(divs),
-        "valor_subtraido": valor_subtraido,
-    }
-
-
 def get_pvp(ticker: str, data: date, session) -> float | None:
     preco_row = session.execute(
         select(PrecoDiario.fechamento).where(
@@ -83,11 +26,16 @@ def get_pvp(ticker: str, data: date, session) -> float | None:
     if cnpj is None:
         return None
 
-    vp_info = get_vp_point_in_time(cnpj, ticker, data, session)
-    if vp_info is None:
-        return None
-
-    vp = vp_info["vp_ajustado"]
+    vp = session.execute(
+        select(RelatorioMensal.vp_por_cota)
+        .where(
+            RelatorioMensal.cnpj == cnpj,
+            RelatorioMensal.data_entrega <= data,
+            RelatorioMensal.vp_por_cota.isnot(None),
+        )
+        .order_by(RelatorioMensal.data_referencia.desc())
+        .limit(1)
+    ).scalar_one_or_none()
     if vp is None:
         return None
 
@@ -136,8 +84,6 @@ def get_pvp_serie(ticker: str, session) -> pd.DataFrame:
             RelatorioMensal.data_referencia,
             RelatorioMensal.data_entrega,
             RelatorioMensal.vp_por_cota,
-            RelatorioMensal.patrimonio_liq,
-            RelatorioMensal.cotas_emitidas,
         )
         .where(
             RelatorioMensal.cnpj == cnpj,
@@ -147,53 +93,18 @@ def get_pvp_serie(ticker: str, session) -> pd.DataFrame:
         .order_by(RelatorioMensal.data_entrega.asc())
     ).all()
 
-    rel_ordenados = [
-        {
-            "data_ref": r.data_referencia,
-            "data_entrega": r.data_entrega,
-            "vp": float(r.vp_por_cota),
-            "pl": float(r.patrimonio_liq) if r.patrimonio_liq is not None else None,
-            "cotas": int(r.cotas_emitidas) if r.cotas_emitidas is not None else None,
-        }
-        for r in relatorios
-    ]
-
-    divs = session.execute(
-        select(Dividendo.data_com, Dividendo.valor_cota)
-        .where(
-            Dividendo.ticker == ticker,
-            Dividendo.valor_cota.isnot(None),
-        )
-        .order_by(Dividendo.data_com.asc())
-    ).all()
-    div_dates = [d.data_com for d in divs]
-    div_vals = [float(d.valor_cota) for d in divs]
+    vp_por_entrega = [(r.data_entrega, float(r.vp_por_cota)) for r in relatorios]
 
     rows = []
     for d, fech in precos:
         fech_f = float(fech) if fech is not None else None
         vp_vigente = None
-        rel_ativo = None
-        for r in reversed(rel_ordenados):
-            if r["data_entrega"] <= d:
-                vp_vigente = r["vp"]
-                rel_ativo = r
+        for entrega, vp_val in reversed(vp_por_entrega):
+            if entrega <= d:
+                vp_vigente = vp_val
                 break
-        if vp_vigente is not None and rel_ativo is not None and rel_ativo["pl"] is not None and rel_ativo["cotas"] is not None:
-            data_ref = rel_ativo["data_ref"]
-            cotas = rel_ativo["cotas"]
-            pl = rel_ativo["pl"]
-            valor_sub = sum(
-                div_vals[i] * cotas
-                for i, dd in enumerate(div_dates)
-                if data_ref < dd <= d
-            )
-            pl_ajustado = pl - valor_sub
-            vp_usado = pl_ajustado / cotas if cotas > 0 else vp_vigente
-        else:
-            vp_usado = vp_vigente
-        pvp = fech_f / vp_usado if (fech_f is not None and vp_usado is not None) else None
-        rows.append({"data": d, "fechamento": fech_f, "vp_por_cota": vp_usado, "pvp": pvp})
+        pvp = fech_f / vp_vigente if (fech_f is not None and vp_vigente is not None) else None
+        rows.append({"data": d, "fechamento": fech_f, "vp_por_cota": vp_vigente, "pvp": pvp})
 
     return pd.DataFrame(rows)
 
