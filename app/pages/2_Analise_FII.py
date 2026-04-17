@@ -32,6 +32,7 @@ from app.components.data_loader import (
     load_ultimo_preco,
 )
 from app.components.tables import format_currency, format_pct, format_number
+from app.state import render_footer
 
 st.set_page_config(page_title="Analise FII", page_icon="magnifying_glass", layout="wide")
 st.title("Analise por FII")
@@ -165,3 +166,5 @@ col_r4.metric("Liquidez OK", f"{'PASSOU' if vol_medio and vol_medio >= piso else
 preco_info = load_ultimo_preco(ticker)
 if preco_info:
     st.caption(f"Ultimo preco: {preco_info['data']} | Coletado em: {preco_info.get('coletado_em', 'n/d')}")
+
+render_footer()

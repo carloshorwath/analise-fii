@@ -11,6 +11,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from app.components.data_loader import load_panorama, load_radar, load_tickers_ativos
 from app.components.tables import render_panorama_table
+from app.state import render_footer
 
 st.set_page_config(page_title="Panorama", page_icon="bar_chart", layout="wide")
 st.title("Panorama Geral")
@@ -58,5 +59,7 @@ if not df.empty:
     coletado = df.iloc[0] if not df.empty else None
     if coletado is not None:
         st.caption("Dados calculados point-in-time. Atualize precos via CLI: `fii update-prices`")
-else:
-    st.info("Nenhum dado disponivel. Execute os scripts de ingestao primeiro.")
+    else:
+        st.info("Nenhum dado disponivel. Execute os scripts de ingestao primeiro.")
+
+render_footer()

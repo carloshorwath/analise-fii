@@ -12,6 +12,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from app.components.charts import radar_heatmap
 from app.components.data_loader import load_radar
 from app.components.tables import render_radar_matriz
+from app.state import render_footer
 
 st.set_page_config(page_title="Radar", page_icon="satellite", layout="wide")
 st.title("Radar — Matriz Booleana")
@@ -55,3 +56,5 @@ st.markdown("---")
 
 csv = df.to_csv(index=False).encode("utf-8")
 st.download_button("Exportar CSV", csv, "radar_fii.csv", "text/csv", key="download_csv")
+
+render_footer()

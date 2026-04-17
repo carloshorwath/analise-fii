@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from app.state import init_session_state
+from app.state import init_session_state, render_footer
 from src.fii_analysis.data.database import create_tables
 
 st.set_page_config(
@@ -25,3 +25,4 @@ create_tables()
 st.title("FII Analysis Dashboard")
 st.markdown("Analise estatistica de FIIs — precos, valuation, saude, event study.")
 st.markdown("Use o menu lateral para navegar entre as paginas.")
+render_footer()

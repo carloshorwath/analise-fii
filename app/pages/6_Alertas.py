@@ -10,6 +10,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from src.fii_analysis.evaluation.alertas import gerar_alertas_diarios, ALERTAS_DIR
+from app.state import render_footer
 
 st.set_page_config(page_title="Alertas", page_icon="bell", layout="wide")
 st.title("Alertas Diarios")
@@ -48,3 +49,5 @@ if selected_path.exists():
     st.markdown(content)
 else:
     st.warning("Arquivo nao encontrado.")
+
+render_footer()

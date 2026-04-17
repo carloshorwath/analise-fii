@@ -20,6 +20,7 @@ from app.components.data_loader import (
     save_carteira_posicao,
 )
 from app.components.tables import format_currency
+from app.state import render_footer
 from src.fii_analysis.data.database import create_tables
 from src.fii_analysis.features.portfolio import herfindahl
 
@@ -134,3 +135,5 @@ else:
                 seg_map[r["ticker"]] = r.get("segmento", "n/d")
         consol["segmento"] = consol["ticker"].map(seg_map).fillna("n/d")
         st.plotly_chart(carteira_segmento_pie(consol), use_container_width=True)
+
+render_footer()

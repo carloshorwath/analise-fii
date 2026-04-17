@@ -11,6 +11,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from app.components.charts import car_plot
 from app.components.data_loader import load_tickers_ativos
+from app.state import render_footer
 from src.fii_analysis.data.database import get_session
 from src.fii_analysis.features.dividend_window import get_dividend_windows
 from src.fii_analysis.models.critic import shuffle_test, placebo_test, subperiod_stability
@@ -34,7 +35,9 @@ if st.button("Rodar Event Study", type="primary"):
 
         if windows.empty:
             st.error("Nenhuma janela de dividendos encontrada para este ticker.")
-            session.close()
+        session.close()
+
+render_footer()
             st.stop()
 
         st.success(f"{windows['data_com'].nunique()} eventos encontrados.")
@@ -146,3 +149,5 @@ if st.button("Rodar Event Study", type="primary"):
                 st.warning("Um ou mais testes do CriticAgent falharam. O padrao pode ser espurio ou instavel.")
 
         session.close()
+
+render_footer()
