@@ -33,6 +33,17 @@ st.dataframe(display, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
+saude_motivos = []
+for _, row in df.iterrows():
+    if not row.get("saude_ok", True) and row.get("saude_motivo"):
+        saude_motivos.append(f"**{row['ticker']}**: {row['saude_motivo']}")
+if saude_motivos:
+    st.subheader("Motivos de falha na saude")
+    for m in saude_motivos:
+        st.markdown(f"- {m}")
+
+st.markdown("---")
+
 with st.expander("Filtro: P/VP Baixo (percentil < 30)"):
     st.markdown("**O que significa:** O P/VP do FII esta no percentil historico mais baixo (abaixo de 30%), "
                 "sugerindo que pode estar negociando abaixo do seu valor patrimonial historico. "

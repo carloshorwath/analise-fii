@@ -58,7 +58,49 @@ def render_panorama_table(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_radar_matriz(df: pd.DataFrame) -> pd.DataFrame:
     display = df.copy()
-    for col in ["pvp_baixo", "dy_gap_alto", "saude_ok", "liquidez_ok"]:
-        if col in display.columns:
-            display[col] = display[col].apply(lambda x: "PASSOU" if x else "FALHOU")
+
+    def _fmt_pvp_cell(row):
+        if row["pvp_baixo"]:
+            val = f'{row["pvp_atual"]:.2f}' if row.get("pvp_atual") is not None else "n/d"
+            pct = f'p{row["pvp_percentil"]:.0f}%' if row.get("pvp_percentil") is not None else ""
+            return f"PASSOU ({val} | {pct})"
+        val = f'{row["pvp_atual"]:.2f}' if row.get("pvp_atual") is not None else "n/d"
+        pct = f'p{row["pvp_percentil"]:.0f}%' if row.get("pvp_percentil") is not None else ""
+        return f"FALHOU ({val} | {pct})"
+
+    def _fmt_dygap_cell(row):
+        if row["dy_gap_alto"]:
+            val = f'{row["dy_gap_valor"]:.2%}' if row.get("dy_gap_valor") is not None else "n/d"
+            pct = f'p{row["dy_gap_percentil"]:.0f}%' if row.get("dy_gap_percentil") is not None else ""
+            return f"PASSOU ({val} | {pct})"
+        val = f'{row["dy_gap_valor"]:.2%}' if row.get("dy_gap_valor") is not None else "n/d"
+        pct = f'p{row["dy_gap_percentil"]:.0f}%' if row.get("dy_gap_percentil") is not None else ""
+        return f"FALHOU ({val} | {pct})"
+
+    def _fmt_saude_cell(row):
+        motivo = row.get("saude_motivo", "")
+        if row["saude_ok"]:
+            return f"PASSOU (OK)"
+        return f"FALHOU ({motivo})"
+
+    def _fmt_liquidez_cell(row):
+        vol = row.get("volume_21d")
+        if row["liquidez_ok"]:
+            vol_s = f'R$ {vol:,.0f}' if vol is not None else "n/d"
+            return f"PASSOU ({vol_s})"
+        vol_s = f'R$ {vol:,.0f}' if vol is not None else "n/d"
+        return f"FALHOU ({vol_s})"
+
+    if "pvp_baixo" in display.columns:
+        display["pvp_baixo"] = display.apply(_fmt_pvp_cell, axis=1)
+    if "dy_gap_alto" in display.columns:
+        display["dy_gap_alto"] = display.apply(_fmt_dygap_cell, axis=1)
+    if "saude_ok" in display.columns:
+        display["saude_ok"] = display.apply(_fmt_saude_cell, axis=1)
+    if "liquidez_ok" in display.columns:
+        display["liquidez_ok"] = display.apply(_fmt_liquidez_cell, axis=1)
+
+    drop_cols = [c for c in ["pvp_atual", "pvp_percentil", "dy_gap_valor", "dy_gap_percentil",
+                             "volume_21d", "saude_motivo"] if c in display.columns]
+    display = display.drop(columns=drop_cols)
     return display
