@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gemini": {
+      "command": "gemini",
+      "args": ["--mcp"],
+      "env": {}
+    }
+  }
+}
