@@ -31,8 +31,10 @@ from src.fii_analysis.features.data_loader import (
     get_dy_gap_anterior,
     get_historico_pl,
     get_info_ticker,
+    get_proximas_datas_com,
     get_pvp_anterior,
     get_serie_preco_volume,
+    get_ultimo_preco,
     get_volume_medio_21d_ticker,
     resolve_periodo,
 )
@@ -191,7 +193,7 @@ with col_s1:
 
 with col_s2:
     with get_session_ctx() as session:
-        pl_df = get_historico_pl(ticker, 24, session)
+        pl_df = get_historico_pl(ticker, session, 24)
     st.plotly_chart(pl_trend_chart(pl_df, ticker), use_container_width=True)
 
 st.markdown("---")
@@ -236,7 +238,7 @@ st.markdown("---")
 st.header("5. Filtros Radar")
 with get_session_ctx() as session:
     pvp_pct, jan_radar = get_pvp_percentil(ticker, ultimo, 504, session) if ultimo else (None, 0)
-    dy_gap_pct = get_dy_gap_percentil(ticker, ultimo, 504, session) if ultimo else None
+    dy_gap_pct = get_dy_gap_percentil(ticker, ultimo, get_threshold("dy_janela_pregoes", 252), session) if ultimo else None
 
 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
 pvp_thr = get_threshold("pvp_percentil_barato", 30)
@@ -251,7 +253,6 @@ piso = get_piso_liquidez()
 col_r4.metric("Liquidez OK", f"{'PASSOU' if vol_medio and vol_medio >= piso else 'FALHOU'}")
 
 with get_session_ctx() as session:
-    from src.fii_analysis.features.data_loader import get_ultimo_preco
     preco_info = get_ultimo_preco(ticker, session)
 if preco_info:
     st.caption(f"Ultimo preco: {preco_info['data']} | Coletado em: {preco_info.get('coletado_em', 'n/d')}")

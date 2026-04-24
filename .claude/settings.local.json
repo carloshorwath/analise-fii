@@ -55,7 +55,11 @@
       "Bash(echo \"exit: $?\")",
       "Read(//c/Users/carlo/.claude/skills/git/**)",
       "Read(//c/Users/carlo/.claude/skills/**)",
-      "Bash(kilocode run *)"
+      "Bash(kilocode run *)",
+      "Bash(wait)",
+      "Bash(kilocode list *)",
+      "Bash(kilocode sessions *)",
+      "PowerShell(Stop-Process *)"
     ]
   }
 }

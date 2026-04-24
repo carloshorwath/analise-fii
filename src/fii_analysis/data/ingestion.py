@@ -342,7 +342,9 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
         if ultimo:
             data_inicio = ultimo + timedelta(days=1)
         else:
-            data_inicio = date(2022, 1, 1)
+            # CPTS11 data starts 2015-09; DY Gap needs 12m CDI history,
+            # so load from 2014-01-01 to cover all tickers.
+            data_inicio = date(2014, 1, 1)
 
     if data_inicio > date.today():
         logger.info("CDI ja atualizado ate hoje")
