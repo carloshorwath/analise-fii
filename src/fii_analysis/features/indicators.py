@@ -7,11 +7,12 @@ from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMens
 
 
 def get_pvp(ticker: str, data: date, session) -> float | None:
+    # BUG 1 fix: último preço disponível até data t (não exige match exato)
     preco_row = session.execute(
         select(PrecoDiario.fechamento).where(
             PrecoDiario.ticker == ticker,
-            PrecoDiario.data == data,
-        )
+            PrecoDiario.data <= data,
+        ).order_by(PrecoDiario.data.desc()).limit(1)
     ).scalar_one_or_none()
     if preco_row is None:
         return None
@@ -37,11 +38,12 @@ def get_pvp(ticker: str, data: date, session) -> float | None:
 
 
 def get_dy_trailing(ticker: str, data: date, session, janela_dias: int = 365) -> float | None:
+    # último preço disponível até data t (não exige match exato)
     preco_row = session.execute(
         select(PrecoDiario.fechamento).where(
             PrecoDiario.ticker == ticker,
-            PrecoDiario.data == data,
-        )
+            PrecoDiario.data <= data,
+        ).order_by(PrecoDiario.data.desc()).limit(1)
     ).scalar_one_or_none()
     if preco_row is None:
         return None
