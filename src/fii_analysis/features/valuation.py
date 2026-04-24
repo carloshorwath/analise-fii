@@ -127,7 +127,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
     start_idx = max(0, len(datas_precos) - janela)
     datas = datas_precos[start_idx:-1] if len(datas_precos) > start_idx + 1 else []
 
-    if len(datas) < 252:
+    if len(datas) < max(1, janela - 2):
         return None
 
     data_min = datas[0]
@@ -207,7 +207,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
             continue
         gaps.append(dy - cdi)
 
-    if len(gaps) < 252:
+    if len(gaps) < max(50, len(datas) // 5):
         return None
 
     gap_atual = get_dy_gap(ticker, t, session)
