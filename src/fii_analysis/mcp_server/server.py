@@ -6,18 +6,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from sqlalchemy import func, select
 
-from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, Ticker, get_session
+from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker, get_session
 from src.fii_analysis.features.indicators import get_dy_trailing, get_pvp
 
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("fii-stats")
-
-
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
 
 
 def _get_pregoes(ticker: str, session) -> list[date]:
@@ -85,7 +79,7 @@ def detect_leakage(ticker: str, feature_date: str, target_date: str) -> dict:
         d_feature = date.fromisoformat(feature_date)
         d_target = date.fromisoformat(target_date)
 
-        cnpj = _get_cnpj(ticker, session)
+        cnpj = get_cnpj_by_ticker(ticker, session)
         if cnpj is None:
             return {"leakage": False, "vp_data_entrega": None, "vp_data_referencia": None, "message": f"Ticker {ticker} nao encontrado"}
 
@@ -191,7 +185,7 @@ def summary_report(ticker: str) -> dict:
             select(func.count()).select_from(Dividendo).where(Dividendo.ticker == ticker)
         ).scalar_one()
 
-        cnpj = _get_cnpj(ticker, session)
+        cnpj = get_cnpj_by_ticker(ticker, session)
         n_rel = 0
         if cnpj:
             n_rel = session.execute(

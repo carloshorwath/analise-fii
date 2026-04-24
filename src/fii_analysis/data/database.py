@@ -1,12 +1,17 @@
+from __future__ import annotations
+
+from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from typing import Generator
 
-from sqlalchemy import BigInteger, Date, DateTime, Integer, Numeric, String, Text, create_engine
+from sqlalchemy import BigInteger, Date, DateTime, Integer, Numeric, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 
-# Raiz do projeto — funciona independente de onde o script é executado
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_DB_PATH = PROJECT_ROOT / "dados" / "fii_data.db"
+
+_engine = None
 
 
 class Base(DeclarativeBase):
@@ -125,9 +130,22 @@ class Carteira(Base):
 
 
 def get_engine(db_path: Path = DEFAULT_DB_PATH):
+    global _engine
+    if _engine is not None and Path(_engine.url.database) == Path(db_path):
+        return _engine
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{db_path}")
+    _engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    return _engine
+
+
+@contextmanager
+def get_session_ctx(db_path: Path = DEFAULT_DB_PATH) -> Generator[Session, None, None]:
+    session = Session(get_engine(db_path))
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def get_session(db_path: Path = DEFAULT_DB_PATH):
@@ -136,3 +154,41 @@ def get_session(db_path: Path = DEFAULT_DB_PATH):
 
 def create_tables(db_path: Path = DEFAULT_DB_PATH):
     Base.metadata.create_all(get_engine(db_path))
+
+
+def get_cnpj_by_ticker(ticker: str, session: Session) -> str | None:
+    return session.execute(
+        select(Ticker.cnpj).where(Ticker.ticker == ticker)
+    ).scalar_one_or_none()
+
+
+def get_ultimo_preco_date(ticker: str, session: Session) -> date | None:
+    return session.execute(
+        select(PrecoDiario.data)
+        .where(PrecoDiario.ticker == ticker)
+        .order_by(PrecoDiario.data.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def get_ultima_coleta(db_path: Path = DEFAULT_DB_PATH) -> datetime | None:
+    with get_session_ctx(db_path) as session:
+        return session.execute(
+            select(func.max(PrecoDiario.coletado_em))
+        ).scalar()
+
+
+def volume_medio_21d(ticker: str, t: date, session: Session) -> float | None:
+    rows = session.execute(
+        select(PrecoDiario.fechamento, PrecoDiario.volume)
+        .where(
+            PrecoDiario.ticker == ticker,
+            PrecoDiario.data <= t,
+        )
+        .order_by(PrecoDiario.data.desc())
+        .limit(21)
+    ).all()
+    if not rows:
+        return None
+    vals = [float(f) * float(v) for f, v in rows if f is not None and v is not None]
+    return sum(vals) / len(vals) if vals else None

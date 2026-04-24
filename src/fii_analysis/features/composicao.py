@@ -2,17 +2,11 @@ from datetime import date
 
 from sqlalchemy import select
 
-from src.fii_analysis.data.database import AtivoPassivo, Ticker
-
-
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
+from src.fii_analysis.data.database import AtivoPassivo, get_cnpj_by_ticker
 
 
 def composicao_ativo(ticker: str, session=None) -> dict:
-    cnpj = _get_cnpj(ticker, session)
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return {"pct_imoveis": None, "pct_recebiveis": None, "pct_caixa": None, "ativo_total": None, "data_ref": None}
 

@@ -9,20 +9,29 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from app.components.data_loader import load_panorama, load_radar, load_tickers_ativos
+from app.components.data_loader import load_tickers_ativos
 from app.components.tables import render_panorama_table
 from app.state import render_footer
+from src.fii_analysis.config import tickers_ativos
+from src.fii_analysis.data.database import get_session_ctx
+from src.fii_analysis.features.portfolio import carteira_panorama
+from src.fii_analysis.features.radar import radar_matriz
 
 st.set_page_config(page_title="Panorama", page_icon="bar_chart", layout="wide")
 st.title("Panorama Geral")
 
 tickers = load_tickers_ativos()
-radar_df = load_radar()
+
+with get_session_ctx() as session:
+    radar_df = radar_matriz(session=session)
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("FIIs Ativos", len(tickers))
 
-df = load_panorama()
+with get_session_ctx() as session:
+    ativos = tickers_ativos(session)
+    df = carteira_panorama(ativos, session)
+
 if not df.empty:
     avg_dy = df["dy_12m"].dropna().mean()
     avg_pvp = df["pvp"].dropna().mean()

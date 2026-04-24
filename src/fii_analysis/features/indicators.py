@@ -3,13 +3,7 @@ from datetime import date, timedelta
 import pandas as pd
 from sqlalchemy import func, select
 
-from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, Ticker
-
-
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
+from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
 
 
 def get_pvp(ticker: str, data: date, session) -> float | None:
@@ -22,7 +16,7 @@ def get_pvp(ticker: str, data: date, session) -> float | None:
     if preco_row is None:
         return None
 
-    cnpj = _get_cnpj(ticker, session)
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return None
 
@@ -67,7 +61,7 @@ def get_dy_trailing(ticker: str, data: date, session, janela_dias: int = 365) ->
 
 
 def get_pvp_serie(ticker: str, session) -> pd.DataFrame:
-    cnpj = _get_cnpj(ticker, session)
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return pd.DataFrame(columns=["data", "fechamento", "vp_por_cota", "pvp"])
 

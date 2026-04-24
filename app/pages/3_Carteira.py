@@ -15,14 +15,14 @@ from app.components.charts import carteira_alocacao_pie, carteira_segmento_pie
 from app.components.data_loader import (
     delete_carteira_posicao,
     load_carteira_db,
-    load_panorama,
     load_tickers_ativos,
     save_carteira_posicao,
 )
 from app.components.tables import format_currency
 from app.state import render_footer
-from src.fii_analysis.data.database import create_tables
-from src.fii_analysis.features.portfolio import herfindahl
+from src.fii_analysis.config import tickers_ativos
+from src.fii_analysis.data.database import create_tables, get_session_ctx
+from src.fii_analysis.features.portfolio import carteira_panorama, herfindahl
 
 st.set_page_config(page_title="Carteira", page_icon="briefcase", layout="wide")
 st.title("Carteira")
@@ -128,7 +128,9 @@ else:
     with col_chart1:
         st.plotly_chart(carteira_alocacao_pie(consol), use_container_width=True)
     with col_chart2:
-        pan = load_panorama()
+        with get_session_ctx() as session:
+            ativos = tickers_ativos(session)
+            pan = carteira_panorama(ativos, session)
         seg_map = {}
         if not pan.empty:
             for _, r in pan.iterrows():

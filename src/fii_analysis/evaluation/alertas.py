@@ -51,9 +51,9 @@ def gerar_alertas_diarios():
         if emiss:
             alertas_ticker.append(f"{len(emiss)} emissoes recentes (>1%)")
 
-        pvp_pct = get_pvp_percentil(ticker, ultimo, 504, session)
-        if pvp_pct is not None and pvp_pct > 95:
-            alertas_ticker.append(f"P/VP no percentil {pvp_pct:.0f} (muito caro)")
+        pvp_pct_val, jan_usada = get_pvp_percentil(ticker, ultimo, 504, session)
+        if pvp_pct_val is not None and pvp_pct_val > 95:
+            alertas_ticker.append(f"P/VP no percentil {pvp_pct_val:.0f} (muito caro)")
 
         dy_gap_pct = get_dy_gap_percentil(ticker, ultimo, 504, session)
         if dy_gap_pct is not None and dy_gap_pct < 5:

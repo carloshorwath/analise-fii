@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 
 import streamlit as st
-from sqlalchemy import text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,11 +22,9 @@ def init_session_state():
 
 
 def render_footer():
-    from src.fii_analysis.data.database import get_engine
+    from src.fii_analysis.data.database import get_ultima_coleta
 
-    engine = get_engine()
-    with engine.connect() as conn:
-        result = conn.execute(text("SELECT MAX(coletado_em) FROM precos_diarios")).scalar()
+    result = get_ultima_coleta()
     if result is not None:
         ts = result.strftime("%d/%m/%Y %H:%M") if hasattr(result, "strftime") else str(result)
         st.sidebar.caption(f"Dados atualizados em: {ts}")

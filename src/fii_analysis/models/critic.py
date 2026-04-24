@@ -211,3 +211,16 @@ def run_critic(ticker: str, windows_df: pd.DataFrame, session) -> None:
         falharam = [r[0] for r in resultados if not r[2]]
         print(f"  REPROVADO — falharam: {', '.join(falharam)}")
     print("=" * 70)
+
+
+def veredito_critic(shuffle_ok: bool, placebo_ok: bool, stability_ok: bool) -> dict:
+    all_pass = shuffle_ok and placebo_ok and stability_ok
+    if all_pass:
+        return {
+            "nivel": "success",
+            "mensagem": "Todos os testes do CriticAgent passaram. O padrao detectado e estatisticamente robusto.",
+        }
+    return {
+        "nivel": "warning",
+        "mensagem": "Um ou mais testes do CriticAgent falharam. O padrao pode ser espurio ou instavel.",
+    }

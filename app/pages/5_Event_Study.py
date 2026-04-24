@@ -12,9 +12,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from app.components.charts import car_plot
 from app.components.data_loader import load_tickers_ativos
 from app.state import render_footer
-from src.fii_analysis.data.database import get_session
+from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.features.dividend_window import get_dividend_windows
-from src.fii_analysis.models.critic import shuffle_test, placebo_test, subperiod_stability
+from src.fii_analysis.models.critic import shuffle_test, placebo_test, subperiod_stability, veredito_critic
 from src.fii_analysis.models.statistical import event_study, test_pre_vs_post, test_day0_return
 from src.fii_analysis.models.walk_forward import make_splits
 
@@ -29,16 +29,14 @@ if not tickers:
 ticker = st.selectbox("Ticker:", tickers, key="es_ticker")
 
 if st.button("Rodar Event Study", type="primary"):
-    session = get_session()
-    with st.spinner("Calculando janelas de dividendos..."):
-        windows = get_dividend_windows(ticker, session)
+    with get_session_ctx() as session:
+        with st.spinner("Calculando janelas de dividendos..."):
+            windows = get_dividend_windows(ticker, session)
 
-        if windows.empty:
-            st.error("Nenhuma janela de dividendos encontrada para este ticker.")
-        session.close()
-
-render_footer()
-            st.stop()
+            if windows.empty:
+                st.error("Nenhuma janela de dividendos encontrada para este ticker.")
+                render_footer()
+                st.stop()
 
         st.success(f"{windows['data_com'].nunique()} eventos encontrados.")
 
@@ -98,18 +96,20 @@ render_footer()
             col_cr1, col_cr2, col_cr3 = st.columns(3)
 
             shuffle = shuffle_test(windows)
+            shuffle_ok = shuffle["p_value_permutation"] is not None and shuffle["p_value_permutation"] < 0.05
             with col_cr1:
                 st.subheader("Permutation Shuffle")
                 if shuffle["t_real"] is not None:
                     st.write(f"t-real: {shuffle['t_real']:.4f}")
                     st.write(f"p-value perm: {shuffle['p_value_permutation']:.4f}")
                 st.write(f">>> **{shuffle['conclusion']}**")
-                if shuffle["p_value_permutation"] is not None and shuffle["p_value_permutation"] < 0.05:
+                if shuffle_ok:
                     st.success("PASSOU")
                 else:
                     st.error("FALHOU")
 
             placebo = placebo_test(ticker, session)
+            placebo_ok = placebo["mw_pvalue"] is not None and placebo["mw_pvalue"] < 0.05
             with col_cr2:
                 st.subheader("Placebo")
                 if placebo["real_mean_day0"] is not None:
@@ -117,12 +117,13 @@ render_footer()
                     st.write(f"Placebo: {placebo['placebo_mean_day0']:.4%}")
                     st.write(f"MW p: {placebo['mw_pvalue']:.4f}")
                 st.write(f">>> **{placebo['conclusion']}**")
-                if placebo["mw_pvalue"] is not None and placebo["mw_pvalue"] < 0.05:
+                if placebo_ok:
                     st.success("PASSOU")
                 else:
                     st.error("FALHOU")
 
             stability = subperiod_stability(windows)
+            stability_ok = stability["ttest_pvalue"] is not None and stability["ttest_pvalue"] > 0.05
             with col_cr3:
                 st.subheader("Subperiod Stability")
                 if stability["first_half_mean"] is not None:
@@ -130,24 +131,18 @@ render_footer()
                     st.write(f"2a metade: {stability['second_half_mean']:.4%} (n={stability['second_half_n']})")
                     st.write(f"t-test p: {stability['ttest_pvalue']:.4f}")
                 st.write(f">>> **{stability['conclusion']}**")
-                if stability["ttest_pvalue"] is not None and stability["ttest_pvalue"] > 0.05:
+                if stability_ok:
                     st.success("PASSOU")
                 else:
                     st.error("FALHOU")
 
             st.markdown("---")
-            all_pass = (
-                (shuffle["p_value_permutation"] is not None and shuffle["p_value_permutation"] < 0.05)
-                and (placebo["mw_pvalue"] is not None and placebo["mw_pvalue"] < 0.05)
-                and (stability["ttest_pvalue"] is not None and stability["ttest_pvalue"] > 0.05)
-            )
-            if all_pass:
+            veredito = veredito_critic(shuffle_ok, placebo_ok, stability_ok)
+            if veredito["nivel"] == "success":
                 st.header("VEREDICTO: APROVADO")
-                st.success("Todos os testes do CriticAgent passaram. O padrao detectado e estatisticamente robusto.")
+                st.success(veredito["mensagem"])
             else:
                 st.header("VEREDICTO: REPROVADO")
-                st.warning("Um ou mais testes do CriticAgent falharam. O padrao pode ser espurio ou instavel.")
-
-        session.close()
+                st.warning(veredito["mensagem"])
 
 render_footer()

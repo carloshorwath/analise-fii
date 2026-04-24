@@ -47,7 +47,15 @@
       "Bash(xargs wc *2)",
       "Bash(gh repo *)",
       "Skill(jules-agent)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(taskkill /F /IM python.exe /FI \"WINDOWTITLE eq streamlit*\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(cmd.exe *)",
+      "Bash(echo \"exit: $?\")",
+      "Read(//c/Users/carlo/.claude/skills/git/**)",
+      "Read(//c/Users/carlo/.claude/skills/**)",
+      "Bash(kilocode run *)"
     ]
   }
 }

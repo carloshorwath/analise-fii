@@ -10,14 +10,16 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from app.components.charts import radar_heatmap
-from app.components.data_loader import load_radar
 from app.components.tables import render_radar_matriz
 from app.state import render_footer
+from src.fii_analysis.data.database import get_session_ctx
+from src.fii_analysis.features.radar import radar_matriz
 
 st.set_page_config(page_title="Radar", page_icon="satellite", layout="wide")
 st.title("Radar — Matriz Booleana")
 
-df = load_radar()
+with get_session_ctx() as session:
+    df = radar_matriz(session=session)
 
 if df.empty:
     st.warning("Nenhum dado disponivel para o radar. Execute os scripts de ingestao.")

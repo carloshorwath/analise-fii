@@ -36,3 +36,8 @@ def get_janelas_percentil() -> list[int]:
 
 def get_janela_dy_meses() -> list[int]:
     return get("janela_dy_meses", [12, 24, 36])
+
+
+def get_threshold(key: str, default=None):
+    thresholds = get("thresholds", {})
+    return thresholds.get(key, default)

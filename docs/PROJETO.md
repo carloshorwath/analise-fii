@@ -105,7 +105,7 @@ Arquivo: `dados/fii_data.db` — ORM declarativo em `src/fii_analysis/data/datab
 | `eventos_corporativos` | `id` (auto) | `ticker`, `cnpj`, `data`, `tipo`, `cnpj_antigo`, `cnpj_novo`, `observacao` |
 | `carteira` | `id` (auto) | `ticker`, `quantidade`, `preco_medio`, `data_compra` |
 
-**Regra crítica:** P/VP, DY, DY Gap são **calculados** em tempo real, nunca persistidos.
+**Regra crítica:** P/VP, DY, DY Gap são **calculados** em tempo real, nunca persistidos. CNPJ e metadados de acesso são centralizados em `src/fii_analysis/data/database.py` (`get_cnpj_by_ticker`, `get_session_ctx`, `get_ultima_coleta`, `get_ultimo_preco_date`).
 
 ### 3.4 Estrutura de pastas
 
@@ -121,10 +121,10 @@ D:/analise-de-acoes/
 │   └── fii_data.db                    # SQLite principal (.gitignored)
 ├── src/fii_analysis/
 │   ├── config.py                      # TICKERS, períodos treino/teste, custos, IR
-│   ├── config_yaml.py                 # Loader do config.yaml
-│   ├── cli.py                         # Typer CLI: panorama, fii, carteira, calendario, radar, alertas
+│   ├── config_yaml.py                 # Loader do config.yaml (get_threshold)
+│   ├── cli.py                         # Typer CLI: panorama, fii, carteira, calendario, radar, alertas, consulta
 │   ├── data/
-│   │   ├── database.py                # SQLAlchemy 2.0: models + engine + session
+│   │   ├── database.py                # SQLAlchemy 2.0: models + engine + session + utilitários DB
 │   │   └── ingestion.py              # CVM, yfinance, brapi, BCB SGS
 │   ├── features/
 │   │   ├── dividend_window.py         # Janela ±10 dias úteis (event study)
@@ -132,7 +132,9 @@ D:/analise-de-acoes/
 │   │   ├── valuation.py               # Percentil rolling, DY N-meses, DY Gap
 │   │   ├── portfolio.py               # Panorama, alocação, retorno vs IFIX, Herfindahl
 │   │   ├── saude.py                   # Tendência PL, flag destruição capital, emissões
+│   │   ├── fundamentos.py             # Rentabilidade efetiva/patrimonial, alavancagem, payout
 │   │   ├── composicao.py              # Classificação Tijolo/Papel/Híbrido
+│   │   ├── data_loader.py             # Agregadores de dados para interfaces
 │   │   └── radar.py                   # Matriz booleana (sem score numérico)
 │   ├── models/
 │   │   ├── statistical.py             # Event study CAR, t-test, Mann-Whitney
@@ -154,7 +156,8 @@ D:/analise-de-acoes/
 │   │   ├── 3_Carteira.py
 │   │   ├── 4_Radar.py
 │   │   ├── 5_Event_Study.py
-│   │   └── 6_Alertas.py
+│   │   ├── 6_Alertas.py
+│   │   └── 7_Fundamentos.py
 │   └── components/
 │       ├── charts.py                  # Plotly: gauge, bandas, heatmap, pizza
 │       ├── data_loader.py             # Funções de carga para as páginas
@@ -189,7 +192,22 @@ D:/analise-de-acoes/
 - Métricas finais **somente** do conjunto de teste
 - Nunca usar dados futuros para calcular features do passado
 
-### 4.2 Point-in-time obrigatório no VP
+### 4.2 Centralização de Thresholds (config.yaml)
+
+Parâmetros de decisão e filtros são centralizados na seção `thresholds` do `config.yaml`:
+
+| Parâmetro | Descrição | Default |
+|---|---|---|
+| `pvp_percentil_barato` | Percentil P/VP para sinal verde no radar | 30 |
+| `dy_gap_percentil_caro` | Percentil DY Gap para sinal vermelho no radar | 70 |
+| `meses_consec_alerta` | Meses distribuindo mais que gera para erro de saúde | 3 |
+| `alavancagem_limite` | Razão Ativo/PL considerada alavancagem significativa | 1.05 |
+| `piso_liquidez` | Volume financeiro médio 21d mínimo | 500.000 |
+| `dias_staleness` | Dias de atraso permitidos na coleta de preço | 3 |
+
+A função `classificar_alerta_distribuicao` (`fundamentos.py`) utiliza esses thresholds para categorizar o risco de destruição de capital (Success, Warning, Error).
+
+### 4.3 Point-in-time obrigatório no VP
 
 O VP por cota vem dos Informes Mensais da CVM. Cada relatório tem duas datas:
 - `Data_Referencia` — mês do relatório (**não** usar para filtro)
@@ -202,24 +220,24 @@ vp = SELECT Valor_Patrimonial_Cotas
      ORDER BY data_referencia DESC LIMIT 1
 ```
 
-### 4.3 P/VP e DY são calculados, nunca armazenados
+### 4.4 P/VP e DY são calculados, nunca armazenados
 
 ```python
 pvp_em_t = preco_em_t / vp_vigente_em_t(data_entrega <= t)
 dy_trailing_t = soma_dividendos_12m_ate_t / preco_medio_periodo
 ```
 
-### 4.4 Janela da data-com: ±10 dias úteis
+### 4.5 Janela da data-com: ±10 dias úteis
 
 Janelas maiores (ex: ±30 dias) se sobrepõem porque FIIs pagam mensalmente. Sobreposição viola independência estatística do event study.
 
 Quando duas datas-com distam < 21 dias úteis, **o evento seguinte é descartado** — não truncar janela (viés de seleção).
 
-### 4.5 Ingestão idempotente
+### 4.6 Ingestão idempotente
 
 Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever sem verificação. O preço ajustado do yfinance é recalculado retroativamente — sempre salvar `coletado_em`.
 
-### 4.6 Proteções contra data leakage
+### 4.7 Proteções contra data leakage
 
 | Proteção | Mecanismo |
 |---|---|
@@ -230,7 +248,7 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 | CriticAgent | Tenta ativamente falsificar os resultados antes de reportar |
 | Reporter lacrado | Módulo de relatório acessa somente dados de teste |
 
-### 4.7 Dados faltantes
+### 4.8 Dados faltantes
 
 - **CVM defasada (> 45 dias sem relatório novo):** exibir aviso `[CVM defasada]`. Não preencher com valor futuro.
 - **FII sem histórico suficiente:** percentis rolling exigem ≥ 252 pregões; abaixo, exibir `n/d`.
@@ -245,19 +263,21 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 
 | Métrica | Definição |
 |---|---|
-| **P/VP em t** | `preco_em_t / vp_vigente(data_entrega <= t)` — VP do último relatório CVM entregue antes de t; não ajustado entre relatórios (dividendos pagos reduzem o VP, mas rendimentos dos títulos compensam parcialmente — ajuste líquido indeterminado) |
-| **Percentil P/VP rolling** | Posição do P/VP atual na distribuição da janela até t−1 (252d, 504d, 756d) |
-| **DY N-meses** (12/24/36) | Soma dividendos com data-com em `[t−N meses, t]` / preço médio aritmético no mesmo intervalo |
-| **DY Gap** | `DY 12m − CDI acumulado 12m` (configurável em YAML) |
-| **Percentil DY Gap** | Mesma regra rolling até t−1 |
+| **P/VP em t** | `preco_em_t / vp_vigente(data_entrega <= t)` — VP do último relatório CVM entregue antes de t. |
+| **Percentil P/VP rolling** | Posição na distribuição da janela de 504 pregões (2 anos) até t−1. |
+| **DY N-meses** (12/24/36) | Soma dividendos com data-com em `[t−N meses, t]` / preço atual. |
+| **DY Gap** | `DY 12m − CDI acumulado 12m` (point-in-time). |
+| **Percentil DY Gap** | Posição na distribuição da janela de 252 pregões (1 ano) até t−1. |
 
-### 5.2 Saúde financeira
+### 5.2 Saúde financeira e Fundamentos
 
 | Métrica | Definição |
 |---|---|
-| **Tendência PL** | Regressão linear (6m, 12m); coeficiente angular + R² |
-| **Destruição de capital** | 3 condições alinhadas: (1) rent. efetiva > rent. patrimonial por ≥ 3 meses consecutivos; (2) cotas não cresceu > 1% no período; (3) VP/cota sem tendência positiva |
-| **Emissões recentes** | Salto em `Cotas_Emitidas` mês a mês > 1% |
+| **Mês Saudável** | `rentab_patrim >= 0` E `rentab_efetiva >= rentab_patrim`. |
+| **Alertas de Saúde** | **Erro:** >= `meses_consec_alerta` (default 3) consecutivos não saudáveis. **Aviso:** < 4 meses saudáveis no total dos últimos 6 meses. |
+| **Alavancagem** | `Ativo_Total / Patrimonio_Liquido`. Alerta se > `alavancagem_limite`. |
+| **Tendência PL** | Regressão linear (6m, 12m) sobre o VP por cota. |
+| **Emissões recentes** | Salto em `Cotas_Emitidas` mês a mês > 1%. |
 
 ### 5.3 Composição do ativo
 
@@ -276,7 +296,7 @@ Matriz booleana — **sem score numérico** até existir backtest validando a f�
 | Filtro | Critério |
 |---|---|
 | P/VP Baixo | Percentil rolling 504d < 30 |
-| DY Gap Alto | Percentil rolling 504d > 70 |
+| DY Gap Alto | Percentil rolling 252d > 70 |
 | Saúde OK | Sem flag de destruição de capital |
 | Liquidez OK | Volume financeiro médio 21d ≥ piso YAML (default: R$ 500.000) |
 
@@ -313,18 +333,22 @@ Simulação com preço ajustado, otimização grid search (`dias_antes`, `dias_d
 
 ## 6. Interfaces do Sistema
 
-### 6.1 CLI Typer
+### 6.1 Como usar o CLI
 
-Comando entry point: `fii` (via pyproject.toml `[project.scripts]`).
+O CLI é independente do Streamlit e deve ser executado no terminal utilizando o interpretador do Anaconda:
+
+**Comando base:**
+`C:/ProgramData/anaconda3/python.exe -m fii_analysis COMANDO`
 
 | Comando | Função |
 |---|---|
-| `fii panorama` | Tabela de todos os FIIs monitorados com métricas-chave |
-| `fii fii TICKER` | Análise detalhada de um FII (valuation, saúde, composição, datas-com) |
-| `fii carteira` | Posições, alocação por segmento, retorno vs IFIX, Herfindahl |
-| `fii calendario` | Próximas datas-com (30 dias) |
-| `fii radar` | Matriz booleana de filtros |
-| `fii alertas` | Alertas diários com base em thresholds (terminal + Markdown) |
+| `panorama` | Tabela de todos os FIIs monitorados com métricas-chave |
+| `fii TICKER` | Análise detalhada de um FII (valuation, saúde, composição, datas-com) |
+| `consulta TICKER` | **Analítico IA:** Integra indicadores locais com Gemini + Google Search para análise qualitativa em 4 seções. |
+| `radar` | Exibe a matriz booleana de filtros (P/VP, DY Gap, Saúde, Liquidez) |
+| `alertas` | Gera e exibe alertas diários com base nos thresholds de risco |
+| `calendario` | Lista as próximas datas-com previstas para os próximos 30 dias |
+| `carteira` | Exibe posições, alocação por segmento e retorno vs IFIX |
 
 ### 6.2 Streamlit Dashboard
 
@@ -338,6 +362,7 @@ Entry point: `app/streamlit_app.py`. Layout `wide`, sidebar expandida.
 | **Radar** | `4_Radar.py` | Heatmap booleano, tabela detalhada, exportação CSV, expanders explicando cada filtro |
 | **Event Study** | `5_Event_Study.py` | Seleção de ticker, CAR (todos/treino/teste), testes pré/pós, dia 0, CriticAgent com veredito |
 | **Alertas** | `6_Alertas.py` | Geração sob demanda, listagem de Markdowns salvos por data |
+| **Fundamentos** | `7_Fundamentos.py` | Rentabilidade efetiva vs patrimonial (payout), série P/VP com seletor (YTD, 12m, 3a, Tudo), PL e alavancagem (Ativo/PL). |
 
 **Componentes reutilizáveis** (`app/components/`):
 
@@ -442,11 +467,11 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 
 | Componente | Status | Arquivo |
 |---|---|---|
-| CLI Typer (6 comandos) | Implementado | `cli.py` |
+| CLI Typer (7 comandos) | Implementado (incluindo `consulta`) | `cli.py` |
 | Configuração Python (tickers, períodos) | Implementado | `config.py` |
 | Configuração YAML (thresholds runtime) | Implementado | `config_yaml.py` |
 | MCP Server (4 tools) | Implementado | `mcp_server/server.py` |
-| Streamlit Dashboard (6 páginas) | Implementado | `app/streamlit_app.py` + `app/pages/` |
+| Streamlit Dashboard (7 páginas) | Implementado | `app/streamlit_app.py` + `app/pages/` |
 | Componentes Plotly (8 gráficos) | Implementado | `app/components/charts.py` |
 | Data loader (Streamlit) | Implementado | `app/components/data_loader.py` |
 | Formatadores de tabela | Implementado | `app/components/tables.py` |
@@ -475,21 +500,32 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 | `dividendos` | 355 |
 | `relatorios_mensais` | 227 |
 
-### Pendente
+### Status Geral
 
-| Item | Prioridade |
-|---|---|
-| Snapshots reprodutíveis do DB (`dados/snapshots/YYYY-MM-DD.db.gz`, retenção 90d) | Alta |
-| Rodar event study nos 5 tickers ativos e interpretar resultados | Alta |
-| `tests/` — pyproject já configura pytest | Média |
-| `fii diario` (diff desde última execução) | Média |
-| Relatório mensal Markdown/HTML | Média |
-| Log de decisões (tabela `decisoes`) | Baixa |
-| Reconciliar `config.py` ↔ `config.yaml` | Baixa |
+- **Fase 0-5 + Refatoração Arquitetural Concluída.**
+- O sistema possui separação clara entre ingestão (data), lógica de negócio (features), análise estatística (models) e visualização (app/evaluation).
+- O CLI agora conta com o comando `consulta TICKER` que integra indicadores locais com Gemini + Google Search para análise qualitativa em 4 seções.
 
 ---
 
-## 9. Roadmap
+## 9. Próximos Passos — Plano para amanhã
+
+### PRIORIDADE ALTA
+- **Ingestão do `inf_mensal_fii_imovel.csv`:** Utilizar o mesmo ZIP da CVM já baixado para extrair dados de imóveis.
+- **Cálculo de Vacância e ABL:** Calcular Vacância Física e Área Bruta Locável (ABL) por fundo.
+- **Persistência:** Adicionar a tabela `imoveis` no banco de dados SQLite.
+- **Radar:** Expor novo filtro no Radar: `Vacância < 10%`.
+
+### PRIORIDADE MÉDIA
+- **Cap Rate da Carteira:** Cruzar dados de `ativo_passivo` com a receita de aluguel para calcular o Cap Rate real.
+- **WALT:** Calcular o prazo médio dos contratos (Weighted Average Lease Term).
+
+### PRIORIDADE BAIXA
+- **Indexadores (IPCA+/CDI+):** Identificar indexadores para FIIs de Papel (requer ingestão do informe trimestral estruturado da CVM).
+
+---
+
+## 10. Roadmap
 
 ### Prioridade 1 — Reprodutibilidade
 - Implementar snapshots diários do `fii_data.db` com hash SHA-256.
@@ -523,7 +559,7 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 
 ---
 
-## 10. Registro de Decisões (ADR)
+## 11. Registro de Decisões (ADR)
 
 | # | Decisão | Contexto | Escolha | Motivo |
 |---|---|---|---|---|

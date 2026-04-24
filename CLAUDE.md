@@ -263,13 +263,10 @@ Campos relevantes: `Direitos_Bens_Imoveis`, `CRI`, `LCI`, `LCI_LCA`, `Disponibil
 
 ## Estado atual e próximos passos
 
-**Concluído** (Fases 1–5 do `docs/PLANO_EXPANSAO_V2.md`):
-- Schema SQLite + ingestão CVM/yfinance/brapi/BCB CDI
-- Indicadores point-in-time (P/VP, DY, DY Gap)
-- Event study (CAR, t-test, Mann-Whitney) + walk-forward com gap + CriticAgent
-- Panorama / carteira / calendário / radar / alertas via CLI typer
-- Saúde financeira (3 condições alinhadas, point-in-time) e composição Tijolo/Papel/Híbrido
-- MCP server estatístico
+**Concluído**:
+- **Refatoração Arquitetural (Fases 0, 1 e 2)**: Singleton engine e context manager (`get_session_ctx`), remoção de duplicatas de lógica, criação de `features/data_loader.py`, migração das páginas Streamlit para context manager e centralização de thresholds no `config.yaml`.
+- Fases 1–5 do `docs/PLANO_EXPANSAO_V2.md`: Schema SQLite + ingestão CVM/yfinance/brapi/BCB CDI, indicadores point-in-time, Event Study, Saúde financeira e Composição.
+- MCP server estatístico e CriticAgent.
 
 **Pendente** (em ordem de prioridade):
 1. Snapshots reprodutíveis do `fii_data.db` (§5.2 do V2) — protege contra recálculo retroativo do yfinance
@@ -277,7 +274,6 @@ Campos relevantes: `Direitos_Bens_Imoveis`, `CRI`, `LCI`, `LCI_LCA`, `Disponibil
 3. Fase 6: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
 4. Reconciliar `config.py` ↔ `config.yaml`
 5. Criar `tests/` (pyproject já configura pytest)
-
 **Fora do escopo até decisão explícita:**
 - Streamlit/Flask, exportação IR (Fase 7 — só se o CLI doer)
 - LightGBM ou qualquer ML enquanto event study não confirmar padrão

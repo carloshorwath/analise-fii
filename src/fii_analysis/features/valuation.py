@@ -4,63 +4,31 @@ import numpy as np
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 
-from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, Ticker
+from src.fii_analysis.config_yaml import get_threshold
+from src.fii_analysis.data.database import CdiDiario, Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
 from src.fii_analysis.data.ingestion import get_cdi_acumulado_12m
+from src.fii_analysis.features.indicators import get_pvp_serie
 
 
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
-
-
-def get_pvp_serie_cached(ticker: str, session) -> list[tuple[date, float, float, float]]:
-    cnpj = _get_cnpj(ticker, session)
-    if cnpj is None:
-        return []
-
-    precos = session.execute(
-        select(PrecoDiario.data, PrecoDiario.fechamento)
-        .where(PrecoDiario.ticker == ticker)
-        .order_by(PrecoDiario.data.asc())
-    ).all()
-    if not precos:
-        return []
-
-    relatorios = session.execute(
-        select(
-            RelatorioMensal.data_referencia,
-            RelatorioMensal.data_entrega,
-            RelatorioMensal.vp_por_cota,
-        )
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.vp_por_cota.isnot(None),
-            RelatorioMensal.data_entrega.isnot(None),
-        )
-        .order_by(RelatorioMensal.data_entrega.asc())
-    ).all()
-
-    vp_por_entrega = [(r.data_entrega, float(r.vp_por_cota)) for r in relatorios]
-
+def _extract_pvp_tuples(serie_df) -> list[tuple]:
     result = []
-    for d, fech in precos:
-        fech_f = float(fech) if fech is not None else None
-        vp_vigente = None
-        for entrega, vp_val in reversed(vp_por_entrega):
-            if entrega <= d:
-                vp_vigente = vp_val
-                break
-        pvp = fech_f / vp_vigente if (fech_f is not None and vp_vigente is not None and vp_vigente != 0) else None
+    for _, row in serie_df.iterrows():
+        pvp = row.get("pvp")
         if pvp is not None:
-            result.append((d, fech_f, vp_vigente, pvp))
+            result.append((row["data"], row.get("fechamento"), row.get("vp_por_cota"), pvp))
     return result
 
 
-def get_pvp_percentil(ticker: str, t: date, janela: int = 504, session=None) -> float | None:
-    serie = get_pvp_serie_cached(ticker, session)
+def get_pvp_percentil(ticker: str, t: date, janela: int | None = None, session=None) -> tuple[float | None, int]:
+    if janela is None:
+        janela = get_threshold("pvp_janela_pregoes", 504)
+    serie_df = get_pvp_serie(ticker, session)
+    if serie_df.empty:
+        return None, 0
+
+    serie = _extract_pvp_tuples(serie_df)
     if not serie:
-        return None
+        return None, 0
 
     datas_pvp = [s[0] for s in serie]
     pvps = [s[3] for s in serie]
@@ -75,16 +43,22 @@ def get_pvp_percentil(ticker: str, t: date, janela: int = 504, session=None) -> 
             break
 
     if idx_t is None or pvp_em_t is None:
-        return None
+        return None, 0
 
     start_idx = max(0, idx_t - janela)
     window = [pvps[i] for i in range(start_idx, idx_t) if pvps[i] is not None]
+    n = len(window)
 
-    if len(window) < 252:
-        return None
+    if n < 63:
+        return None, 0
 
-    return float(np.percentile(window, 100) if pvp_em_t >= max(window) else
-                 np.searchsorted(sorted(window), pvp_em_t) / len(window) * 100)
+    percentil = float(np.percentile(window, 100) if pvp_em_t >= max(window) else
+                 np.searchsorted(sorted(window), pvp_em_t) / n * 100)
+
+    if n >= 252:
+        return percentil, janela
+    else:
+        return percentil, n
 
 
 def _meses_atras(t: date, n_meses: int) -> date:
@@ -95,28 +69,16 @@ def _meses_atras(t: date, n_meses: int) -> date:
 def get_dy_n_meses(ticker: str, t: date, n_meses: int, session=None) -> float | None:
     inicio = _meses_atras(t, n_meses)
 
-    fechamento_row = session.execute(
+    preco_ref = session.execute(
         select(PrecoDiario.fechamento).where(
             PrecoDiario.ticker == ticker,
-            PrecoDiario.data == t,
-        )
-    ).scalar_one_or_none()
-
-    precos = session.execute(
-        select(PrecoDiario.data, PrecoDiario.fechamento)
-        .where(
-            PrecoDiario.ticker == ticker,
-            PrecoDiario.data >= inicio,
             PrecoDiario.data <= t,
         )
-        .order_by(PrecoDiario.data.asc())
-    ).all()
+        .order_by(PrecoDiario.data.desc())
+        .limit(1)
+    ).scalar_one_or_none()
 
-    if not precos:
-        return None
-
-    preco_medio = sum(float(p[1]) for p in precos if p[1] is not None) / len(precos)
-    if preco_medio == 0:
+    if preco_ref is None or float(preco_ref) == 0:
         return None
 
     soma_div = session.execute(
@@ -130,7 +92,7 @@ def get_dy_n_meses(ticker: str, t: date, n_meses: int, session=None) -> float | 
     if soma_div == 0:
         return None
 
-    return float(soma_div) / preco_medio
+    return float(soma_div) / float(preco_ref)
 
 
 def get_dy_gap(ticker: str, t: date, session=None) -> float | None:
@@ -147,30 +109,100 @@ def get_dy_gap(ticker: str, t: date, session=None) -> float | None:
     return dy_12m - cdi
 
 
-def get_dy_gap_percentil(ticker: str, t: date, janela: int = 504, session=None) -> float | None:
-    """Percentil do DY Gap na janela rolling até t-1. Cada ponto usa CDI vigente em sua data."""
-    precos = session.execute(
+def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, session=None) -> float | None:
+    if janela is None:
+        janela = get_threshold("dy_janela_pregoes", 252)
+    """Percentil do DY Gap na janela rolling ate t-1. Batch queries em vez de N+1."""
+    from math import prod
+
+    datas_precos = session.execute(
         select(PrecoDiario.data)
         .where(PrecoDiario.ticker == ticker, PrecoDiario.data <= t)
         .order_by(PrecoDiario.data.asc())
     ).scalars().all()
 
-    if len(precos) < 252:
+    if len(datas_precos) < 252:
         return None
 
-    start_idx = max(0, len(precos) - janela)
-    # exclui t do histórico (até t-1) para evitar contaminação trivial
-    datas = precos[start_idx:-1] if len(precos) > start_idx + 1 else []
+    start_idx = max(0, len(datas_precos) - janela)
+    datas = datas_precos[start_idx:-1] if len(datas_precos) > start_idx + 1 else []
 
     if len(datas) < 252:
         return None
 
+    data_min = datas[0]
+    data_max = datas[-1]
+
+    divs = session.execute(
+        select(Dividendo.data_com, Dividendo.valor_cota)
+        .where(
+            Dividendo.ticker == ticker,
+            Dividendo.data_com >= _meses_atras(data_max, 12),
+            Dividendo.data_com <= data_max,
+            Dividendo.valor_cota.isnot(None),
+        )
+        .order_by(Dividendo.data_com.asc())
+    ).all()
+    div_dates = [d.data_com for d in divs]
+    div_vals = [float(d.valor_cota) for d in divs]
+
+    precos_batch = session.execute(
+        select(PrecoDiario.data, PrecoDiario.fechamento)
+        .where(
+            PrecoDiario.ticker == ticker,
+            PrecoDiario.data >= _meses_atras(data_min, 12),
+            PrecoDiario.data <= data_max,
+            PrecoDiario.fechamento.isnot(None),
+        )
+        .order_by(PrecoDiario.data.asc())
+    ).all()
+    preco_map = {p.data: float(p.fechamento) for p in precos_batch}
+
+    cdi_batch = session.execute(
+        select(CdiDiario.data, CdiDiario.taxa_diaria_pct)
+        .where(CdiDiario.data >= _meses_atras(data_min, 12), CdiDiario.data <= data_max)
+        .order_by(CdiDiario.data.asc())
+    ).all()
+    cdi_rows = [(c.data, float(c.taxa_diaria_pct)) for c in cdi_batch]
+
+    def _preco_em(d):
+        preco = preco_map.get(d)
+        if preco is not None:
+            return preco
+        best = None
+        for pd_date, pd_val in precos_batch:
+            if pd_date <= d:
+                best = pd_val
+            else:
+                break
+        return float(best) if best is not None else None
+
+    def _dy_12m_em(d):
+        inicio = _meses_atras(d, 12)
+        soma = 0.0
+        for i, dd in enumerate(div_dates):
+            if inicio < dd <= d:
+                soma += div_vals[i]
+        if soma == 0:
+            return None
+        p = _preco_em(d)
+        if p is None or p == 0:
+            return None
+        return soma / p
+
+    def _cdi_12m_em(d):
+        inicio = _meses_atras(d, 12)
+        taxas = [v for dt, v in cdi_rows if inicio <= dt <= d]
+        if len(taxas) < 200:
+            return None
+        return prod(1.0 + v / 100.0 for v in taxas) - 1.0
+
     gaps = []
     for d in datas:
-        dy = get_dy_n_meses(ticker, d, 12, session)
+        dy = _dy_12m_em(d)
         if dy is None:
             continue
-        cdi = get_cdi_acumulado_12m(d, session)
+        cdi = _cdi_12m_em(d)
         if cdi is None:
             continue
         gaps.append(dy - cdi)

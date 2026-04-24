@@ -4,13 +4,8 @@ import numpy as np
 from scipy import stats as sp_stats
 from sqlalchemy import select
 
-from src.fii_analysis.data.database import RelatorioMensal, Ticker
-
-
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
+from src.fii_analysis.config_yaml import get_threshold
+from src.fii_analysis.data.database import RelatorioMensal, get_cnpj_by_ticker
 
 
 def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t: date | None = None) -> dict:
@@ -23,7 +18,9 @@ def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t
         meses = [6, 12]
     if t is None:
         t = date.today()
-    cnpj = _get_cnpj(ticker, session)
+    elif hasattr(t, "date"):
+        t = t.date()
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return {m: {"coef_angular": None, "r2": None, "n": 0} for m in meses}
 
@@ -67,14 +64,16 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     Parâmetro ``t`` define o ponto de corte point-in-time: só são usados
     relatórios com ``data_entrega <= t``. Default: hoje.
 
-    As três condições (cond1, cond2, cond3) operam sobre **a mesma janela**:
-    os meses do streak detectado em cond1.
+    Janela: últimos 6 relatórios mensais.
     """
     if t is None:
         t = date.today()
-    cnpj = _get_cnpj(ticker, session)
+    elif hasattr(t, "date"):
+        t = t.date()
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
-        return {"destruicao": False, "motivo": "ticker nao encontrado", "meses_consecutivos": 0}
+        return {"destruicao": False, "motivo": "ticker nao encontrado",
+                "meses_consecutivos": 0}
 
     relatorios = session.execute(
         select(
@@ -91,17 +90,16 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
             RelatorioMensal.data_entrega <= t,
         )
         .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(12)
+        .limit(6)
     ).all()
 
     if len(relatorios) < 3:
-        return {"destruicao": False, "motivo": "dados insuficientes", "meses_consecutivos": 0}
+        return {"destruicao": False, "motivo": "dados insuficientes",
+                "meses_consecutivos": 0}
 
-    # cond1: detecta o maior streak de rentab_efetiva > rentab_patrim
-    # relatorios está em ordem DESC; queremos verificar meses consecutivos mais recentes
     consec = 0
     max_consec = 0
-    streak_end_idx = 0  # índice (em relatorios DESC) onde o streak mais recente começa
+    streak_end_idx = 0
     for i, r in enumerate(relatorios):
         ef = float(r.rentab_efetiva) if r.rentab_efetiva is not None else None
         pa = float(r.rentab_patrim) if r.rentab_patrim is not None else None
@@ -109,26 +107,20 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
             consec += 1
             if consec > max_consec:
                 max_consec = consec
-                streak_end_idx = i  # último índice do streak atual (mais antigo no streak)
+                streak_end_idx = i
         else:
             consec = 0
 
-    cond1 = max_consec >= 3
+    cond1 = max_consec >= get_threshold("meses_consec_alerta", 3)
 
-    # Janela do streak: índices 0..streak_end_idx em relatorios (DESC)
-    # = os max_consec meses do streak mais recente detectado
     janela_streak = relatorios[:streak_end_idx + 1]
 
-    # cond2: cotas_emitidas estáveis NA MESMA JANELA do streak
     cotas = [float(r.cotas_emitidas) for r in janela_streak if r.cotas_emitidas is not None]
     cond2 = True
     if len(cotas) >= 2:
-        # cotas[0] = mais recente, cotas[-1] = mais antigo (ordem DESC)
         crescimento = (cotas[0] - cotas[-1]) / cotas[-1] if cotas[-1] > 0 else 0
         cond2 = crescimento <= 0.01
 
-    # cond3: VP por cota com tendência não-positiva NA MESMA JANELA do streak
-    # Inverte para ordem ASC para a regressão temporal fazer sentido (slope correto)
     vp_periodo = [float(r.vp_por_cota) for r in reversed(janela_streak)
                   if r.vp_por_cota is not None]
     cond3 = False
@@ -158,7 +150,7 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
 
 
 def emissoes_recentes(ticker: str, threshold_pct: float = 1.0, session=None) -> list[dict]:
-    cnpj = _get_cnpj(ticker, session)
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return []
 

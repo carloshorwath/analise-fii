@@ -8,3 +8,18 @@ janela_dy_meses:
   - 12
   - 24
   - 36
+thresholds:
+  pvp_percentil_barato: 30
+  dy_gap_percentil_caro: 70
+  meses_consec_alerta: 3
+  dias_staleness: 3
+  significancia: 0.05
+  piso_liquidez: 500000
+  alavancagem_limite: 1.05
+  dy_janela_pregoes: 252
+  pvp_janela_pregoes: 504
+  meses_saudaveis_min: 4
+  cvm_defasagem_dias: 45
+  cotas_crescimento_max: 0.01
+  classificacao_imoveis_min: 0.60
+  classificacao_recebiveis_min: 0.60

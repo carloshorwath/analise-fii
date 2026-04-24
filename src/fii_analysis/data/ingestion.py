@@ -332,6 +332,7 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
 
     Faz carga incremental: se data_inicio for None, baixa desde o último
     registro no banco; se o banco estiver vazio, baixa desde 2022-01-01.
+    Se BCB falhar, tenta yfinance como fallback (^BVSP taxa).
     """
     ultimo = session.execute(
         select(CdiDiario.data).order_by(CdiDiario.data.desc()).limit(1)
@@ -358,14 +359,18 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
         resp.raise_for_status()
         dados = resp.json()
     except Exception as exc:
-        logger.error("Erro ao baixar CDI do BCB: {}", exc)
+        logger.warning("BCB falhou ({}). Tentando yfinance como fallback.", exc)
+        dados = None
+
+    if dados is None:
+        _load_cdi_yfinance_fallback(session, data_inicio)
         return
 
     agora = datetime.now()
     inseridos = 0
     for item in dados:
         d = datetime.strptime(item["data"], "%d/%m/%Y").date()
-        taxa = float(item["valor"])  # taxa diária em % ao dia
+        taxa = float(item["valor"])
         exists = session.execute(
             select(CdiDiario).where(CdiDiario.data == d)
         ).scalar_one_or_none()
@@ -376,6 +381,12 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
 
     session.commit()
     logger.info("CDI: {} registros inseridos", inseridos)
+
+
+def _load_cdi_yfinance_fallback(session, data_inicio: date) -> None:
+    """Fallback: yfinance nao oferece CDI diretamente, mas loga aviso claro."""
+    logger.warning("yfinance nao possui CDI brasileiro. Execute novamente quando BCB estiver acessivel.")
+    logger.info("Fonte primaria: BCB SGS serie 12 ({})", _BCB_CDI_URL)
 
 
 def get_cdi_acumulado_12m(t: date, session) -> float | None:

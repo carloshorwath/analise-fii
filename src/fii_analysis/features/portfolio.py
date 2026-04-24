@@ -5,15 +5,12 @@ import pandas as pd
 from loguru import logger
 from sqlalchemy import func, select
 
-from src.fii_analysis.data.database import BenchmarkDiario, Dividendo, PrecoDiario, RelatorioMensal, Ticker
+from src.fii_analysis.data.database import (
+    BenchmarkDiario, Dividendo, PrecoDiario, RelatorioMensal, Ticker,
+    get_cnpj_by_ticker, volume_medio_21d,
+)
 from src.fii_analysis.features.indicators import get_pvp, get_dy_trailing
 from src.fii_analysis.features.valuation import get_dy_n_meses
-
-
-def _get_cnpj(ticker: str, session) -> str | None:
-    return session.execute(
-        select(Ticker.cnpj).where(Ticker.ticker == ticker)
-    ).scalar_one_or_none()
 
 
 def _get_segmento(ticker: str, session) -> str | None:
@@ -22,34 +19,8 @@ def _get_segmento(ticker: str, session) -> str | None:
     ).scalar_one_or_none()
 
 
-def _volume_medio_21d(ticker: str, t: date, session) -> float | None:
-    """Volume financeiro médio dos últimos 21 pregões até t (inclusive).
-
-    Usa os 21 últimos registros reais da tabela precos_diarios, não dias corridos.
-    """
-    rows = session.execute(
-        select(PrecoDiario.fechamento, PrecoDiario.volume)
-        .where(
-            PrecoDiario.ticker == ticker,
-            PrecoDiario.data <= t,
-        )
-        .order_by(PrecoDiario.data.desc())
-        .limit(21)
-    ).all()
-
-    if not rows:
-        return None
-
-    vol_financeiro = [
-        float(fech) * float(vol)
-        for fech, vol in rows
-        if fech is not None and vol is not None
-    ]
-    return float(np.mean(vol_financeiro)) if vol_financeiro else None
-
-
 def _cvm_defasada(ticker: str, t: date, session) -> bool:
-    cnpj = _get_cnpj(ticker, session)
+    cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return True
     ultima_entrega = session.execute(
@@ -83,7 +54,7 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
         data_ultimo = ultimo[0]
         fech_ultimo = float(ultimo[1]) if ultimo[1] else None
 
-        cnpj = _get_cnpj(ticker, session)
+        cnpj = get_cnpj_by_ticker(ticker, session)
         vp_row = None
         if cnpj:
             vp_row = session.execute(
@@ -132,7 +103,7 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
 
         segmento = _get_segmento(ticker, session)
         cvm_def = _cvm_defasada(ticker, data_ultimo, session)
-        vol_medio = _volume_medio_21d(ticker, data_ultimo, session)
+        vol_medio = volume_medio_21d(ticker, data_ultimo, session)
 
         rows.append({
             "ticker": ticker, "preco": fech_ultimo, "vp": vp, "pvp": pvp,

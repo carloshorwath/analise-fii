@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from src.fii_analysis.data.database import Ticker, create_tables, get_session
 from src.fii_analysis.data.ingestion import (
+    load_cdi_to_db,
     load_cvm_to_db,
     load_dividends_yfinance,
     load_prices_yfinance,
@@ -69,7 +70,13 @@ def main():
         except Exception as e:
             logger.error("Erro ao processar CVM {}: {}", year, e)
 
-    logger.info("--- Etapa 3: Carga precos e dividendos (yfinance) ---")
+    logger.info("--- Etapa 3: Carga CDI diario (BCB SGS serie 12) ---")
+    try:
+        load_cdi_to_db(session)
+    except Exception as e:
+        logger.error("Erro CDI: {}", e)
+
+    logger.info("--- Etapa 4: Carga precos e dividendos (yfinance) ---")
     tickers = session.scalars(select(Ticker)).all()
     if not tickers:
         logger.warning("Nenhum ticker cadastrado. Cadastre FIIs na tabela tickers antes.")

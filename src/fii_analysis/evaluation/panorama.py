@@ -113,8 +113,8 @@ def render_fii_detalhe(ticker: str):
 
     if ultimo:
         for janela in [252, 504, 756]:
-            pct = get_pvp_percentil(ticker, ultimo, janela, session)
-            table.add_row(f"P/VP pct ({janela}d)", _fmt(pct, ".1f") + " pct" if pct else "n/d")
+            pct_val, jan_usada = get_pvp_percentil(ticker, ultimo, janela, session)
+            table.add_row(f"P/VP pct ({jan_usada}d)", _fmt(pct_val, ".1f") + " pct" if pct_val is not None else "n/d")
 
         for n_meses in [12, 24, 36]:
             dy = get_dy_n_meses(ticker, ultimo, n_meses, session)
