@@ -9,8 +9,8 @@ st.set_page_config(page_title="Otimizador de Thresholds", layout="wide")
 
 st.title("🎯 Otimizador de Thresholds de Sinais")
 st.markdown("""
-Esta ferramenta busca as melhores combinações de thresholds para sinais de BUY e SELL baseados em P/VP Percentil, DY Gap Percentil e Alertas de Distribuição.
-A otimização utiliza um split temporal rigoroso (Treino/Validação/Teste) para mitigar overfitting.
+Esta ferramenta busca as melhores combinações de thresholds para sinais de BUY e SELL baseados em P/VP Percentil e Alertas de Distribuição.
+A otimização utiliza um split temporal diário rigoroso (Treino/Validação/Teste) para mitigar overfitting.
 """)
 
 with get_session_ctx() as session:
@@ -42,15 +42,13 @@ if st.button("Otimizar"):
                 
                 st.subheader("🏁 Resultado da Otimização")
                 
-                c1, c2, c3, c4 = st.columns(4)
+                c1, c2, c3 = st.columns(3)
                 with c1:
                     color = "green" if sinal == "BUY" else "red" if sinal == "SELL" else "gray"
                     st.markdown(f"**Sinal Atual:** <span style='color:{color}; font-size:24px; font-weight:bold;'>{sinal}</span>", unsafe_allow_html=True)
                 with c2:
                     st.metric("P/VP Percentil", f"{inds.get('pvp_pct', 0):.1f}%")
                 with c3:
-                    st.metric("DY Gap Percentil", f"{inds.get('dy_gap_pct', 0):.1f}%")
-                with c4:
                     st.metric("Meses Alerta", inds.get("meses_alerta", 0))
 
                 # --- PARAMS ---
@@ -64,19 +62,19 @@ if st.button("Otimizar"):
                 col_t, col_v, col_ts = st.columns(3)
                 
                 with col_t:
-                    st.info(f"**TREINO** ({n_splits['train']} meses)")
+                    st.info(f"**TREINO** ({n_splits['train']} pregões)")
                     st.metric("Retorno Médio BUY", f"{train_score['avg_return_buy']*100:.2f}%")
                     st.metric("Retorno Médio SELL", f"{train_score['avg_return_sell']*100:.2f}%")
                     st.caption(f"Eventos: B:{train_score['n_buy']} | S:{train_score['n_sell']}")
                 
                 with col_v:
-                    st.success(f"**VALIDAÇÃO** ({n_splits['val']} meses)")
+                    st.success(f"**VALIDAÇÃO** ({n_splits['val']} pregões)")
                     st.metric("Retorno Médio BUY", f"{val_score['avg_return_buy']*100:.2f}%")
                     st.metric("Retorno Médio SELL", f"{val_score['avg_return_sell']*100:.2f}%")
                     st.caption(f"Eventos: B:{val_score['n_buy']} | S:{val_score['n_sell']}")
 
                 with col_ts:
-                    st.warning(f"**TESTE (Out-of-sample)** ({n_splits['test']} meses)")
+                    st.warning(f"**TESTE (Out-of-sample)** ({n_splits['test']} pregões)")
                     st.metric("Retorno Médio BUY", f"{test_result['avg_return_buy']*100:.2f}%")
                     st.metric("Retorno Médio SELL", f"{test_result['avg_return_sell']*100:.2f}%")
                     st.caption(f"Eventos: B:{test_result['n_buy']} | S:{test_result['n_sell']}")
@@ -93,8 +91,6 @@ if st.button("Otimizar"):
                 for r in grid_data:
                     p = r["params"]
                     if (p["pvp_percentil_sell"] == best_params["pvp_percentil_sell"] and
-                        p["dy_gap_percentil_buy"] == best_params["dy_gap_percentil_buy"] and
-                        p["dy_gap_percentil_sell"] == best_params["dy_gap_percentil_sell"] and
                         p["meses_alerta_sell"] == best_params["meses_alerta_sell"]):
                         sens.append({
                             "threshold": p["pvp_percentil_buy"],
@@ -109,12 +105,12 @@ if st.button("Otimizar"):
                     st.plotly_chart(fig, use_container_width=True)
 
                 st.warning("⚠️ **Modelo experimental.** Poucos eventos por split. Não usar como única base de decisão.")
-                st.caption(f"Nota: Foram descartados {len(result['indicator_history'])} relatórios com dados faltantes ou indicadores fora de janela.")
+                st.caption(f"Nota: Foram analisados dados diários alinhados com relatórios CVM via merge_asof.")
 
 st.sidebar.markdown("""
 ### Como funciona?
-1. **Grid Search**: Testa centenas de combinações de thresholds.
-2. **Walk-Forward**: Treina nos primeiros 60% dos dados, valida nos 20% seguintes e testa nos últimos 20%.
-3. **Point-in-Time**: Todas as decisões são tomadas apenas com dados disponíveis na data de entrega do relatório CVM.
+1. **Grid Search**: Testa combinações de thresholds de P/VP Percentil e Alertas.
+2. **Walk-Forward**: Treina nos primeiros 60% dos pregões, valida nos 20% seguintes e testa nos últimos 20%.
+3. **Point-in-Time**: Todas as decisões são tomadas apenas com dados disponíveis no dia do pregão (VP e Alertas do último relatório entregue).
 4. **Placebo**: Compara o retorno real com 200 simulações de datas aleatórias no período de teste.
 """)
