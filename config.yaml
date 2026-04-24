@@ -23,3 +23,43 @@ thresholds:
   cotas_crescimento_max: 0.01
   classificacao_imoveis_min: 0.60
   classificacao_recebiveis_min: 0.60
+
+sinais:
+  forward_days: 20
+  score_buy_threshold: 2
+  score_sell_threshold: -2
+  tickers:
+    KNIP11:
+      buy:
+        pvp_percentil_max: 30
+        dy_gap_percentil_min: 70
+        meses_alerta_max: 0
+      sell:
+        pvp_percentil_min: 70
+        dist_maior_geracao: true
+        meses_alerta_min: 2
+    CPTS11:
+      buy:
+        pvp_percentil_max: 20
+        dy_gap_percentil_min: 80
+        meses_alerta_max: 0
+      sell:
+        pvp_percentil_min: 80
+        dist_maior_geracao: true
+    HSRE11:
+      buy:
+        pvp_max: 0.85
+        pvp_percentil_max: 20
+      sell:
+        pvp_min: 1.05
+    CPSH11:
+      buy:
+        pvp_percentil_max: 30
+        dy_gap_percentil_min: 70
+      sell:
+        pvp_percentil_min: 70
+    GARE11:
+      buy:
+        pvp_max: 0.90
+      sell:
+        pvp_min: 1.05
