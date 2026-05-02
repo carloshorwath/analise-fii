@@ -13,13 +13,14 @@ from src.fii_analysis.data.database import Dividendo, PrecoDiario, get_session
 from src.fii_analysis.features.dividend_window import get_dividend_windows
 from src.fii_analysis.models.statistical import event_study
 
-TICKERS = ["KNIP11", "CPTS11", "HSRE11", "GARE11", "CPSH11"]
+TICKERS = ["KNIP11", "CPTS11", "HSRE11", "GARE11", "CPSH11", "SNEL11"]
 COLORS = {
     "KNIP11": "#1f77b4",
     "CPTS11": "#ff7f0e",
     "HSRE11": "#2ca02c",
     "GARE11": "#d62728",
     "CPSH11": "#9467bd",
+    "SNEL11": "#e377c2",
 }
 OUTPUT = Path(__file__).resolve().parents[1] / "dados" / "car_treino.png"
 

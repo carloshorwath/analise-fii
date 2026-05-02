@@ -174,6 +174,7 @@ https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_2026.zip
 | HSRE11 | Tijolo | 2020-12 |
 | CPSH11 | Híbrido | 2023-07 |
 | GARE11 | Tijolo | 2024-03 |
+| SNEL11 | Energia | 2023-12 |
 
 **Inativos** (preservar histórico, marcar `inativo_em` em `tickers`, excluir de panorama/radar/alertas):
 

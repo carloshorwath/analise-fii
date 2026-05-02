@@ -13,6 +13,7 @@ TICKERS = [
     "GARE11",
     "HSRE11",
     "KNIP11",
+    "SNEL11",
     "SNFF11",
 ]
 

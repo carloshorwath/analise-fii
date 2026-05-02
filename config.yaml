@@ -63,3 +63,8 @@ sinais:
         pvp_max: 0.90
       sell:
         pvp_min: 1.05
+    SNEL11:
+      buy:
+        pvp_percentil_max: 30
+      sell:
+        pvp_percentil_min: 70

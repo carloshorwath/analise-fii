@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
-TICKERS = ["HSRE11", "GARE11", "CPSH11", "CPTS11", "KNIP11"]
+TICKERS = ["HSRE11", "GARE11", "CPSH11", "CPTS11", "KNIP11", "SNEL11"]
 BASE_URL = "https://www.fundsexplorer.com.br/funds/{ticker}"
 OUTPUT = Path(__file__).resolve().parents[1] / "dados" / "validacao_fundsexplorer.csv"
 

@@ -203,7 +203,7 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             elif buy_ci["lower"] is not None:
                 st.markdown(f"**IC 95% (bootstrap i.i.d., n independente):** [{buy_ci['lower']*100:+.2f}%, {buy_ci['upper']*100:+.2f}%]")
                 st.caption(f"Largura do IC: {buy_ci['width']*100:.2f}% — {'ESTREITO' if buy_ci['width'] < 0.05 else 'LARGO (baixa confianca)'}")
-            if buy_after_cost["mean_after_cost"] != buy_risk["mean"]:
+            if buy_after_cost.get("mean_after_cost") is not None and buy_after_cost["mean_after_cost"] != buy_risk["mean"]:
                 cost_impact = (buy_after_cost["mean_after_cost"] - buy_risk["mean"]) * 100
                 st.markdown(f"**Retorno pos-custo:** {buy_after_cost['mean_after_cost']*100:+.2f}% (impacto: {cost_impact:+.3f}%)")
 
