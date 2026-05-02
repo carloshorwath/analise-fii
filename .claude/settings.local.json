@@ -59,7 +59,21 @@
       "Bash(wait)",
       "Bash(kilocode list *)",
       "Bash(kilocode sessions *)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(kilocode stop *)",
+      "Bash(kilocode session *)",
+      "Bash(grep -v \":0$\")",
+      "Bash(xargs wc *)",
+      "Bash(grep -E \"\\\\.md$|\\\\.txt$|\\\\.yaml$|\\\\.yml$|requirements\")",
+      "Bash(pkill -f \"kilocode serve\")",
+      "Bash(C:/ProgramData/anaconda3/python.exe -m streamlit run app/streamlit_app.py --server.headless true --server.port 8501)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(C:/ProgramData/anaconda3/python.exe -m streamlit run app/streamlit_app.py --server.headless true --server.port 8765 --server.runOnSave false)",
+      "Bash(echo \"started pid=$!\")",
+      "Read(//tmp/**)",
+      "Bash(pkill -f \"streamlit run app/streamlit_app.py\")",
+      "Bash(C:/ProgramData/anaconda3/python.exe -m streamlit run app/streamlit_app.py --server.headless true --server.port 8766 --server.runOnSave false)",
+      "Bash(pkill -f \"server.port 8766\")"
     ]
   }
 }

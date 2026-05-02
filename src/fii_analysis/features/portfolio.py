@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 from loguru import logger
 from sqlalchemy import func, select
 
@@ -34,6 +35,42 @@ def _cvm_defasada(ticker: str, t: date, session) -> bool:
     return (t - ultima_entrega).days > 45
 
 
+def _get_return_n_months(ticker: str, fim: date, n_meses: int, session) -> float | None:
+    inicio_ref = fim - relativedelta(months=n_meses)
+
+    preco_inicio = session.execute(
+        select(PrecoDiario.fechamento_aj)
+        .where(
+            PrecoDiario.ticker == ticker,
+            PrecoDiario.data >= inicio_ref,
+            PrecoDiario.fechamento_aj.isnot(None),
+        )
+        .order_by(PrecoDiario.data.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    preco_fim = session.execute(
+        select(PrecoDiario.fechamento_aj)
+        .where(
+            PrecoDiario.ticker == ticker,
+            PrecoDiario.data <= fim,
+            PrecoDiario.fechamento_aj.isnot(None),
+        )
+        .order_by(PrecoDiario.data.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if preco_inicio is None or preco_fim is None:
+        return None
+
+    preco_inicio = float(preco_inicio)
+    preco_fim = float(preco_fim)
+    if preco_inicio <= 0:
+        return None
+
+    return preco_fim / preco_inicio - 1.0
+
+
 def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
     rows = []
     for ticker in tickers:
@@ -47,7 +84,8 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
         if ultimo is None:
             rows.append({"ticker": ticker, "preco": None, "vp": None, "pvp": None,
                          "dy_12m": None, "dy_24m": None, "dy_mes": None,
-                         "rent_acum": None, "segmento": None, "cvm_defasada": True,
+                         "rent_12m": None, "rent_24m": None,
+                         "segmento": None, "cvm_defasada": True,
                          "volume_medio_21d": None})
             continue
 
@@ -87,19 +125,8 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
             ).scalar_one_or_none()
         dy_mes = float(dy_mes_row) / 100.0 if dy_mes_row is not None else None
 
-        primeiro = session.execute(
-            select(PrecoDiario.fechamento_aj)
-            .where(PrecoDiario.ticker == ticker)
-            .order_by(PrecoDiario.data.asc())
-            .limit(1)
-        ).scalar_one_or_none()
-        ultimo_aj = session.execute(
-            select(PrecoDiario.fechamento_aj)
-            .where(PrecoDiario.ticker == ticker)
-            .order_by(PrecoDiario.data.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        rent_acum = (float(ultimo_aj) / float(primeiro) - 1) if (primeiro and ultimo_aj and float(primeiro) > 0) else None
+        rent_12m = _get_return_n_months(ticker, data_ultimo, 12, session)
+        rent_24m = _get_return_n_months(ticker, data_ultimo, 24, session)
 
         segmento = _get_segmento(ticker, session)
         cvm_def = _cvm_defasada(ticker, data_ultimo, session)
@@ -108,7 +135,7 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
         rows.append({
             "ticker": ticker, "preco": fech_ultimo, "vp": vp, "pvp": pvp,
             "dy_12m": dy_12m, "dy_24m": dy_24m, "dy_mes": dy_mes,
-            "rent_acum": rent_acum, "segmento": segmento,
+            "rent_12m": rent_12m, "rent_24m": rent_24m, "segmento": segmento,
             "cvm_defasada": cvm_def, "volume_medio_21d": vol_medio,
         })
 

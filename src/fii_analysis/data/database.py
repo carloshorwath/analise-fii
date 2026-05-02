@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Generator
 
-from sqlalchemy import BigInteger, Date, DateTime, Integer, Numeric, String, Text, create_engine, func, select
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -129,6 +130,192 @@ class Carteira(Base):
     data_compra: Mapped[date] = mapped_column(Date, nullable=False)
 
 
+class SnapshotRun(Base):
+    """Envelope de metadados de um snapshot diário. Imutável após status=ready."""
+
+    __tablename__ = "snapshot_runs"
+    __table_args__ = (
+        Index("ix_snapshot_runs_date_status", "data_referencia", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data_referencia: Mapped[date] = mapped_column(Date, nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)  # running | ready | failed
+    engine_version_global: Mapped[str | None] = mapped_column(String)
+    universe_scope: Mapped[str | None] = mapped_column(String)  # curado | carteira | db_ativos
+    universe_hash: Mapped[str | None] = mapped_column(String)
+    carteira_hash: Mapped[str | None] = mapped_column(String)
+    base_preco_ate: Mapped[date | None] = mapped_column(Date)
+    base_dividendo_ate: Mapped[date | None] = mapped_column(Date)
+    base_cdi_ate: Mapped[date | None] = mapped_column(Date)
+    mensagem_erro: Mapped[str | None] = mapped_column(Text)
+    tickers_falhos: Mapped[str | None] = mapped_column(Text)  # JSON list de tickers que falharam
+    finalizado_em: Mapped[datetime | None] = mapped_column(DateTime)
+
+    # Focus BCB (contexto macro — preenchido uma vez por run)
+    focus_data_referencia: Mapped[date | None] = mapped_column(Date)
+    focus_coletado_em: Mapped[datetime | None] = mapped_column(DateTime)
+    focus_selic_3m: Mapped[float | None] = mapped_column(Numeric)
+    focus_selic_6m: Mapped[float | None] = mapped_column(Numeric)
+    focus_selic_12m: Mapped[float | None] = mapped_column(Numeric)
+    focus_status: Mapped[str | None] = mapped_column(String)
+
+
+class SnapshotTickerMetrics(Base):
+    """Métricas pré-calculadas por ticker em um snapshot_run."""
+
+    __tablename__ = "snapshot_ticker_metrics"
+    __table_args__ = (
+        Index("ix_snapshot_ticker_metrics_run_ticker", "run_id", "ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    preco: Mapped[float | None] = mapped_column(Numeric)
+    vp: Mapped[float | None] = mapped_column(Numeric)
+    pvp: Mapped[float | None] = mapped_column(Numeric)
+    pvp_percentil: Mapped[float | None] = mapped_column(Numeric)
+    dy_12m: Mapped[float | None] = mapped_column(Numeric)
+    dy_24m: Mapped[float | None] = mapped_column(Numeric)
+    rent_12m: Mapped[float | None] = mapped_column(Numeric)
+    rent_24m: Mapped[float | None] = mapped_column(Numeric)
+    dy_gap: Mapped[float | None] = mapped_column(Numeric)
+    dy_gap_percentil: Mapped[float | None] = mapped_column(Numeric)
+    volume_21d: Mapped[float | None] = mapped_column(Numeric)
+    cvm_defasada: Mapped[bool | None] = mapped_column(Boolean)
+    segmento: Mapped[str | None] = mapped_column(String)
+
+
+class SnapshotRadar(Base):
+    """Flags booleanas do radar por ticker em um snapshot_run."""
+
+    __tablename__ = "snapshot_radar"
+    __table_args__ = (
+        Index("ix_snapshot_radar_run_ticker", "run_id", "ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    pvp_baixo: Mapped[bool | None] = mapped_column(Boolean)
+    dy_gap_alto: Mapped[bool | None] = mapped_column(Boolean)
+    saude_ok: Mapped[bool | None] = mapped_column(Boolean)
+    liquidez_ok: Mapped[bool | None] = mapped_column(Boolean)
+    vistos: Mapped[int | None] = mapped_column(Integer)  # contagem de filtros que passam (0-4)
+    saude_motivo: Mapped[str | None] = mapped_column(Text)
+
+
+class SnapshotDecisions(Base):
+    """Decisões consolidadas por ticker (Fase 3). Versionamento por motor por linha."""
+
+    __tablename__ = "snapshot_decisions"
+    __table_args__ = (
+        Index("ix_snapshot_decisions_run_ticker", "run_id", "ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    data_referencia: Mapped[date | None] = mapped_column(Date)
+
+    # Sinais brutos dos 3 motores
+    sinal_otimizador: Mapped[str | None] = mapped_column(String)
+    sinal_episodio: Mapped[str | None] = mapped_column(String)
+    sinal_walkforward: Mapped[str | None] = mapped_column(String)
+
+    # Ação derivada
+    acao: Mapped[str | None] = mapped_column(String)
+    nivel_concordancia: Mapped[str | None] = mapped_column(String)
+    n_concordam_buy: Mapped[int | None] = mapped_column(Integer)
+    n_concordam_sell: Mapped[int | None] = mapped_column(Integer)
+
+    # Flags de risco (colunas consultáveis — não usar rationale_json para filtrar)
+    flag_destruicao_capital: Mapped[bool | None] = mapped_column(Boolean)
+    motivo_destruicao: Mapped[str | None] = mapped_column(Text)
+    flag_emissao_recente: Mapped[bool | None] = mapped_column(Boolean)
+    flag_pvp_caro: Mapped[bool | None] = mapped_column(Boolean)
+    flag_dy_gap_baixo: Mapped[bool | None] = mapped_column(Boolean)
+
+    # Contexto de mercado no momento do snapshot
+    preco_referencia: Mapped[float | None] = mapped_column(Numeric)
+    pvp_atual: Mapped[float | None] = mapped_column(Numeric)
+    pvp_percentil: Mapped[float | None] = mapped_column(Numeric)
+    dy_gap_percentil: Mapped[float | None] = mapped_column(Numeric)
+
+    # Janelas abertas
+    episodio_eh_novo: Mapped[bool | None] = mapped_column(Boolean)
+    pregoes_desde_ultimo_episodio: Mapped[int | None] = mapped_column(Integer)
+    janela_captura_aberta: Mapped[bool | None] = mapped_column(Boolean)
+    proxima_data_com_estimada: Mapped[date | None] = mapped_column(Date)
+    dias_ate_proxima_data_com: Mapped[int | None] = mapped_column(Integer)
+
+    # CDI Sensitivity (diagnostico V1 - NAO altera acao)
+    cdi_status: Mapped[str | None] = mapped_column(String)
+    cdi_beta: Mapped[float | None] = mapped_column(Numeric)
+    cdi_r_squared: Mapped[float | None] = mapped_column(Numeric)
+    cdi_p_value: Mapped[float | None] = mapped_column(Numeric)
+    cdi_residuo_atual: Mapped[float | None] = mapped_column(Numeric)
+    cdi_residuo_percentil: Mapped[float | None] = mapped_column(Numeric)
+
+    # CDI + Focus (contexto macro — NÃO altera ação)
+    cdi_delta_focus_12m: Mapped[float | None] = mapped_column(Numeric)
+    cdi_repricing_12m: Mapped[float | None] = mapped_column(Numeric)
+
+    # Auditoria humana — não usar como base de queries analíticas (dívida técnica v1)
+    rationale_json: Mapped[str | None] = mapped_column(Text)
+
+    # Versionamento por motor por linha (não só no snapshot_run)
+    version_otimizador: Mapped[str | None] = mapped_column(String)
+    version_episodios: Mapped[str | None] = mapped_column(String)
+    version_walkforward: Mapped[str | None] = mapped_column(String)
+    version_recommender: Mapped[str | None] = mapped_column(String)
+
+
+class SnapshotPortfolioAdvices(Base):
+    """Conselhos de carteira pré-calculados por run_id + carteira_hash."""
+
+    __tablename__ = "snapshot_portfolio_advices"
+    __table_args__ = (
+        Index("ix_snapshot_portfolio_advices_run_ticker", "run_id", "ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    carteira_hash: Mapped[str | None] = mapped_column(String)
+    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    quantidade: Mapped[int | None] = mapped_column(Integer)
+    preco_medio: Mapped[float | None] = mapped_column(Numeric)
+    preco_atual: Mapped[float | None] = mapped_column(Numeric)
+    valor_mercado: Mapped[float | None] = mapped_column(Numeric)
+    peso_carteira: Mapped[float | None] = mapped_column(Numeric)
+    badge: Mapped[str | None] = mapped_column(String)
+    prioridade: Mapped[str | None] = mapped_column(String)
+    acao_recomendada: Mapped[str | None] = mapped_column(String)
+    nivel_concordancia: Mapped[str | None] = mapped_column(String)
+    flags_resumo: Mapped[str | None] = mapped_column(String)
+    racional: Mapped[str | None] = mapped_column(Text)
+    valida_ate: Mapped[date | None] = mapped_column(Date)
+
+
+class SnapshotStructuralAlerts(Base):
+    """Alertas estruturais de concentração de carteira por run_id + carteira_hash."""
+
+    __tablename__ = "snapshot_structural_alerts"
+    __table_args__ = (
+        Index("ix_snapshot_structural_alerts_run", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    carteira_hash: Mapped[str | None] = mapped_column(String)
+    tipo: Mapped[str | None] = mapped_column(String)
+    severidade: Mapped[str | None] = mapped_column(String)
+    descricao: Mapped[str | None] = mapped_column(Text)
+    valor: Mapped[float | None] = mapped_column(Numeric)
+
+
 def get_engine(db_path: Path = DEFAULT_DB_PATH):
     global _engine
     if _engine is not None and Path(_engine.url.database) == Path(db_path):
@@ -192,3 +379,87 @@ def volume_medio_21d(ticker: str, t: date, session: Session) -> float | None:
         return None
     vals = [float(f) * float(v) for f, v in rows if f is not None and v is not None]
     return sum(vals) / len(vals) if vals else None
+
+
+# =============================================================================
+# Helpers de snapshot
+# =============================================================================
+
+
+def get_latest_ready_snapshot_run(
+    session: Session,
+    scope: str | None = None,
+    carteira_hash: str | None = None,
+) -> SnapshotRun | None:
+    q = select(SnapshotRun).where(SnapshotRun.status == "ready")
+    if scope is not None:
+        q = q.where(SnapshotRun.universe_scope == scope)
+    if carteira_hash is not None:
+        q = q.where(SnapshotRun.carteira_hash == carteira_hash)
+    q = q.order_by(SnapshotRun.data_referencia.desc(), SnapshotRun.criado_em.desc()).limit(1)
+    return session.execute(q).scalar_one_or_none()
+
+
+def get_snapshot_run_by_date(
+    session: Session, data_ref: date, scope: str | None = None
+) -> SnapshotRun | None:
+    q = select(SnapshotRun).where(
+        SnapshotRun.data_referencia == data_ref,
+        SnapshotRun.status == "ready",
+    )
+    if scope is not None:
+        q = q.where(SnapshotRun.universe_scope == scope)
+    q = q.order_by(SnapshotRun.criado_em.desc()).limit(1)
+    return session.execute(q).scalar_one_or_none()
+
+
+def create_snapshot_run(
+    session: Session,
+    *,
+    data_referencia: date,
+    scope: str,
+    universe_hash: str,
+    carteira_hash: str | None = None,
+    engine_version: str = "snapshot_v1",
+    base_preco_ate: date | None = None,
+    base_dividendo_ate: date | None = None,
+    base_cdi_ate: date | None = None,
+) -> int:
+    run = SnapshotRun(
+        data_referencia=data_referencia,
+        criado_em=datetime.now(timezone.utc),
+        status="running",
+        engine_version_global=engine_version,
+        universe_scope=scope,
+        universe_hash=universe_hash,
+        carteira_hash=carteira_hash,
+        base_preco_ate=base_preco_ate,
+        base_dividendo_ate=base_dividendo_ate,
+        base_cdi_ate=base_cdi_ate,
+    )
+    session.add(run)
+    session.flush()
+    return run.id
+
+
+def mark_snapshot_run_ready(
+    session: Session, run_id: int, *, tickers_falhos: list[str] | None = None
+) -> None:
+    run = session.get(SnapshotRun, run_id)
+    if run is None:
+        return
+    run.status = "ready"
+    run.finalizado_em = datetime.now(timezone.utc)
+    if tickers_falhos:
+        run.tickers_falhos = json.dumps(tickers_falhos)
+    session.flush()
+
+
+def mark_snapshot_run_failed(session: Session, run_id: int, erro: str) -> None:
+    run = session.get(SnapshotRun, run_id)
+    if run is None:
+        return
+    run.status = "failed"
+    run.mensagem_erro = erro[:500]
+    run.finalizado_em = datetime.now(timezone.utc)
+    session.flush()

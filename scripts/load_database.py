@@ -7,13 +7,15 @@ import requests
 from loguru import logger
 from sqlalchemy import select
 
-from src.fii_analysis.data.database import Ticker, create_tables, get_session
+from src.fii_analysis.data.database import Carteira, Ticker, create_tables, get_session
+from src.fii_analysis.data.focus_bcb import fetch_focus_selic
 from src.fii_analysis.data.ingestion import (
     load_cdi_to_db,
     load_cvm_to_db,
     load_dividends_yfinance,
     load_prices_yfinance,
 )
+from src.fii_analysis.evaluation.daily_snapshots import generate_daily_snapshot
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = PROJECT_ROOT / "dados" / "cvm" / "raw"
@@ -92,6 +94,40 @@ def main():
             load_dividends_yfinance(t.ticker, session)
         except Exception as e:
             logger.error("Erro dividendos {}: {}", t.ticker, e)
+
+    logger.info("--- Etapa 5: Focus Selic (BCB ExpectativasMercadoSelic) ---")
+    try:
+        focus = fetch_focus_selic(force=True)
+        logger.info(
+            "Focus: status={} | 3m={} | 6m={} | 12m={} | data={}",
+            focus.focus_status,
+            focus.focus_selic_3m,
+            focus.focus_selic_6m,
+            focus.focus_selic_12m,
+            focus.focus_data_referencia,
+        )
+    except Exception as e:
+        logger.error("Erro Focus Selic: {}", e)
+
+    logger.info("--- Etapa 6: Snapshot diario (universo curado) ---")
+    try:
+        generate_daily_snapshot(session, force=True)
+    except Exception as e:
+        logger.error("Erro snapshot curado: {}", e)
+
+    logger.info("--- Etapa 7: Snapshot diario (carteira do usuario) ---")
+    try:
+        carteira_rows = session.execute(select(Carteira)).scalars().all()
+        if carteira_rows:
+            holdings = [
+                {"ticker": c.ticker, "quantidade": c.quantidade, "preco_medio": c.preco_medio}
+                for c in carteira_rows
+            ]
+            generate_daily_snapshot(session, scope="carteira", holdings=holdings, force=True)
+        else:
+            logger.info("Nenhuma posicao na carteira — pulando snapshot carteira.")
+    except Exception as e:
+        logger.error("Erro snapshot carteira: {}", e)
 
     session.close()
     logger.info("=== Concluido ===")

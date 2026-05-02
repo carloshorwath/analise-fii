@@ -1,0 +1,4 @@
+C:\Users\carlo\AppData\Roaming\Python\Python313\site-packages\authlib\_joserfc_helpers.py:8: AuthlibDeprecationWarning: authlib.jose module is deprecated, please use joserfc instead.
+It will be compatible before version 2.0.0.
+  from authlib.jose import ECKey
+2026-04-25 13:53:12.466 Port 8501 is already in use

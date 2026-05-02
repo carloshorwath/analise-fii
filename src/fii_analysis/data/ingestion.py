@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -331,8 +332,9 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
     """Carrega CDI diário do BCB (série 12) para a tabela cdi_diario.
 
     Faz carga incremental: se data_inicio for None, baixa desde o último
-    registro no banco; se o banco estiver vazio, baixa desde 2022-01-01.
-    Se BCB falhar, tenta yfinance como fallback (^BVSP taxa).
+    registro no banco; se o banco estiver vazio, baixa desde 2014-01-01.
+    O BCB SGS limita requisições diárias a 10 anos; esta função divide
+    automaticamente em chunks de 5 anos.
     """
     ultimo = session.execute(
         select(CdiDiario.data).order_by(CdiDiario.data.desc()).limit(1)
@@ -350,39 +352,46 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
         logger.info("CDI ja atualizado ate hoje")
         return
 
-    url = (
-        f"{_BCB_CDI_URL}"
-        f"&dataInicial={data_inicio.strftime('%d/%m/%Y')}"
-        f"&dataFinal={date.today().strftime('%d/%m/%Y')}"
-    )
-    logger.info("Baixando CDI de {} ate hoje via BCB", data_inicio)
-    try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        dados = resp.json()
-    except Exception as exc:
-        logger.warning("BCB falhou ({}). Tentando yfinance como fallback.", exc)
-        dados = None
+    # BCB SGS limits daily series queries to 10 years.
+    # Use 5-year chunks for safety.
+    hoje = date.today()
+    total_inseridos = 0
+    chunk_start = data_inicio
 
-    if dados is None:
-        _load_cdi_yfinance_fallback(session, data_inicio)
-        return
+    while chunk_start <= hoje:
+        chunk_end = min(chunk_start + relativedelta(years=5), hoje)
+        url = (
+            f"{_BCB_CDI_URL}"
+            f"&dataInicial={chunk_start.strftime('%d/%m/%Y')}"
+            f"&dataFinal={chunk_end.strftime('%d/%m/%Y')}"
+        )
+        logger.info("Baixando CDI de {} ate {} via BCB", chunk_start, chunk_end)
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            dados = resp.json()
+        except Exception as exc:
+            logger.warning("BCB falhou para chunk {}-{} ({}). Parando backfill.", chunk_start, chunk_end, exc)
+            break
 
-    agora = datetime.now()
-    inseridos = 0
-    for item in dados:
-        d = datetime.strptime(item["data"], "%d/%m/%Y").date()
-        taxa = float(item["valor"])
-        exists = session.execute(
-            select(CdiDiario).where(CdiDiario.data == d)
-        ).scalar_one_or_none()
-        if exists:
-            continue
-        session.add(CdiDiario(data=d, taxa_diaria_pct=taxa, coletado_em=agora))
-        inseridos += 1
+        agora = datetime.now()
+        inseridos = 0
+        for item in dados:
+            d = datetime.strptime(item["data"], "%d/%m/%Y").date()
+            taxa = float(item["valor"])
+            exists = session.execute(
+                select(CdiDiario).where(CdiDiario.data == d)
+            ).scalar_one_or_none()
+            if exists:
+                continue
+            session.add(CdiDiario(data=d, taxa_diaria_pct=taxa, coletado_em=agora))
+            inseridos += 1
 
-    session.commit()
-    logger.info("CDI: {} registros inseridos", inseridos)
+        session.commit()
+        total_inseridos += inseridos
+        chunk_start = chunk_end + timedelta(days=1)
+
+    logger.info("CDI: {} registros inseridos no total", total_inseridos)
 
 
 def _load_cdi_yfinance_fallback(session, data_inicio: date) -> None:
@@ -391,26 +400,9 @@ def _load_cdi_yfinance_fallback(session, data_inicio: date) -> None:
     logger.info("Fonte primaria: BCB SGS serie 12 ({})", _BCB_CDI_URL)
 
 
-def get_cdi_acumulado_12m(t: date, session) -> float | None:
-    """Retorna CDI acumulado nos 12 meses anteriores a t (como fração, ex: 0.105).
-
-    Usa registros point-in-time da tabela cdi_diario.
-    Retorna None se houver dados insuficientes (< 200 dias úteis).
-    """
-    from math import prod
-    inicio = date(t.year - 1, t.month, t.day) if t.month != 2 or t.day != 29 else date(t.year - 1, 2, 28)
-    registros = session.execute(
-        select(CdiDiario.taxa_diaria_pct)
-        .where(CdiDiario.data >= inicio, CdiDiario.data <= t)
-        .order_by(CdiDiario.data.asc())
-    ).scalars().all()
-
-    if len(registros) < 200:
-        return None
-
-    # acumula: (1 + taxa_diaria/100) para cada dia
-    acumulado = prod((1.0 + float(r) / 100.0) for r in registros) - 1.0
-    return acumulado
+# Wrapper: mantém compatibilidade com scripts que importam de ingestion.
+# A implementação real vive em data/cdi.py (sem dependência de yfinance).
+from src.fii_analysis.data.cdi import get_cdi_acumulado_12m  # noqa: F401 re-export
 
 
 # ---------------------------------------------------------------------------

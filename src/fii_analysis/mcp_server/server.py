@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from sqlalchemy import func, select
 
-from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker, get_session
+from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker, get_session_ctx
 from src.fii_analysis.features.indicators import get_dy_trailing, get_pvp
 
 from mcp.server.fastmcp import FastMCP
@@ -23,8 +23,7 @@ def _get_pregoes(ticker: str, session) -> list[date]:
 
 @mcp.tool()
 def validate_split(ticker: str, train_end: str, val_end: str, test_end: str, gap_days: int = 10) -> dict:
-    session = get_session()
-    try:
+    with get_session_ctx() as session:
         d_train = date.fromisoformat(train_end)
         d_val = date.fromisoformat(val_end)
         d_test = date.fromisoformat(test_end)
@@ -68,14 +67,11 @@ def validate_split(ticker: str, train_end: str, val_end: str, test_end: str, gap
             "test_events": test_ev,
             "gap_ok": gap_ok,
         }
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def detect_leakage(ticker: str, feature_date: str, target_date: str) -> dict:
-    session = get_session()
-    try:
+    with get_session_ctx() as session:
         d_feature = date.fromisoformat(feature_date)
         d_target = date.fromisoformat(target_date)
 
@@ -112,14 +108,11 @@ def detect_leakage(ticker: str, feature_date: str, target_date: str) -> dict:
             "vp_data_referencia": str(vp_ref),
             "message": msg,
         }
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def check_window_overlap(ticker: str) -> dict:
-    session = get_session()
-    try:
+    with get_session_ctx() as session:
         pregoes = _get_pregoes(ticker, session)
         if not pregoes:
             return {"overlaps": 0, "total_events": 0, "overlap_pairs": []}
@@ -168,14 +161,11 @@ def check_window_overlap(ticker: str) -> dict:
                     overlap_pairs.append({"data_com_1": str(dc1), "data_com_2": str(dc2)})
 
         return {"overlaps": overlaps, "total_events": len(dividendos), "overlap_pairs": overlap_pairs}
-    finally:
-        session.close()
 
 
 @mcp.tool()
 def summary_report(ticker: str) -> dict:
-    session = get_session()
-    try:
+    with get_session_ctx() as session:
         preco_range = session.execute(
             select(func.min(PrecoDiario.data), func.max(PrecoDiario.data), func.count())
             .where(PrecoDiario.ticker == ticker)
@@ -206,8 +196,6 @@ def summary_report(ticker: str) -> dict:
             "pvp_atual": pvp,
             "dy_atual": dy,
         }
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

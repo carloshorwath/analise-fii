@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
 
 from src.fii_analysis.data.database import Dividendo, PrecoDiario
@@ -270,7 +271,7 @@ def buy_and_hold_return(
 def print_strategy_report(ticker: str, session) -> None:
     """Legacy report function — prefer run_strategy.py for full analysis."""
     hoje = date.today()
-    train_end = hoje - timedelta(days=365)
+    train_end = hoje - relativedelta(years=1)
 
     print("=" * 70)
     print(f"  ESTRATEGIA DIVIDEND-CAPTURE — {ticker}")
@@ -341,4 +342,3 @@ def print_strategy_report(ticker: str, session) -> None:
     print(f"\n  AVISO: resultados do treino NAO devem ser usados para decisao.")
     print(f"  Apenas o teste conta. Treino serve apenas para escolher parametros.")
     print("=" * 70)
-

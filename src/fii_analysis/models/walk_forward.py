@@ -9,8 +9,18 @@ def make_splits(
     events: pd.DataFrame,
     train_frac: float = 0.6,
     val_frac: float = 0.2,
-    gap_days: int = 10,
+    gap_days: int | None = None,
+    forward_days: int | None = None,
 ) -> dict:
+    # gap_days deve ser pelo menos forward_days para evitar leakage de label.
+    # Se nao passado explicitamente, derivar de forward_days.
+    if gap_days is None:
+        if forward_days is None:
+            raise ValueError(
+                "make_splits() requer gap_days ou forward_days. "
+                "Passe forward_days=N para derivar o gap automaticamente."
+            )
+        gap_days = forward_days
     df = events.sort_values("data_com").reset_index(drop=True)
     n = len(df)
     if n == 0:
@@ -43,7 +53,7 @@ def make_splits(
     val_df = df.iloc[n_train : n_train + n_val].copy()
     test_df = df.iloc[n_train + n_val : n_train + n_val + n_test].copy()
 
-    gap_bday = BDay(30)
+    gap_bday = BDay(gap_days)
 
     train_end = train_df["data_com"].max()
     val_start_raw = val_df["data_com"].min()
@@ -80,14 +90,27 @@ def validate_no_leakage(splits: dict, all_windows: pd.DataFrame) -> list[str]:
     if all_windows.empty:
         return errors
 
-    train_events = set(splits["train"]["data_com"].tolist()) if not splits["train"].empty else set()
-    val_events = set(splits["val"]["data_com"].tolist()) if not splits["val"].empty else set()
-    test_events = set(splits["test"]["data_com"].tolist()) if not splits["test"].empty else set()
+    use_ticker = "ticker" in all_windows.columns
+
+    def get_event_keys(df: pd.DataFrame) -> set:
+        if df.empty:
+            return set()
+        if use_ticker and "ticker" in df.columns:
+            return set(zip(df["ticker"].tolist(), df["data_com"].tolist()))
+        return set(df["data_com"].tolist())
+
+    train_events = get_event_keys(splits["train"])
+    val_events = get_event_keys(splits["val"])
+    test_events = get_event_keys(splits["test"])
 
     def get_dates(event_set: set) -> set:
-        return set(
-            all_windows[all_windows["data_com"].isin(event_set)]["data"].tolist()
-        )
+        if not event_set:
+            return set()
+        if use_ticker:
+            event_df = pd.DataFrame(list(event_set), columns=["ticker", "data_com"])
+            merged = all_windows.merge(event_df, on=["ticker", "data_com"], how="inner")
+            return set(zip(merged["ticker"].tolist(), merged["data"].tolist()))
+        return set(all_windows[all_windows["data_com"].isin(event_set)]["data"].tolist())
 
     train_dates = get_dates(train_events)
     val_dates = get_dates(val_events)

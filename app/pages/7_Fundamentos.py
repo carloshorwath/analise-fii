@@ -1,12 +1,7 @@
 import sys
-from datetime import date
-from dateutil.relativedelta import relativedelta
 from pathlib import Path
 
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -14,216 +9,34 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from app.components.data_loader import load_tickers_ativos
-from app.components.tables import format_number, format_pct
-from app.state import render_footer
-from src.fii_analysis.data.database import get_session_ctx
-from src.fii_analysis.features.data_loader import get_info_ticker
-from src.fii_analysis.features.fundamentos import (
-    classificar_alerta_distribuicao,
-    get_alavancagem,
-    get_dy_medias,
-    get_efetiva_vs_patrimonial_resumo,
-    get_payout_historico,
-    get_pl_cotas_historico,
-    get_pvp_medias,
-)
+from app.components.carteira_ui import load_tickers_ativos
+from app.components.page_content.fundamentos import render
+from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
+from app.state import render_footer, safe_page, safe_set_page_config
 
-st.set_page_config(page_title="Fundamentos", page_icon="bar_chart", layout="wide")
-st.title("Fundamentos por FII")
+safe_set_page_config(page_title="Fundamentos", page_icon="bar_chart", layout="wide")
 
-tickers = load_tickers_ativos()
-if not tickers:
-    st.warning("Nenhum ticker ativo encontrado.")
-    st.stop()
 
-ticker = st.selectbox("Selecione o FII:", tickers)
+@safe_page
+def main():
+    render_sidebar_guide("Fundamentos", "Entender")
+    render_page_header(
+        "Fundamentos",
+        "Leitura estrutural do fundo: distribuicao, geracao, P/VP historico, patrimonio liquido e emissao de cotas.",
+        "Entender",
+    )
+    render_inline_note(
+        "A ordem desta pagina foi ajustada para sair de sustentabilidade da distribuicao e avancar para patrimonio, deixando series historicas complementares depois."
+    )
 
-with get_session_ctx() as session:
-    info = get_info_ticker(ticker, session)
-    if info:
-        st.caption(f"**{info.get('nome', ticker)}** | Segmento: {info.get('segmento', 'n/d')} | "
-                   f"Mandato: {info.get('mandato', 'n/d')} | Gestao: {info.get('tipo_gestao', 'n/d')}")
+    tickers = load_tickers_ativos()
+    if not tickers:
+        st.warning("Nenhum ticker ativo encontrado.")
+        st.stop()
 
-    st.markdown("---")
+    ticker = st.selectbox("Selecione o FII:", tickers)
+    render(ticker, key_prefix="fund_page")
+    render_footer()
 
-    # --- 1. Distribuicao vs Geracao ---
-    st.header("1. Distribuicao vs Geracao")
 
-    payout_df, consec = get_payout_historico(ticker, session=session)
-
-    if not payout_df.empty:
-        fig_payout = make_subplots(
-            rows=1, cols=1,
-        )
-        fig_payout.add_trace(go.Bar(
-            x=payout_df["data_referencia"],
-            y=payout_df["rentab_efetiva_pct"],
-            name="Rent. Efetiva %",
-            marker_color="#636efa",
-        ))
-        fig_payout.add_trace(go.Bar(
-            x=payout_df["data_referencia"],
-            y=payout_df["rentab_patrimonial_pct"],
-            name="Rent. Patrimonial %",
-            marker_color="#ef553b",
-        ))
-
-        alert_dates = payout_df[payout_df["distribuindo_mais_que_gera"]]["data_referencia"].tolist()
-        if alert_dates:
-            fig_payout.add_trace(go.Bar(
-                x=alert_dates,
-                y=[0] * len(alert_dates),
-                name="Efetiva > Patrimonial",
-                marker_color="rgba(255,0,0,0.3)",
-                showlegend=True,
-            ))
-
-        fig_payout.update_layout(
-            title=f"{ticker} — Rentabilidade Efetiva vs Patrimonial (24 meses)",
-            xaxis_title="Mes", yaxis_title="% mes",
-            template="plotly_white", height=400, barmode="group",
-        )
-        st.plotly_chart(fig_payout, use_container_width=True)
-
-        resumo = get_efetiva_vs_patrimonial_resumo(ticker, session=session)
-        nivel, msg = classificar_alerta_distribuicao(resumo)
-        if nivel == "error":
-            st.error(msg)
-        elif nivel == "warning":
-            st.warning(msg)
-        else:
-            st.success(msg)
-    else:
-        st.info("Sem dados de rentabilidade disponiveis.")
-
-    st.markdown("---")
-
-    # --- 2. DY Historico ---
-    st.header("2. DY Historico")
-
-    dy_data = get_dy_medias(ticker, session=session)
-
-    col_dy1, col_dy2, col_dy3, col_dy4 = st.columns(4)
-    col_dy1.metric("DY 12m Atual", format_pct(dy_data["dy_12m_atual"]) if dy_data["dy_12m_atual"] else "n/d")
-    col_dy2.metric("DY 24m", format_pct(dy_data["media_dy_2anos"]) if dy_data["media_dy_2anos"] else "n/d")
-    col_dy3.metric("DY 60m", format_pct(dy_data["media_dy_5anos"]) if dy_data["media_dy_5anos"] else "n/d")
-    col_dy4.metric("Percentil na Serie",
-                   f"{dy_data['percentil_na_serie_completa']:.1f}%" if dy_data["percentil_na_serie_completa"] is not None else "n/d")
-
-    st.markdown("---")
-
-    # --- 3. PVP Historico ---
-    st.header("3. P/VP Historico")
-
-    pvp_data = get_pvp_medias(ticker, session=session)
-
-    col_pvp1, col_pvp2, col_pvp3 = st.columns(3)
-    col_pvp1.metric("P/VP Atual", format_number(pvp_data["pvp_atual"], 2) if pvp_data["pvp_atual"] else "n/d")
-    col_pvp2.metric("Media 2 anos", format_number(pvp_data["media_pvp_2anos"], 2) if pvp_data["media_pvp_2anos"] else "n/d")
-    col_pvp3.metric("Media 5 anos", format_number(pvp_data["media_pvp_5anos"], 2) if pvp_data["media_pvp_5anos"] else "n/d")
-
-    serie_pvp = pvp_data.get("serie_pvp")
-    if serie_pvp is not None and len(serie_pvp) > 0:
-        if "pvp_periodo" not in st.session_state:
-            st.session_state["pvp_periodo"] = "12m"
-        periodo_pvp = st.radio("Periodo P/VP", ["YTD", "12m", "3a", "Tudo"],
-                               index=["YTD", "12m", "3a", "Tudo"].index(st.session_state["pvp_periodo"]),
-                               horizontal=True, key="radio_pvp_periodo")
-        st.session_state["pvp_periodo"] = periodo_pvp
-
-        hoje = date.today()
-        if periodo_pvp == "YTD":
-            data_min = date(hoje.year, 1, 1)
-        elif periodo_pvp == "12m":
-            data_min = hoje - relativedelta(years=1)
-        elif periodo_pvp == "3a":
-            data_min = hoje - relativedelta(years=3)
-        else:
-            data_min = None
-
-        if data_min is not None:
-            serie_pvp_plot = serie_pvp[serie_pvp.index >= data_min]
-        else:
-            serie_pvp_plot = serie_pvp
-
-        fig_pvp = go.Figure()
-        fig_pvp.add_trace(go.Scatter(
-            x=serie_pvp_plot.index, y=serie_pvp_plot.values,
-            mode="lines", name="P/VP", line=dict(color="#1f77b4"),
-        ))
-
-        if pvp_data["media_pvp_2anos"] is not None:
-            fig_pvp.add_hline(
-                y=pvp_data["media_pvp_2anos"], line_dash="dash", line_color="orange",
-                annotation_text=f"Media 2a: {pvp_data['media_pvp_2anos']:.2f}",
-            )
-        if pvp_data["media_pvp_5anos"] is not None:
-            fig_pvp.add_hline(
-                y=pvp_data["media_pvp_5anos"], line_dash="dot", line_color="green",
-                annotation_text=f"Media 5a: {pvp_data['media_pvp_5anos']:.2f}",
-            )
-
-        fig_pvp.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="P/VP = 1.0")
-        fig_pvp.update_layout(
-            title=f"{ticker} — P/VP Historico",
-            xaxis_title="Data", yaxis_title="P/VP",
-            template="plotly_white", height=400,
-        )
-        st.plotly_chart(fig_pvp, use_container_width=True)
-    else:
-        st.info("Sem serie historica de P/VP disponivel.")
-
-    st.markdown("---")
-
-    # --- 4. PL e Cotas ---
-    st.header("4. PL e Cotas")
-
-    pl_df = get_pl_cotas_historico(ticker, meses=36, session=session)
-
-    if not pl_df.empty:
-        fig_pl = make_subplots(specs=[[{"secondary_y": True}]])
-
-        fig_pl.add_trace(go.Bar(
-            x=pl_df["data_referencia"],
-            y=pl_df["patrimonio_liq"] / 1e6,
-            name="PL (mi)",
-            marker_color="#636efa",
-        ), secondary_y=False)
-
-        fig_pl.add_trace(go.Scatter(
-            x=pl_df["data_referencia"],
-            y=pl_df["cotas_emitidas"],
-            mode="lines+markers",
-            name="Cotas Emitidas",
-            line=dict(color="#ef553b"),
-        ), secondary_y=True)
-
-        fig_pl.update_layout(
-            title=f"{ticker} — Patrimonio Liquido e Cotas (36 meses)",
-            template="plotly_white", height=400,
-        )
-        fig_pl.update_yaxes(title_text="PL (R$ milhoes)", secondary_y=False)
-        fig_pl.update_yaxes(title_text="Cotas Emitidas", secondary_y=True)
-        st.plotly_chart(fig_pl, use_container_width=True)
-
-        col_pl1, col_pl2, col_pl3 = st.columns(3)
-        ultimo_pl = pl_df.iloc[-1]
-        col_pl1.metric("PL Atual", f"R$ {ultimo_pl['patrimonio_liq'] / 1e6:,.1f} mi" if ultimo_pl.get("patrimonio_liq") else "n/d")
-        col_pl2.metric("Cotas", f"{ultimo_pl['cotas_emitidas']:,.0f}" if ultimo_pl.get("cotas_emitidas") else "n/d")
-        col_pl3.metric("VP/Cota", f"R$ {ultimo_pl['vp_por_cota']:,.2f}" if ultimo_pl.get("vp_por_cota") else "n/d")
-
-        alav = get_alavancagem(ticker, session=session)
-        if alav["indice"] is not None:
-            st.metric("Ativo / PL", f"{alav['indice']:.2f}x",
-                      delta=f"Ativo: R$ {alav['ativo_total'] / 1e6:,.1f} mi" if alav["ativo_total"] else None)
-            if alav["alavancado"]:
-                st.warning(f"Fundo possivelmente alavancado (Ativo/PL = {alav['indice']:.2f}x)")
-            else:
-                st.success(f"Sem alavancagem significativa (Ativo/PL = {alav['indice']:.2f}x)")
-        elif alav["patrimonio_liquido"] is not None:
-            st.caption("Ativo total nao disponivel — impossivel calcular alavancagem")
-    else:
-        st.info("Sem dados de PL e cotas disponiveis.")
-
-render_footer()
+main()

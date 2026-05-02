@@ -1,0 +1,94 @@
+
+  💡 8 Sugestões de Melhoria de UI/UX
+
+  1. Unificar "Panorama" (1) e "Radar" (4)
+  Ambas as telas servem para triagem de alto nível do universo monitorado. A matriz de status booleano do Radar (P/VP Baixo, Saúde OK, etc.) poderia
+  simplesmente virar colunas com ícones visuais (✅/❌) na tabela principal do Panorama. Isso elimina a tela 4_Radar.py por completo e coloca a sinalização
+  de oportunidade lado a lado com as métricas cruas (DY, Preço).
+
+  2. Fundir a "Carteira" (3) e o "Hoje" (13)
+  Hoje (Cockpit) possui uma aba "Carteira Cruzada", enquanto a página "Carteira" faz o gerenciamento das posições. Como a página "Hoje" é o seu painel
+  diário, você poderia mover o formulário de Cadastro/Upload de CSV (CRUD) da Carteira para uma aba de "Configuração" dentro de 13_Hoje.py. Assim, o
+  investidor entra, gerencia seu portfólio e vê as sugestões do sistema em um único lugar.
+
+  3. Condensar as 5 abas de Tabelas do "Hoje" em uma Tabela Mestre
+  A página 13_Hoje.py tem 5 abas (Ações do Dia, Carteira Cruzada, Watchlist, Riscos, Contexto de Juros), gerando tabelas redundantes onde o mesmo FII pode
+  aparecer várias vezes.
+   * Solução: Crie uma única "Tabela Mestre Diária". Nela, coloque uma coluna de Status (ex: Ação Prioritária, Observação, Risco ou Na Carteira). Acima da
+     tabela, inclua chips de filtro (botões de toggle) para que o usuário filtre a visão sem precisar trocar de aba. O Contexto de Juros (CDI) pode ficar
+     oculto dentro do expander de cada linha.
+
+  4. Criar o "Dossiê do FII" unificando (2), (7) e (8)
+  O usuário quer investigar um FII específico, mas precisa olhar o Valuation em 2_Analise_FII, os "Fundamentos" em 7_Fundamentos e depois cruzar o evento em
+  8_Fund_EventStudy.
+   * Solução: Crie uma única tela robusta chamada "Análise Profunda". Ao selecionar o Ticker no topo, o usuário navega por abas internas: Preço & Valuation,
+     Saúde Financeira, Distribuição & Eventos e Composição. Isso zera a navegação lateral para estudar um ativo.
+
+  5. Arquivar a página de "Alertas" (6)
+  Como o painel "Hoje" já incorpora as sinalizações diárias e a "Watchlist", ler os arquivos Markdown puros gerados na tela de Alertas tornou-se ruído
+  obsoleto. Elimine a 6_Alertas.py do fluxo principal do Streamlit (pode deixar o CLI gerando o MD passivamente se você quiser para backup, mas não exiba na
+  UI).
+
+  6. Laboratório de Modelos Unificado (10, 11 e 12)
+  As páginas 10_Otimizador_V2, 11_Episodios e 12_WalkForward são ferramentas técnicas de backtesting. O usuário comum não as acessa diariamente. Junte as
+  três em uma única tela chamada "Laboratório (Backtest)" com abas internas. Isso limpa a Sidebar absurdamente.
+
+  7. Event Study: Integrar Global e Específico
+  Junte 5_Event_Study.py (Visão Global do Universo) e 8_Fund_EventStudy.py (Por Ticker individual). Você pode apresentar a visão global consolidada por
+  padrão e colocar um campo Isolar FII (Opcional) no topo da página para fazer o drill-down e ver os testes Mann-Whitney/T-Test daquele ativo.
+
+  8. Agrupamento Visual na Sidebar (st.sidebar.page_link)
+  Mesmo implementando as fusões acima (que cairiam de 13 para ~5 ou 6 páginas), use blocos lógicos na Sidebar para organizar o fluxo mental do usuário.
+   * ☀️ Diário: Hoje (Cockpit), Panorama
+   * 🔎 Investigação: Dossiê do FII, Estudo de Eventos
+   * ⚙️ Técnico: Laboratório (Modelos)
+
+  ---
+
+  🚨 Erros Identificados na Base de Código
+
+  Ao investigar as telas para propor as melhorias, identifiquei duas falhas:
+
+   1. Bug de Session State no 13_Hoje.py (Renderização de CDI)
+     Na linha 259 de 13_Hoje.py, na função _render_cdi_context(report), o código tenta buscar o metadado do Focus BCB usando:
+     meta = load_latest_snapshot_meta(st.session_state.get("_snapshot_scope", "curado"), ...)
+     O problema: _snapshot_scope e _snapshot_hash não estão sendo injetados de forma confiável no st.session_state antes desta chamada (o que pode causar
+  falha silenciosa na leitura do cache de CDI).
+      * Correção: Como a função main() do 13_Hoje.py já calcula a variável snapshot_scope (linha 47), ela deveria passar essa string explicitamente como
+        argumento para a função: _render_cdi_context(report, snapshot_scope, meta_hash).
+
+   2. Dead Link de Documentação (9_Otimizador.py)
+     A página 9_Otimizador.py (versão 1 do Otimizador) foi devidamente excluída da pasta de código (só existe a 10_Otimizador_V2.py), porém a documentação
+  oficial nos arquivos docs/STATUS_ATUAL.md e docs/PROJETO.md continua listando e documentando a página 9 como se ela ainda estivesse ativa. É preciso
+  remover essa referência para não confundir os próximos agentes ou desenvolvedores (incluindo o fato de pular a numeração do prefixo de 8 direto para 10 na
+  UI).
+
+  Se quiser que eu comece a implementar algumas destas unificações (ex: fundir Panorama com Radar, ou Consolidar o Cockpit), basta me indicar qual você quer
+  priorizar!
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > meu amigo falou isso:   Concordo com ressalva
+
+     - #1 Panorama+Radar — ok fundir, mas cuidado: hoje Panorama é "métricas cruas" e Radar é "matriz booleana de filtros". Se virar uma tabela só,
+   mantenha
+     dois modos de visualização (toggle "métricas" / "sinalização"), senão você perde a leitura rápida do Radar quando a tabela ficar larga.
+     - #2 Carteira+Hoje — ok, mas o CRUD merece estar em aba dedicada e visualmente separada ("⚙️ Configuração"). Misturar formulário de cadastro no fluxo
+     diário gera ruído quando o usuário só quer olhar sinais.
+     - #3 Tabela mestre no Hoje — boa direção, mas chips de filtro precisam ser persistidos em session_state senão o usuário perde o filtro a cada
+   rerender. A
+     redundância de FII em múltiplas abas hoje é um sintoma real; concordo.
+     - #5 Arquivar Alertas — ok desde que o Hoje cubra tudo que está no MD. Manter a geração CLI passiva é a saída certa (auditoria/backup).
+
+     Discordo / ajustar
+
+     - #7 Event Study global+específico vs #4 Dossiê — conflitam. Se o per-ticker event study migra para o Dossiê (#4), a página 5 vira só global, não
+   precisa
+     de "isolar FII". Decidir: ou Dossiê absorve o per-ticker (preferível), ou a 5 vira o lugar único — não os dois.
+
+     Sugestão de sequência
+
+     1. Bugs primeiro (rápido, sem risco): dead links de doc + fix do _snapshot_scope.
+     2. #8 sidebar agrupada (sem fusão, só visual) — valida o agrupamento mental antes de mexer em código de página.
+     3. #4 Dossiê + #6 Laboratório — maior ROI, escopo bem delimitado.
+     4. Resto (#1, #2, #3, #5) depois, quando o efeito de #4 e #6 já estiver visível.
+
+     Posso aplicar os dois bugs (são pequenos e independentes) se quiser começar por aí.

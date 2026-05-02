@@ -3,35 +3,29 @@ from plotly.subplots import make_subplots
 import pandas as pd
 
 
-def _no_gap_layout(fig: go.Figure) -> go.Figure:
-    if fig.data and hasattr(fig.data[0], 'x') and len(fig.data[0].x) > 0:
-        fig.update_xaxes(type="category", tickangle=-45, dtick=max(1, len(fig.data[0].x) // 10))
-    return fig
-
-
 def price_volume_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     if df.empty:
         fig = go.Figure()
         fig.add_annotation(text="Sem dados", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
-    labels = [d.strftime("%d/%m") if hasattr(d, "strftime") else str(d) for d in df["data"]]
+    x_data = pd.to_datetime(df["data"])
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(go.Scatter(
-        x=labels, y=df["fechamento"], mode="lines", name="Preco",
+        x=x_data, y=df["fechamento"], mode="lines", name="Preco",
         line=dict(color="#1f77b4", width=1.5),
     ), secondary_y=False)
     fig.add_trace(go.Bar(
-        x=labels, y=df["volume"], name="Volume",
+        x=x_data, y=df["volume"], name="Volume",
         marker_color="rgba(100,100,200,0.3)",
     ), secondary_y=True)
     fig.update_layout(
         title=f"{ticker} — Preco e Volume",
-        template="plotly_white", height=400, xaxis_type="category",
+        template="plotly_white", height=400,
     )
+    fig.update_xaxes(type="date", tickformat="%d/%m/%y")
     fig.update_yaxes(title_text="Preco (R$)", secondary_y=False)
     fig.update_yaxes(title_text="Volume", secondary_y=True)
-    fig.update_xaxes(tickangle=-45, dtick=max(1, len(labels) // 12))
     return fig
 
 
@@ -41,16 +35,16 @@ def pvp_historico_com_bandas(df: pd.DataFrame, ticker: str) -> go.Figure:
         fig.add_annotation(text="Sem dados", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
-    labels = [d.strftime("%d/%m/%y") if hasattr(d, "strftime") else str(d) for d in df["data"]]
+    x_data = pd.to_datetime(df["data"])
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=labels, y=df["pvp"], mode="lines", name="P/VP", line=dict(color="#1f77b4")))
+    fig.add_trace(go.Scatter(x=x_data, y=df["pvp"], mode="lines", name="P/VP", line=dict(color="#1f77b4")))
     fig.add_hline(y=1.0, line_dash="dash", line_color="gray", annotation_text="P/VP = 1.0")
     fig.update_layout(
         title=f"{ticker} — P/VP Historico",
         yaxis_title="P/VP",
-        template="plotly_white", height=400, xaxis_type="category",
+        template="plotly_white", height=400,
     )
-    fig.update_xaxes(tickangle=-45, dtick=max(1, len(labels) // 10))
+    fig.update_xaxes(type="date", tickformat="%d/%m/%y")
     return fig
 
 
@@ -83,15 +77,15 @@ def dy_trailing_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
         fig.add_annotation(text="Sem dados", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
-    labels = [d.strftime("%d/%m/%y") if hasattr(d, "strftime") else str(d) for d in df["data"]]
+    x_data = pd.to_datetime(df["data"])
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=labels, y=df["dy"] * 100, mode="lines", name="DY 12m %", line=dict(color="#2ca02c")))
+    fig.add_trace(go.Scatter(x=x_data, y=df["dy"] * 100, mode="lines", name="DY 12m %", line=dict(color="#2ca02c")))
     fig.update_layout(
         title=f"{ticker} — Dividend Yield 12m",
         yaxis_title="DY (%)",
-        template="plotly_white", height=400, xaxis_type="category",
+        template="plotly_white", height=400,
     )
-    fig.update_xaxes(tickangle=-45, dtick=max(1, len(labels) // 10))
+    fig.update_xaxes(type="date", tickformat="%d/%m/%y")
     return fig
 
 
@@ -101,17 +95,17 @@ def pl_trend_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
         fig.add_annotation(text="Sem dados", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
-    labels = [d.strftime("%m/%y") if hasattr(d, "strftime") else str(d) for d in df["data_ref"]]
+    x_data = pd.to_datetime(df["data_ref"])
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=labels, y=df["patrimonio_liq"] / 1e6, name="PL (mi)", marker_color="#636efa"), secondary_y=False)
-    fig.add_trace(go.Scatter(x=labels, y=df["vp_por_cota"], mode="lines+markers", name="VP/cota", line=dict(color="#ef553b")), secondary_y=True)
+    fig.add_trace(go.Bar(x=x_data, y=df["patrimonio_liq"] / 1e6, name="PL (mi)", marker_color="#636efa"), secondary_y=False)
+    fig.add_trace(go.Scatter(x=x_data, y=df["vp_por_cota"], mode="lines+markers", name="VP/cota", line=dict(color="#ef553b")), secondary_y=True)
     fig.update_layout(
         title=f"{ticker} — Patrimonio Liquido 24m",
-        template="plotly_white", height=400, xaxis_type="category",
+        template="plotly_white", height=400,
     )
+    fig.update_xaxes(type="date", tickformat="%m/%y")
     fig.update_yaxes(title_text="PL (R$ milhoes)", secondary_y=False)
     fig.update_yaxes(title_text="VP/cota (R$)", secondary_y=True)
-    fig.update_xaxes(tickangle=-45, dtick=max(1, len(labels) // 10))
     return fig
 
 
@@ -161,12 +155,12 @@ def car_plot(es_df: pd.DataFrame, ticker: str, title_suffix: str = "") -> go.Fig
     return fig
 
 
-def carteira_alocacao_pie(df: pd.DataFrame) -> go.Figure:
+def carteira_alocacao_pie(df: pd.DataFrame, value_col: str = "valor_mercado") -> go.Figure:
     if df.empty or "ticker" not in df.columns:
         return go.Figure()
 
     labels = df["ticker"].tolist()
-    values = df.get("valor_total", pd.Series([1] * len(df))).tolist()
+    values = df.get(value_col, pd.Series([1] * len(df))).tolist()
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.4))
     fig.update_layout(title="Alocacao por FII", height=400)
     return fig
@@ -176,8 +170,13 @@ def carteira_segmento_pie(df: pd.DataFrame) -> go.Figure:
     if df.empty or "segmento" not in df.columns:
         return go.Figure()
 
-    grp = df.groupby("segmento").size().reset_index(name="count")
-    fig = go.Figure(go.Pie(labels=grp["segmento"], values=grp["count"], hole=0.4))
+    val_col = "valor_mercado" if "valor_mercado" in df.columns else "valor_total" if "valor_total" in df.columns else None
+    if val_col:
+        grp = df.groupby("segmento")[val_col].sum().reset_index(name="value")
+    else:
+        grp = df.groupby("segmento").size().reset_index(name="value")
+        
+    fig = go.Figure(go.Pie(labels=grp["segmento"], values=grp["value"], hole=0.4))
     fig.update_layout(title="Alocacao por Segmento", height=400)
     return fig
 

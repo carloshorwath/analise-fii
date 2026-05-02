@@ -52,7 +52,7 @@ def run_ticker(ticker: str, session) -> dict:
         print(f"  {ticker}: sem janelas de dividendos.")
         return {"ticker": ticker, "status": "SEM_DADOS"}
 
-    splits = make_splits(windows)
+    splits = make_splits(windows, forward_days=10)
     print_splits_summary(splits)
 
     errors = validate_no_leakage(splits, windows)

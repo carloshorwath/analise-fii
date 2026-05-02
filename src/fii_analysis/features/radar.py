@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.config_yaml import get_piso_liquidez, get_threshold
-from src.fii_analysis.data.database import Dividendo, PrecoDiario, get_session, get_ultimo_preco_date, volume_medio_21d
+from src.fii_analysis.data.database import Dividendo, PrecoDiario, get_ultimo_preco_date, volume_medio_21d
 from src.fii_analysis.features.indicators import get_pvp
 from src.fii_analysis.features.saude import flag_destruicao_capital
 from src.fii_analysis.features.valuation import get_dy_gap, get_dy_gap_percentil, get_pvp_percentil
@@ -15,7 +15,7 @@ def radar_matriz(tickers: list[str] | None = None, session=None) -> pd.DataFrame
     if tickers is None:
         tickers = tickers_ativos(session)
     if session is None:
-        session = get_session()
+        raise ValueError("radar_matriz() requer session (use get_session_ctx())")
 
     rows = []
     for ticker in tickers:

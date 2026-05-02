@@ -7,7 +7,7 @@ from rich.table import Table
 from sqlalchemy import select
 
 from src.fii_analysis.config import tickers_ativos
-from src.fii_analysis.data.database import PrecoDiario, get_session
+from src.fii_analysis.data.database import PrecoDiario
 from src.fii_analysis.features.composicao import classificar_fii
 from src.fii_analysis.features.saude import emissoes_recentes, flag_destruicao_capital
 from src.fii_analysis.features.valuation import get_pvp_percentil, get_dy_gap_percentil
@@ -23,61 +23,61 @@ def _fmt(val, fmt=".2f"):
 
 
 def gerar_alertas_diarios():
-    session = get_session()
-    hoje = date.today()
-    linhas_terminal = []
-    linhas_md = [f"# Alertas FII — {hoje.isoformat()}", ""]
+    from src.fii_analysis.data.database import get_session_ctx
 
-    tem_alerta = False
+    with get_session_ctx() as session:
+        hoje = date.today()
+        linhas_terminal = []
+        linhas_md = [f"# Alertas FII — {hoje.isoformat()}", ""]
 
-    for ticker in tickers_ativos(session):
-        ultimo = session.execute(
-            select(PrecoDiario.data)
-            .where(PrecoDiario.ticker == ticker)
-            .order_by(PrecoDiario.data.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+        tem_alerta = False
 
-        if ultimo is None:
-            continue
+        for ticker in tickers_ativos(session):
+            ultimo = session.execute(
+                select(PrecoDiario.data)
+                .where(PrecoDiario.ticker == ticker)
+                .order_by(PrecoDiario.data.desc())
+                .limit(1)
+            ).scalar_one_or_none()
 
-        alertas_ticker = []
+            if ultimo is None:
+                continue
 
-        destruicao = flag_destruicao_capital(ticker, session)
-        if destruicao["destruicao"]:
-            alertas_ticker.append(f"DESTRUICAO DE CAPITAL ({destruicao['motivo']})")
+            alertas_ticker = []
 
-        emiss = emissoes_recentes(ticker, session=session)
-        if emiss:
-            alertas_ticker.append(f"{len(emiss)} emissoes recentes (>1%)")
+            destruicao = flag_destruicao_capital(ticker, session)
+            if destruicao["destruicao"]:
+                alertas_ticker.append(f"DESTRUICAO DE CAPITAL ({destruicao['motivo']})")
 
-        pvp_pct_val, jan_usada = get_pvp_percentil(ticker, ultimo, 504, session)
-        if pvp_pct_val is not None and pvp_pct_val > 95:
-            alertas_ticker.append(f"P/VP no percentil {pvp_pct_val:.0f} (muito caro)")
+            emiss = emissoes_recentes(ticker, session=session)
+            if emiss:
+                alertas_ticker.append(f"{len(emiss)} emissoes recentes (>1%)")
 
-        dy_gap_pct = get_dy_gap_percentil(ticker, ultimo, 504, session)
-        if dy_gap_pct is not None and dy_gap_pct < 5:
-            alertas_ticker.append(f"DY Gap no percentil {dy_gap_pct:.0f} (DY baixo vs CDI)")
+            pvp_pct_val, jan_usada = get_pvp_percentil(ticker, ultimo, 504, session)
+            if pvp_pct_val is not None and pvp_pct_val > 95:
+                alertas_ticker.append(f"P/VP no percentil {pvp_pct_val:.0f} (muito caro)")
 
-        if alertas_ticker:
-            tem_alerta = True
-            tipo = classificar_fii(ticker, session)
-            header = f"[bold red]{ticker}[/bold red] ({tipo})"
-            console.print(header)
-            for a in alertas_ticker:
-                console.print(f"  [yellow]- {a}[/yellow]")
-                linhas_terminal.append(f"{ticker}: {a}")
+            dy_gap_pct = get_dy_gap_percentil(ticker, ultimo, 504, session)
+            if dy_gap_pct is not None and dy_gap_pct < 5:
+                alertas_ticker.append(f"DY Gap no percentil {dy_gap_pct:.0f} (DY baixo vs CDI)")
 
-            linhas_md.append(f"## {ticker} ({tipo})")
-            for a in alertas_ticker:
-                linhas_md.append(f"- {a}")
-            linhas_md.append("")
+            if alertas_ticker:
+                tem_alerta = True
+                tipo = classificar_fii(ticker, session)
+                header = f"[bold red]{ticker}[/bold red] ({tipo})"
+                console.print(header)
+                for a in alertas_ticker:
+                    console.print(f"  [yellow]- {a}[/yellow]")
+                    linhas_terminal.append(f"{ticker}: {a}")
 
-    if not tem_alerta:
-        console.print("[green]Nenhum alerta critico hoje.[/green]")
-        linhas_md.append("Nenhum alerta critico.")
+                linhas_md.append(f"## {ticker} ({tipo})")
+                for a in alertas_ticker:
+                    linhas_md.append(f"- {a}")
+                linhas_md.append("")
 
-    session.close()
+        if not tem_alerta:
+            console.print("[green]Nenhum alerta critico hoje.[/green]")
+            linhas_md.append("Nenhum alerta critico.")
 
     ALERTAS_DIR.mkdir(parents=True, exist_ok=True)
     md_path = ALERTAS_DIR / f"{hoje.isoformat()}.md"

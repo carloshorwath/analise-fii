@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from src.fii_analysis.config_yaml import get_threshold
 from src.fii_analysis.data.database import CdiDiario, Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
-from src.fii_analysis.data.ingestion import get_cdi_acumulado_12m
+from src.fii_analysis.data.cdi import get_cdi_acumulado_12m
 from src.fii_analysis.features.indicators import get_pvp_serie
 
 

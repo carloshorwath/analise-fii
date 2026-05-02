@@ -40,19 +40,37 @@ def render_panorama_table(df: pd.DataFrame) -> pd.DataFrame:
     if "preco" in display.columns:
         display["preco"] = display["preco"].apply(format_currency)
     if "pvp" in display.columns:
-        display["pvp"] = display["pvp"].apply(lambda x: format_number(x) if x else "n/d")
+        display["pvp"] = display["pvp"].apply(lambda x: format_number(x) if x is not None else "n/d")
     if "dy_12m" in display.columns:
         display["dy_12m"] = display["dy_12m"].apply(format_pct)
     if "dy_24m" in display.columns:
         display["dy_24m"] = display["dy_24m"].apply(format_pct)
     if "dy_mes" in display.columns:
         display["dy_mes"] = display["dy_mes"].apply(format_pct)
-    if "rent_acum" in display.columns:
-        display["rent_acum"] = display["rent_acum"].apply(format_pct)
+    if "rent_12m" in display.columns:
+        display["rent_12m"] = display["rent_12m"].apply(format_pct)
+    if "rent_24m" in display.columns:
+        display["rent_24m"] = display["rent_24m"].apply(format_pct)
     if "vp" in display.columns:
         display["vp"] = display["vp"].apply(format_currency)
     if "volume_medio_21d" in display.columns:
         display["volume_medio_21d"] = display["volume_medio_21d"].apply(format_currency)
+    display = display.rename(
+        columns={
+            "ticker": "Ticker",
+            "segmento": "Segmento",
+            "preco": "Preco",
+            "vp": "VP",
+            "pvp": "P/VP",
+            "dy_12m": "DY 12m",
+            "dy_24m": "DY 24m",
+            "rent_12m": "Rent. 12m",
+            "rent_24m": "Rent. 24m",
+            "dy_mes": "DY mes",
+            "cvm_defasada": "CVM Defasada",
+            "volume_medio_21d": "Volume Medio 21d",
+        }
+    )
     return display
 
 

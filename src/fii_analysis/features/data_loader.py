@@ -119,6 +119,22 @@ def get_benchmark_ifix(session) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["data", "fechamento"])
 
 
+def get_ifix_ytd(session) -> float | None:
+    df = get_benchmark_ifix(session)
+    if df.empty:
+        return None
+    hoje = date.today()
+    ano_inicio = date(hoje.year, 1, 1)
+    df_ytd = df[df["data"] >= ano_inicio]
+    if len(df_ytd) < 2:
+        return None
+    primeiro = float(df_ytd.iloc[0]["fechamento"])
+    ultimo = float(df_ytd.iloc[-1]["fechamento"])
+    if primeiro > 0:
+        return ultimo / primeiro - 1.0
+    return None
+
+
 def get_dividendos_historico(ticker: str, session) -> pd.DataFrame:
     rows = session.execute(
         select(Dividendo.data_com, Dividendo.valor_cota)

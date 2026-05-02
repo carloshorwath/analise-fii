@@ -49,7 +49,7 @@ def radar():
 def consulta(ticker: str):
     """Consulta analítica via Gemini usando Google Search."""
     import subprocess
-    from src.fii_analysis.data.database import get_session
+    from src.fii_analysis.data.database import get_session_ctx
     from src.fii_analysis.features.fundamentos import (
         get_dy_medias,
         get_pvp_medias,
@@ -57,8 +57,7 @@ def consulta(ticker: str):
     )
 
     ticker = ticker.upper()
-    session = get_session()
-    try:
+    with get_session_ctx() as session:
         pvp_atual = get_pvp_medias(ticker, session=session)['pvp_atual']
         dy_12m = get_dy_medias(ticker, session=session)['dy_12m_atual']
         saude = get_efetiva_vs_patrimonial_resumo(ticker, session=session)
@@ -80,9 +79,7 @@ def consulta(ticker: str):
             f"3. Estratégia (comprar/aguardar/evitar com justificativa), 4. Riscos."
         )
 
-        subprocess.run(['gemini', '-p', prompt, '-o', 'text', '-y'], capture_output=False)
-    finally:
-        session.close()
+    subprocess.run(['gemini', '-p', prompt, '-o', 'text', '-y'], capture_output=False)
 
 
 if __name__ == "__main__":

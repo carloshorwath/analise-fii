@@ -22,15 +22,19 @@ def tickers_ativos(session=None) -> list[str]:
     from sqlalchemy import select
     close = session is None
     if session is None:
-        from src.fii_analysis.data.database import get_session, Ticker
-        session = get_session()
+        from src.fii_analysis.data.database import get_session_ctx, Ticker
+        ctx = get_session_ctx()
+        session = ctx.__enter__()
     else:
         from src.fii_analysis.data.database import Ticker
+        ctx = None
     rows = session.execute(
         select(Ticker.ticker).where(Ticker.inativo_em.is_(None))
     ).scalars().all()
     if close:
         session.close()
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
     return list(rows)
 
 # Períodos de treino e teste
