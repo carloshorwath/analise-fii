@@ -1,7 +1,7 @@
 # Plano de Melhoria — FII Analytics
 
 > **Baseado em:** auditoria técnica completa do código + análise do `PROJETO-completo.md`
-> **Última atualização:** 2026-05-02
+> **Última atualização:** 2026-05-02 (Fase 1.5 concluída)
 > **Objetivo:** fechar o gap entre o que o projeto visiona e o que realmente está implementado.
 
 ---
@@ -10,8 +10,8 @@
 
 | Fase | Descrição | Status |
 |---|---|---|
-| 1 | Métricas de risco e retorno (`risk_metrics.py`) | ✅ Funções criadas — ⚠️ UI/snapshot pendentes |
-| 1.5 | Integrar Fase 1 no pipeline de snapshots e UI | ❌ Pendente |
+| 1 | Métricas de risco e retorno (`risk_metrics.py`) | ✅ Concluída |
+| 1.5 | Integrar Fase 1 no pipeline de snapshots e UI | ✅ Concluída — 2026-05-02 |
 | 2 | Score 0–100 com decomposição visual | ❌ Pendente |
 | 3 | Justificativa LLM por ticker | ❌ Pendente |
 | 4 | Diagnóstico LLM da carteira | ❌ Pendente |
@@ -62,22 +62,22 @@ Os três sinais do `decision/recommender.py` são, na prática, **todos baseados
 
 ### O que não existe (estado original, antes das melhorias)
 
-| Feature | Status original | Depois da Fase 1 |
-|---|---|---|
-| Volatilidade anualizada | ❌ | ✅ `risk_metrics.volatilidade_anualizada()` |
-| Beta vs IFIX | ❌ | ✅ `risk_metrics.beta_vs_ifix()` — retorna None sem dados IFIX |
-| Maximum Drawdown real | ❌ | ✅ `risk_metrics.max_drawdown()` |
-| Liquidez 21d (R$) | ❌ no motor | ✅ `risk_metrics.liquidez_media_21d()` |
-| DY 3m anualizado | ❌ | ✅ `risk_metrics.dy_3m_anualizado()` |
-| Retorno total 12m | ❌ | ✅ `risk_metrics.retorno_total_12m()` |
-| Yield on Cost (YoC) | ❌ | ✅ `risk_metrics.yield_on_cost()` |
-| Score numérico 0–100 | ❌ | ❌ (Fase 2) |
-| Justificativa LLM | ❌ | ❌ (Fase 3) |
-| Diagnóstico LLM da carteira | ❌ | ❌ (Fase 4) |
-| Spread sobre NTN-B | ❌ | ❌ (Fase 5) |
-| Comparativo com pares | ❌ | ❌ (Fase 6) |
-| Histórico recomendações | ❌ | ❌ (Fase 7) |
-| Vacância / WAULT / LTV | ❌ | ❌ (Fase 9) |
+| Feature | Status original | Depois da Fase 1 | Depois da Fase 1.5 |
+|---|---|---|---|
+| Volatilidade anualizada | ❌ | ✅ `risk_metrics.volatilidade_anualizada()` | ✅ snapshot + UI |
+| Beta vs IFIX | ❌ | ✅ `risk_metrics.beta_vs_ifix()` — retorna None sem dados IFIX | ✅ snapshot + UI (None até IFIX coletado) |
+| Maximum Drawdown real | ❌ | ✅ `risk_metrics.max_drawdown()` | ✅ snapshot + UI |
+| Liquidez 21d (R$) | ❌ no motor | ✅ `risk_metrics.liquidez_media_21d()` | ✅ snapshot + UI |
+| DY 3m anualizado | ❌ | ✅ `risk_metrics.dy_3m_anualizado()` | ✅ snapshot + UI |
+| Retorno total 12m | ❌ | ✅ `risk_metrics.retorno_total_12m()` | ✅ snapshot + UI |
+| Yield on Cost (YoC) | ❌ | ✅ `risk_metrics.yield_on_cost()` | — (apenas sob demanda) |
+| Score numérico 0–100 | ❌ | ❌ | ❌ (Fase 2) |
+| Justificativa LLM | ❌ | ❌ | ❌ (Fase 3) |
+| Diagnóstico LLM da carteira | ❌ | ❌ | ❌ (Fase 4) |
+| Spread sobre NTN-B | ❌ | ❌ | ❌ (Fase 5) |
+| Comparativo com pares | ❌ | ❌ | ❌ (Fase 6) |
+| Histórico recomendações | ❌ | ❌ | ❌ (Fase 7) |
+| Vacância / WAULT / LTV | ❌ | ❌ | ❌ (Fase 9) |
 
 ### O que funciona bem e não deve ser tocado
 
@@ -181,51 +181,42 @@ session.add(SnapshotTickerMetrics(
 ## 4. Fases de Melhoria
 
 ### Fase 1.5 — Integrar risk_metrics no Pipeline e na UI
-**PRÓXIMA MISSÃO PARA JULES**
-**Estimativa: 2–3 dias | Depende da Fase 1 (já concluída)**
+**✅ CONCLUÍDA em 2026-05-02**
 
-**O que fazer:**
+**O que foi entregue:**
 
-**Parte A — Migration (nova coluna no banco):**
-Adicionar em `src/fii_analysis/data/migrations.py` as colunas:
-```sql
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS volatilidade_anual REAL;
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS beta_ifix REAL;
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS max_drawdown REAL;
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS liquidez_21d_brl REAL;
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS retorno_total_12m REAL;
-ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS dy_3m_anualizado REAL;
-```
+**Parte A — Migration (`migrations.py` — Migração 003):**
+6 colunas adicionadas a `snapshot_ticker_metrics` via `_add_column` idempotente.
+Aplicada no banco `dados/fii_data.db` — verificada em segunda execução (zero ALTER TABLE).
 
-**Parte B — ORM (adicionar campos ao modelo):**
-Em `src/fii_analysis/data/database.py`, na classe `SnapshotTickerMetrics`, adicionar:
-```python
-volatilidade_anual: Mapped[float | None] = mapped_column(Numeric)
-beta_ifix: Mapped[float | None] = mapped_column(Numeric)
-max_drawdown: Mapped[float | None] = mapped_column(Numeric)
-liquidez_21d_brl: Mapped[float | None] = mapped_column(Numeric)
-retorno_total_12m: Mapped[float | None] = mapped_column(Numeric)
-dy_3m_anualizado: Mapped[float | None] = mapped_column(Numeric)
-```
+**Parte B — ORM (`database.py`):**
+`SnapshotTickerMetrics` recebe os 6 campos como `Mapped[float | None]`.
 
-**Parte C — Pipeline de snapshot:**
-Em `src/fii_analysis/evaluation/daily_snapshots.py`, no bloco que cria `SnapshotTickerMetrics`,
-importar `from src.fii_analysis.features.risk_metrics import *` e popular os novos campos.
-Usar try/except por campo — falha em uma métrica não deve derrubar o snapshot inteiro.
+**Parte C — Pipeline (`daily_snapshots.py`):**
+`build_snapshot_ticker_metrics` importa `risk_metrics as _rm` e popula cada campo
+com `try/except` individual — falha isolada não derruba o snapshot.
+Adicionado helper público `load_risk_metrics_snapshot(ticker, session) -> dict`.
 
-**Parte D — UI em `7_Fundamentos.py`:**
-Na aba "Fundamentos", adicionar nova seção "Risco e Retorno" com métricas em `st.metric()`:
-- Volatilidade anual (ex: "11,1%")
-- Beta vs IFIX (ex: "0,82" ou "n/d" se None)
-- Max Drawdown (ex: "-9,1%")
-- Liquidez 21d (ex: "R$ 8,1 mi")
-- Retorno Total 12m (ex: "+27,9%")
-- DY 3m anualizado (ex: "10,1%")
-Ler do snapshot atual (via `load_snapshot_ticker_metrics()` que já existe).
+**Parte D — UI (`app/components/page_content/fundamentos.py`):**
+Nova aba "Risco e Retorno" com 6 `st.metric()` + `help=` descritivo.
+Lê do snapshot via `load_risk_metrics_snapshot`. Exibe "n/d" se snapshot vazio.
 
-**Parte E — UI em `14_Dossie_FII.py`:**
-Na aba "Análise", adicionar linha de métricas de risco após a seção de valuation.
-Mesmo conjunto de métricas do item D, mais compacto (inline `st.metric()`).
+**Parte E — UI (`app/components/page_content/analise_fii.py`):**
+Seção compacta "Risco e Retorno" no `tab_val` do Dossiê:
+volatilidade, drawdown, retorno 12m, liquidez 21d.
+
+**Snapshot run_id=21 gerado (2026-05-02) com valores reais:**
+
+| Ticker | Vol Anual | MDD | Ret 12m | Liquidez 21d | DY 3m |
+|---|---|---|---|---|---|
+| CPTS11 | 8.7% | -24.3% | +36.6% | R$ 7.1 mi | 13.6% |
+| CPSH11 | 11.7% | -20.8% | +40.4% | R$ 4.5 mi | 12.6% |
+| GARE11 | 7.8% | -12.4% | +16.1% | R$ 12.7 mi | 11.9% |
+| HSRE11 | 23.2% | -24.8% | +2.3% | R$ 23.5 mi | 8.1% |
+| KNIP11 | 11.1% | -9.1% | +27.9% | R$ 8.1 mi | 10.1% |
+| SNEL11 | 6.7% | -7.2% | +30.3% | R$ 3.9 mi | 14.0% |
+
+Beta `None` em todos — `benchmark_diario` não tem IFIX. Coletar via brapi (dívida técnica).
 
 ---
 
@@ -564,7 +555,7 @@ def export_report_html(report: DailyCommandCenter, holdings: list) -> str:
 
 ```
 MAIO 2026
-├── Fase 1.5: Integrar risk_metrics no snapshot + UI (7_Fundamentos, 14_Dossie_FII)
+├── Fase 1.5: ✅ Integrar risk_metrics no snapshot + UI (7_Fundamentos, 14_Dossie_FII)
 ├── Fase 2: Score 0-100 com barras de decomposição na UI
 │
 JUNHO 2026
