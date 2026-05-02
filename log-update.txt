@@ -1,0 +1,156 @@
+21:23.479 | INFO     | __main__:download_cvm_zips:39 - ZIP inf_mensal_fii_2021.zip ja existe, pulando download
+2026-05-02 11:21:23.479 | INFO     | __main__:download_cvm_zips:39 - ZIP inf_mensal_fii_2022.zip ja existe, pulando download
+2026-05-02 11:21:23.479 | INFO     | __main__:download_cvm_zips:39 - ZIP inf_mensal_fii_2023.zip ja existe, pulando download
+2026-05-02 11:21:23.480 | INFO     | __main__:download_cvm_zips:39 - ZIP inf_mensal_fii_2024.zip ja existe, pulando download
+2026-05-02 11:21:23.480 | INFO     | __main__:download_cvm_zips:39 - ZIP inf_mensal_fii_2025.zip ja existe, pulando download
+2026-05-02 11:21:23.480 | INFO     | __main__:download_cvm_zips:42 - Baixando inf_mensal_fii_2026.zip ...
+2026-05-02 11:21:23.906 | INFO     | __main__:download_cvm_zips:47 - ZIP inf_mensal_fii_2026.zip baixado (465 KB)
+2026-05-02 11:21:23.908 | INFO     | __main__:main:65 - --- Etapa 2: Carga relatorios mensais CVM ---
+2026-05-02 11:21:23.909 | INFO     | __main__:main:71 - Processando CVM ano 2021 ...
+2026-05-02 11:21:23.909 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2021.zip
+2026-05-02 11:21:23.933 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2021.csv
+2026-05-02 11:21:23.989 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2021.csv
+2026-05-02 11:21:24.049 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2021.csv
+2026-05-02 11:21:24.309 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2021: 0 inseridos, 276 ja existiam (ignorados)
+2026-05-02 11:21:24.311 | INFO     | __main__:main:71 - Processando CVM ano 2022 ...
+2026-05-02 11:21:24.312 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2022.zip
+2026-05-02 11:21:24.326 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2022.csv
+2026-05-02 11:21:24.366 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2022.csv
+2026-05-02 11:21:24.429 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2022.csv
+2026-05-02 11:21:24.652 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2022: 0 inseridos, 289 ja existiam (ignorados)
+2026-05-02 11:21:24.655 | INFO     | __main__:main:71 - Processando CVM ano 2023 ...
+2026-05-02 11:21:24.656 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2023.zip
+2026-05-02 11:21:24.682 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2023.csv
+2026-05-02 11:21:24.733 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2023.csv
+2026-05-02 11:21:24.818 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2023.csv
+2026-05-02 11:21:25.073 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2023: 0 inseridos, 311 ja existiam (ignorados)
+2026-05-02 11:21:25.076 | INFO     | __main__:main:71 - Processando CVM ano 2024 ...
+2026-05-02 11:21:25.076 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2024.zip
+2026-05-02 11:21:25.091 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2024.csv
+2026-05-02 11:21:25.146 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2024.csv
+2026-05-02 11:21:25.239 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2024.csv
+2026-05-02 11:21:25.508 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2024: 0 inseridos, 312 ja existiam (ignorados)
+2026-05-02 11:21:25.512 | INFO     | __main__:main:71 - Processando CVM ano 2025 ...
+2026-05-02 11:21:25.512 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2025.zip
+2026-05-02 11:21:25.533 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2025.csv
+2026-05-02 11:21:25.584 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2025.csv
+2026-05-02 11:21:25.692 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2025.csv
+2026-05-02 11:21:25.963 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2025: 0 inseridos, 314 ja existiam (ignorados)
+2026-05-02 11:21:25.966 | INFO     | __main__:main:71 - Processando CVM ano 2026 ...
+2026-05-02 11:21:25.967 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:42 - Abrindo ZIP D:\analise-de-acoes-v2\dados\cvm\raw\inf_mensal_fii_2026.zip
+2026-05-02 11:21:25.992 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_complemento_2026.csv
+2026-05-02 11:21:26.011 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_geral_2026.csv
+2026-05-02 11:21:26.035 | INFO     | src.fii_analysis.data.ingestion:load_cvm_zip:58 - Lendo inf_mensal_fii_ativo_passivo_2026.csv
+2026-05-02 11:21:26.115 | INFO     | src.fii_analysis.data.ingestion:load_cvm_to_db:129 - CVM 2026: 0 inseridos, 76 ja existiam (ignorados)
+2026-05-02 11:21:26.117 | INFO     | __main__:main:77 - --- Etapa 3: Carga CDI diario (BCB SGS serie 12) ---
+2026-05-02 11:21:26.121 | INFO     | src.fii_analysis.data.ingestion:load_cdi_to_db:368 - Baixando CDI de 2026-05-01 ate 2026-05-02 via BCB
+2026-05-02 11:21:26.978 | WARNING  | src.fii_analysis.data.ingestion:load_cdi_to_db:374 - BCB falhou para chunk 2026-05-01-2026-05-02 (404 Client Error: Not Found for url: https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial=01/05/2026&dataFinal=02/05/2026). Parando backfill.
+2026-05-02 11:21:26.978 | INFO     | src.fii_analysis.data.ingestion:load_cdi_to_db:394 - CDI: 0 registros inseridos no total
+2026-05-02 11:21:26.981 | INFO     | __main__:main:83 - --- Etapa 4: Carga precos e dividendos (yfinance) ---
+2026-05-02 11:21:26.985 | INFO     | __main__:main:88 - Processando ticker HSRE11 ...
+2026-05-02 11:21:26.990 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - HSRE11: buscando a partir de 2026-05-01
+2026-05-02 11:21:28.079 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - HSRE11: 0 precos inseridos
+2026-05-02 11:21:29.416 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - HSRE11: 0 dividendos inseridos
+2026-05-02 11:21:29.418 | INFO     | __main__:main:88 - Processando ticker GARE11 ...
+2026-05-02 11:21:29.421 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - GARE11: buscando a partir de 2026-05-01
+2026-05-02 11:21:29.719 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - GARE11: 0 precos inseridos
+2026-05-02 11:21:30.215 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - GARE11: 0 dividendos inseridos
+2026-05-02 11:21:30.216 | INFO     | __main__:main:88 - Processando ticker CPSH11 ...
+2026-05-02 11:21:30.218 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - CPSH11: buscando a partir de 2026-05-01
+2026-05-02 11:21:30.532 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - CPSH11: 0 precos inseridos
+2026-05-02 11:21:31.140 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - CPSH11: 0 dividendos inseridos
+2026-05-02 11:21:31.141 | INFO     | __main__:main:88 - Processando ticker CPTS11 ...
+2026-05-02 11:21:31.143 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - CPTS11: buscando a partir de 2026-05-01
+2026-05-02 11:21:31.498 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - CPTS11: 0 precos inseridos
+2026-05-02 11:21:33.359 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - CPTS11: 0 dividendos inseridos
+2026-05-02 11:21:33.361 | INFO     | __main__:main:88 - Processando ticker KNIP11 ...
+2026-05-02 11:21:33.364 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - KNIP11: buscando a partir de 2026-05-01
+2026-05-02 11:21:33.629 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - KNIP11: 0 precos inseridos
+2026-05-02 11:21:34.679 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - KNIP11: 0 dividendos inseridos
+2026-05-02 11:21:34.681 | INFO     | __main__:main:88 - Processando ticker SNFF11 ...
+2026-05-02 11:21:34.684 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - SNFF11: buscando a partir de 2026-05-01
+2026-05-02 11:21:34.978 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - SNFF11: 0 precos inseridos
+2026-05-02 11:21:36.132 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - SNFF11: 0 dividendos inseridos
+2026-05-02 11:21:36.134 | INFO     | __main__:main:88 - Processando ticker BTAL11 ...
+2026-05-02 11:21:36.137 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - BTAL11: buscando a partir de 2026-05-01
+2026-05-02 11:21:36.439 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - BTAL11: 0 precos inseridos
+2026-05-02 11:21:37.515 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - BTAL11: 0 dividendos inseridos
+2026-05-02 11:21:37.517 | INFO     | __main__:main:88 - Processando ticker BTCI11 ...
+2026-05-02 11:21:37.520 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - BTCI11: buscando a partir de 2026-05-01
+2026-05-02 11:21:37.782 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - BTCI11: 0 precos inseridos
+2026-05-02 11:21:38.913 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - BTCI11: 0 dividendos inseridos
+2026-05-02 11:21:38.914 | INFO     | __main__:main:88 - Processando ticker BTLG11 ...
+2026-05-02 11:21:38.916 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - BTLG11: buscando a partir de 2026-05-01
+2026-05-02 11:21:39.238 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - BTLG11: 0 precos inseridos
+2026-05-02 11:21:40.197 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - BTLG11: 0 dividendos inseridos
+2026-05-02 11:21:40.199 | INFO     | __main__:main:88 - Processando ticker GAME11 ...
+2026-05-02 11:21:40.202 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - GAME11: buscando a partir de 2026-05-01
+2026-05-02 11:21:40.554 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - GAME11: 0 precos inseridos
+2026-05-02 11:21:41.303 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - GAME11: 0 dividendos inseridos
+2026-05-02 11:21:41.304 | INFO     | __main__:main:88 - Processando ticker GGRC11 ...
+2026-05-02 11:21:41.307 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - GGRC11: buscando a partir de 2026-05-01
+2026-05-02 11:21:41.560 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - GGRC11: 0 precos inseridos
+2026-05-02 11:21:42.509 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - GGRC11: 0 dividendos inseridos
+2026-05-02 11:21:42.510 | INFO     | __main__:main:88 - Processando ticker HGLG11 ...
+2026-05-02 11:21:42.513 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - HGLG11: buscando a partir de 2026-05-01
+2026-05-02 11:21:42.776 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - HGLG11: 0 precos inseridos
+2026-05-02 11:21:43.835 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - HGLG11: 0 dividendos inseridos
+2026-05-02 11:21:43.837 | INFO     | __main__:main:88 - Processando ticker HREC11 ...
+2026-05-02 11:21:43.840 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - HREC11: buscando a partir de 2026-05-01
+2026-05-02 11:21:44.193 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - HREC11: 0 precos inseridos
+2026-05-02 11:21:44.656 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - HREC11: 0 dividendos inseridos
+2026-05-02 11:21:44.657 | INFO     | __main__:main:88 - Processando ticker HSAF11 ...
+2026-05-02 11:21:44.660 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - HSAF11: buscando a partir de 2026-05-01
+2026-05-02 11:21:44.922 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - HSAF11: 0 precos inseridos
+2026-05-02 11:21:45.872 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - HSAF11: 0 dividendos inseridos
+2026-05-02 11:21:45.874 | INFO     | __main__:main:88 - Processando ticker HSML11 ...
+2026-05-02 11:21:45.877 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - HSML11: buscando a partir de 2026-05-01
+2026-05-02 11:21:46.140 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - HSML11: 0 precos inseridos
+2026-05-02 11:21:47.044 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - HSML11: 0 dividendos inseridos
+2026-05-02 11:21:47.046 | INFO     | __main__:main:88 - Processando ticker KNCR11 ...
+2026-05-02 11:21:47.049 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - KNCR11: buscando a partir de 2026-05-01
+2026-05-02 11:21:47.335 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - KNCR11: 0 precos inseridos
+2026-05-02 11:21:48.211 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - KNCR11: 0 dividendos inseridos
+2026-05-02 11:21:48.213 | INFO     | __main__:main:88 - Processando ticker KNRI11 ...
+2026-05-02 11:21:48.216 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - KNRI11: buscando a partir de 2026-05-01
+2026-05-02 11:21:48.492 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - KNRI11: 0 precos inseridos
+2026-05-02 11:21:49.302 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - KNRI11: 0 dividendos inseridos
+2026-05-02 11:21:49.303 | INFO     | __main__:main:88 - Processando ticker KNSC11 ...
+2026-05-02 11:21:49.305 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - KNSC11: buscando a partir de 2026-05-01
+2026-05-02 11:21:49.619 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - KNSC11: 0 precos inseridos
+2026-05-02 11:21:50.269 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - KNSC11: 0 dividendos inseridos
+2026-05-02 11:21:50.270 | INFO     | __main__:main:88 - Processando ticker MCCI11 ...
+2026-05-02 11:21:50.273 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - MCCI11: buscando a partir de 2026-05-01
+2026-05-02 11:21:50.541 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - MCCI11: 0 precos inseridos
+2026-05-02 11:21:51.267 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - MCCI11: 0 dividendos inseridos
+2026-05-02 11:21:51.268 | INFO     | __main__:main:88 - Processando ticker PVBI11 ...
+2026-05-02 11:21:51.272 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - PVBI11: buscando a partir de 2026-05-01
+2026-05-02 11:21:51.566 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - PVBI11: 0 precos inseridos
+2026-05-02 11:21:52.440 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - PVBI11: 0 dividendos inseridos
+2026-05-02 11:21:52.441 | INFO     | __main__:main:88 - Processando ticker RBRR11 ...
+2026-05-02 11:21:52.444 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - RBRR11: buscando a partir de 2026-05-01
+2026-05-02 11:21:52.701 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - RBRR11: 0 precos inseridos
+2026-05-02 11:21:53.945 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - RBRR11: 0 dividendos inseridos
+2026-05-02 11:21:53.947 | INFO     | __main__:main:88 - Processando ticker RZTR11 ...
+2026-05-02 11:21:53.948 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - RZTR11: buscando a partir de 2026-05-01
+2026-05-02 11:21:54.229 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - RZTR11: 0 precos inseridos
+2026-05-02 11:21:55.133 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - RZTR11: 0 dividendos inseridos
+2026-05-02 11:21:55.136 | INFO     | __main__:main:88 - Processando ticker VGIR11 ...
+2026-05-02 11:21:55.140 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - VGIR11: buscando a partir de 2026-05-01
+2026-05-02 11:21:55.458 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - VGIR11: 0 precos inseridos
+2026-05-02 11:21:56.329 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - VGIR11: 0 dividendos inseridos
+2026-05-02 11:21:56.331 | INFO     | __main__:main:88 - Processando ticker VINO11 ...
+2026-05-02 11:21:56.334 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - VINO11: buscando a partir de 2026-05-01
+2026-05-02 11:21:56.591 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - VINO11: 0 precos inseridos
+2026-05-02 11:21:57.438 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - VINO11: 0 dividendos inseridos
+2026-05-02 11:21:57.440 | INFO     | __main__:main:88 - Processando ticker XPML11 ...
+2026-05-02 11:21:57.443 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - XPML11: buscando a partir de 2026-05-01
+2026-05-02 11:21:57.711 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - XPML11: 0 precos inseridos
+2026-05-02 11:21:58.613 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - XPML11: 0 dividendos inseridos
+2026-05-02 11:21:58.615 | INFO     | __main__:main:88 - Processando ticker SNEL11 ...
+2026-05-02 11:21:58.617 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:143 - SNEL11: buscando a partir de 2026-05-01
+2026-05-02 11:21:58.943 | INFO     | src.fii_analysis.data.ingestion:load_prices_yfinance:184 - SNEL11: 0 precos inseridos
+2026-05-02 11:21:59.550 | INFO     | src.fii_analysis.data.ingestion:load_dividends_yfinance:223 - SNEL11: 0 dividendos inseridos
+2026-05-02 11:21:59.551 | INFO     | __main__:main:98 - --- Etapa 5: Focus Selic (BCB ExpectativasMercadoSelic) ---
+2026-05-02 11:22:00.059 | INFO     | __main__:main:101 - Focus: status=OK | 3m=0.135 | 6m=0.13 | 12m=0.12 | data=2026-04-24
+2026-05-02 11:22:00.060 | INFO     | __main__:main:112 - --- Etapa 6: Snapshot diario (universo curado) ---
