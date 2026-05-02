@@ -34,9 +34,10 @@ def beta_vs_ifix(ticker: str, janela: int = 252, session=None) -> float | None:
     """Calcula o beta do ticker em relação ao IFIX (Cov(R_FII, R_IFIX) / Var(R_IFIX))."""
     rows = session.execute(
         select(PrecoDiario.fechamento_aj, BenchmarkDiario.fechamento)
+        .select_from(PrecoDiario)
         .join(
             BenchmarkDiario,
-            (PrecoDiario.data == BenchmarkDiario.data) & (BenchmarkDiario.ticker == "IFIX")
+            (PrecoDiario.data == BenchmarkDiario.data) & (BenchmarkDiario.ticker == "IFIX"),
         )
         .where(PrecoDiario.ticker == ticker, PrecoDiario.fechamento_aj.isnot(None), BenchmarkDiario.fechamento.isnot(None))
         .order_by(PrecoDiario.data.desc())
