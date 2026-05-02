@@ -1,8 +1,50 @@
 # Plano de Melhoria — FII Analytics
 
 > **Baseado em:** auditoria técnica completa do código + análise do `PROJETO-completo.md`
-> **Data:** 2026-05-02
+> **Última atualização:** 2026-05-02
 > **Objetivo:** fechar o gap entre o que o projeto visiona e o que realmente está implementado.
+
+---
+
+## STATUS ATUAL DAS FASES
+
+| Fase | Descrição | Status |
+|---|---|---|
+| 1 | Métricas de risco e retorno (`risk_metrics.py`) | ✅ Funções criadas — ⚠️ UI/snapshot pendentes |
+| 1.5 | Integrar Fase 1 no pipeline de snapshots e UI | ❌ Pendente |
+| 2 | Score 0–100 com decomposição visual | ❌ Pendente |
+| 3 | Justificativa LLM por ticker | ❌ Pendente |
+| 4 | Diagnóstico LLM da carteira | ❌ Pendente |
+| 5 | Spread sobre NTN-B | ❌ Pendente |
+| 6 | Comparativo com pares do segmento | ❌ Pendente |
+| 7 | Histórico de recomendações versionado | ❌ Pendente |
+| 8 | Relatório exportável HTML | ❌ Pendente |
+| 9 | Dados qualitativos (vacância, WAULT, LTV) | ❌ Longo prazo |
+
+---
+
+## WORKFLOW JULES — COMO ENVIAR MISSÕES
+
+**SEMPRE usar Bash tool + Python subprocess + SEM timeout + SEM run_in_background:**
+
+```bash
+python3 -c "
+import subprocess
+task = '''descrição da tarefa'''
+result = subprocess.run(
+    ['node', 'C:/Users/carlo/AppData/Roaming/npm/node_modules/@google/jules/run.cjs',
+     'new', '--repo', 'carloshorwath/analise-fii', task],
+    capture_output=True, text=True
+)
+print(result.stdout)
+print(result.stderr)
+"
+```
+
+**Verificar diff após merge:**
+```bash
+node "C:/Users/carlo/AppData/Roaming/npm/node_modules/@google/jules/run.cjs" remote pull --session SESSION_ID
+```
 
 ---
 
@@ -18,29 +60,24 @@ Os três sinais do `decision/recommender.py` são, na prática, **todos baseados
 | Sinal Episódio | P/VP percentil fixo (p10 = BUY, p90 = SELL) | — |
 | Sinal Walk-Forward | P/VP percentil (p15/p85 calculado no treino) | — |
 
-**Concordância** é uma contagem heurística (2/3 ou 3/3 concordam), não um score estatístico. O resultado final — COMPRAR / VENDER / AGUARDAR / EVITAR — é derivado dessas contagens mais um veto manual em caso de destruição de capital.
+### O que não existe (estado original, antes das melhorias)
 
-Isso é **tecnicamente sólido** (validação out-of-sample, thinning, bootstrap), mas **estatisticamente estreito**: o sistema avalia se o P/VP está no percentil baixo ou alto, pouco mais que isso.
-
-### O que não existe
-
-| Feature | Status |
-|---|---|
-| Volatilidade anualizada | ❌ Não implementada |
-| Beta vs IFIX | ❌ Apenas diagnóstico CDI (não altera ação) |
-| Maximum Drawdown real | ❌ Só min(fwd_ret) nos episódios |
-| Liquidez 21d como input decisório | ❌ Existe no radar mas não entra no sinal |
-| DY 3m anualizado | ❌ Só 12m/24m/60m |
-| Retorno total 12m | ❌ Ausente |
-| Yield on Cost (YoC) | ❌ Ausente |
-| Spread sobre NTN-B | ❌ Ausente |
-| Score numérico 0–100 | ❌ Só categorias (ALTA/MÉDIA/BAIXA/VETADA) |
-| Justificativa em linguagem natural (LLM) | ❌ Ausente — diferenciador central do produto |
-| Diagnóstico LLM da carteira | ❌ Ausente |
-| Comparativo com pares do segmento | ❌ Ausente |
-| Histórico de recomendações versionado | ❌ Ausente |
-| Vacância / WAULT / LTV | ❌ Ausente (dados qualitativos) |
-| Alavancagem no sinal | ❌ Calculada mas não ativa na decisão |
+| Feature | Status original | Depois da Fase 1 |
+|---|---|---|
+| Volatilidade anualizada | ❌ | ✅ `risk_metrics.volatilidade_anualizada()` |
+| Beta vs IFIX | ❌ | ✅ `risk_metrics.beta_vs_ifix()` — retorna None sem dados IFIX |
+| Maximum Drawdown real | ❌ | ✅ `risk_metrics.max_drawdown()` |
+| Liquidez 21d (R$) | ❌ no motor | ✅ `risk_metrics.liquidez_media_21d()` |
+| DY 3m anualizado | ❌ | ✅ `risk_metrics.dy_3m_anualizado()` |
+| Retorno total 12m | ❌ | ✅ `risk_metrics.retorno_total_12m()` |
+| Yield on Cost (YoC) | ❌ | ✅ `risk_metrics.yield_on_cost()` |
+| Score numérico 0–100 | ❌ | ❌ (Fase 2) |
+| Justificativa LLM | ❌ | ❌ (Fase 3) |
+| Diagnóstico LLM da carteira | ❌ | ❌ (Fase 4) |
+| Spread sobre NTN-B | ❌ | ❌ (Fase 5) |
+| Comparativo com pares | ❌ | ❌ (Fase 6) |
+| Histórico recomendações | ❌ | ❌ (Fase 7) |
+| Vacância / WAULT / LTV | ❌ | ❌ (Fase 9) |
 
 ### O que funciona bem e não deve ser tocado
 
@@ -52,60 +89,148 @@ Isso é **tecnicamente sólido** (validação out-of-sample, thinning, bootstrap
 
 ---
 
-## 2. Gap vs Visão do PROJETO-completo.md
+## 2. Arquitetura do Banco — Tabelas de Snapshot
 
-O documento propõe um produto com cinco dimensões de análise por FII:
+> **Contexto crítico para Jules:** o projeto usa um pipeline de snapshots diários pré-calculados.
+> Não calcule nada on-demand na UI — tudo entra via `generate_daily_snapshots.py` → tabelas de snapshot.
 
+### `snapshot_runs` — envelope de metadados
+```python
+id, data_referencia, criado_em, status,  # running | ready | failed
+engine_version_global, universe_scope,   # curado | carteira | db_ativos
+universe_hash, carteira_hash,
+base_preco_ate, base_dividendo_ate, base_cdi_ate,
+mensagem_erro, tickers_falhos            # JSON list
 ```
-Output = ⟨Sinal, Convicção, Justificativa, Score Decomosto, Alertas⟩
+
+### `snapshot_ticker_metrics` — métricas por ticker (ONDE ADICIONAR COLUNAS DA FASE 1.5)
+```python
+# COLUNAS ATUAIS:
+id, run_id, ticker,
+preco, vp, pvp, pvp_percentil,
+dy_12m, dy_24m, rent_12m, rent_24m,
+dy_gap, dy_gap_percentil,
+volume_21d,          # <-- já existe, mas é diferente de liquidez_media_21d
+cvm_defasada, segmento
+
+# COLUNAS A ADICIONAR (Fase 1.5):
+volatilidade_anual,  # float, ex: 0.11
+beta_ifix,           # float, ex: 0.82 — None se IFIX sem dados
+max_drawdown,        # float negativo, ex: -0.09
+liquidez_21d_brl,    # float R$, ex: 8148647.0
+retorno_total_12m,   # float, ex: 0.279
+dy_3m_anualizado,    # float, ex: 0.101
 ```
 
-Hoje temos Sinal + Convicção + Alertas. Faltam **Justificativa** e **Score Decomposto** — as peças que transformam o dado em decisão comunicável.
+### `snapshot_decisions` — ações derivadas por ticker
+```python
+id, run_id, ticker, data_referencia,
+sinal_otimizador, sinal_episodio, sinal_walkforward,
+acao, nivel_concordancia, n_concordam_buy, n_concordam_sell,
+flag_destruicao_capital, motivo_destruicao, flag_emissao_recente,
+flag_pvp_caro, flag_dy_gap_baixo,
+pvp_atual, pvp_percentil, dy_gap_percentil, preco_referencia,
+# (campos CDI sensitivity também presentes — não modificar)
+# COLUNAS A ADICIONAR (Fase 2+):
+# score_total, score_valuation, score_risco, score_liquidez, score_historico
+# justificativa_llm, justificativa_hash  (Fase 3)
+```
+
+### `snapshot_portfolio_advices` — conselhos por posição da carteira
+```python
+id, run_id, carteira_hash,
+ticker, quantidade, preco_medio, preco_atual, valor_mercado, peso_carteira,
+badge,      # HOLD | AUMENTAR | REDUZIR | SAIR | EVITAR_NOVOS_APORTES
+racional, prioridade,
+acao_recomendada, nivel_concordancia, flags_resumo, valida_ate
+```
+
+### Como adicionar colunas (padrão do projeto)
+O projeto usa `src/fii_analysis/data/migrations.py` para ALTER TABLE em SQLite.
+Padrão: `ADD COLUMN IF NOT EXISTS` via `text()` do SQLAlchemy.
+Ver `migrations.py` para exemplos existentes antes de criar nova migration.
 
 ---
 
-## 3. Fases de Melhoria
+## 3. Pipeline de Snapshots — Onde Integrar
 
-### Fase 1 — Métricas de Risco e Retorno
-**Estimativa: 3–4 dias | Pré-requisito de todas as fases seguintes**
+Arquivo: `src/fii_analysis/evaluation/daily_snapshots.py`
 
-Criar `src/fii_analysis/features/risk_metrics.py` com funções puras, zero side-effects, zero print.
+Função principal: `gerar_snapshot(run_id, tickers, session)` — chamada por `scripts/generate_daily_snapshots.py`.
 
-**Funções a implementar:**
-
+Trecho relevante onde `SnapshotTickerMetrics` é populado (linha ~240):
 ```python
-def volatilidade_anualizada(ticker: str, janela: int = 252, session=None) -> float | None:
-    """σ_diário × √252. Mínimo 63 pregões. Usa fechamento_aj."""
-
-def beta_vs_ifix(ticker: str, janela: int = 252, session=None) -> float | None:
-    """Cov(R_FII, R_IFIX) / Var(R_IFIX). Usa benchmark_diario (já está no schema)."""
-
-def max_drawdown(ticker: str, janela: int = 504, session=None) -> float | None:
-    """MDD = max((Pt - max(P_s, s≤t)) / max(P_s, s≤t)). Retorna negativo."""
-
-def liquidez_media_21d(ticker: str, session=None) -> float | None:
-    """Média(volume × fechamento) dos últimos 21 pregões. Em R$."""
-
-def retorno_total_12m(ticker: str, session=None) -> float | None:
-    """(P_t - P_{t-12m} + Σdiv_12m) / P_{t-12m}."""
-
-def dy_3m_anualizado(ticker: str, session=None) -> float | None:
-    """Σ(dividendos_3m) × 4 / preço_atual."""
-
-def yield_on_cost(ticker: str, preco_medio: float, session=None) -> float | None:
-    """Σ(dividendos_12m) / preco_medio. Só calcula quando PM disponível."""
+session.add(SnapshotTickerMetrics(
+    run_id=run_id,
+    ticker=ticker,
+    preco=...,
+    pvp=...,
+    pvp_percentil=...,
+    dy_12m=...,
+    dy_gap=...,
+    dy_gap_percentil=...,
+    volume_21d=vol_21d,
+    ...
+))
 ```
 
-**Integração:**
-- Adicionar colunas em `SnapshotTickerMetrics`: `volatilidade_anual`, `beta_ifix`, `max_drawdown`, `liquidez_21d_brl`, `retorno_total_12m`, `dy_3m_anualizado`
-- Exibir nas páginas `7_Fundamentos.py` e `14_Dossie_FII.py`
+**Para Fase 1.5:** adicionar chamadas a `risk_metrics.*` neste bloco e persistir nas novas colunas.
 
-**Testes mínimos esperados:** para KNIP11, volatilidade > 0, beta entre -2 e 2, liquidez > R$ 100k.
+---
+
+## 4. Fases de Melhoria
+
+### Fase 1.5 — Integrar risk_metrics no Pipeline e na UI
+**PRÓXIMA MISSÃO PARA JULES**
+**Estimativa: 2–3 dias | Depende da Fase 1 (já concluída)**
+
+**O que fazer:**
+
+**Parte A — Migration (nova coluna no banco):**
+Adicionar em `src/fii_analysis/data/migrations.py` as colunas:
+```sql
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS volatilidade_anual REAL;
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS beta_ifix REAL;
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS max_drawdown REAL;
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS liquidez_21d_brl REAL;
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS retorno_total_12m REAL;
+ALTER TABLE snapshot_ticker_metrics ADD COLUMN IF NOT EXISTS dy_3m_anualizado REAL;
+```
+
+**Parte B — ORM (adicionar campos ao modelo):**
+Em `src/fii_analysis/data/database.py`, na classe `SnapshotTickerMetrics`, adicionar:
+```python
+volatilidade_anual: Mapped[float | None] = mapped_column(Numeric)
+beta_ifix: Mapped[float | None] = mapped_column(Numeric)
+max_drawdown: Mapped[float | None] = mapped_column(Numeric)
+liquidez_21d_brl: Mapped[float | None] = mapped_column(Numeric)
+retorno_total_12m: Mapped[float | None] = mapped_column(Numeric)
+dy_3m_anualizado: Mapped[float | None] = mapped_column(Numeric)
+```
+
+**Parte C — Pipeline de snapshot:**
+Em `src/fii_analysis/evaluation/daily_snapshots.py`, no bloco que cria `SnapshotTickerMetrics`,
+importar `from src.fii_analysis.features.risk_metrics import *` e popular os novos campos.
+Usar try/except por campo — falha em uma métrica não deve derrubar o snapshot inteiro.
+
+**Parte D — UI em `7_Fundamentos.py`:**
+Na aba "Fundamentos", adicionar nova seção "Risco e Retorno" com métricas em `st.metric()`:
+- Volatilidade anual (ex: "11,1%")
+- Beta vs IFIX (ex: "0,82" ou "n/d" se None)
+- Max Drawdown (ex: "-9,1%")
+- Liquidez 21d (ex: "R$ 8,1 mi")
+- Retorno Total 12m (ex: "+27,9%")
+- DY 3m anualizado (ex: "10,1%")
+Ler do snapshot atual (via `load_snapshot_ticker_metrics()` que já existe).
+
+**Parte E — UI em `14_Dossie_FII.py`:**
+Na aba "Análise", adicionar linha de métricas de risco após a seção de valuation.
+Mesmo conjunto de métricas do item D, mais compacto (inline `st.metric()`).
 
 ---
 
 ### Fase 2 — Score Numérico 0–100 com Decomposição Visual
-**Estimativa: 3–4 dias | Depende da Fase 1**
+**Estimativa: 3–4 dias | Depende da Fase 1.5**
 
 Criar `src/fii_analysis/features/score.py`.
 
@@ -118,32 +243,37 @@ Score(FII) = 0,35 × ScoreValuation
            + 0,15 × ScoreHistórico
 ```
 
-Pesos únicos por enquanto (sem diferenciação Tijolo/Papel — implementar depois de validar com dados reais).
-
 **Sub-scores (0–100 cada):**
 
 ```python
 # ScoreValuation: P/VP percentil invertido + DY Gap percentil
-# P/VP baixo = bom → score alto
-# DY Gap alto = bom → score alto
-def score_valuation(pvp_percentil, dy_gap_percentil) -> int:
-    pvp_score = 100 - pvp_percentil          # p10 → 90 pts; p80 → 20 pts
-    gap_score = dy_gap_percentil              # p80 → 80 pts; p10 → 10 pts
+# P/VP baixo = bom → score alto; DY Gap alto = bom → score alto
+def score_valuation(pvp_percentil: float, dy_gap_percentil: float) -> int:
+    pvp_score = 100 - pvp_percentil   # p10 → 90 pts; p80 → 20 pts
+    gap_score = dy_gap_percentil       # p80 → 80 pts; p10 → 10 pts
     return round(0.6 * pvp_score + 0.4 * gap_score)
 
-# ScoreRisco: volatilidade, beta, drawdown — todos penalizam quando altos
-# Normalizar contra o universo dos FIIs monitorados (percentil relativo)
-def score_risco(vol_percentil, beta_abs_percentil, mdd_abs_percentil) -> int:
-    return round(100 - (0.4 * vol_percentil + 0.3 * beta_abs_percentil + 0.3 * mdd_abs_percentil))
+# ScoreRisco: volatilidade, beta, drawdown — penalizam quando altos
+# Normalizar contra universo dos FIIs monitorados (percentil relativo entre os 5–6 tickers)
+def score_risco(vol: float | None, beta: float | None, mdd: float | None,
+                vol_universe: list, beta_universe: list, mdd_universe: list) -> int:
+    # Calcular percentil de cada métrica dentro do universo
+    # vol alto = risco alto = score baixo
+    # |beta| alto = risco alto = score baixo
+    # |mdd| alto = risco alto = score baixo
+    ...
 
-# ScoreLiquidez: liquidez 21d em escala log, normalizada
-# < R$ 200k = 20 pts; 200k–1M = 50 pts; > R$ 1M = 80+ pts
-def score_liquidez(liquidez_21d_brl) -> int: ...
+# ScoreLiquidez: faixas fixas (não relativas ao universo)
+# < R$ 200k/dia = 20 pts | 200k–1M = 50 pts | 1M–5M = 75 pts | > 5M = 90 pts
+def score_liquidez(liquidez_21d_brl: float | None) -> int: ...
 
-# ScoreHistórico: consistência do DY 24m — coef. variação invertido
-# CV = std(DY_mensal_24m) / mean(DY_mensal_24m)
-# CV baixo = DY consistente = score alto
-def score_historico(ticker, session) -> int: ...
+# ScoreHistórico: consistência do DY 24m (coef. variação invertido)
+# CV = std(DY_mensal) / mean(DY_mensal) sobre 24 meses
+# CV baixo (DY consistente) = score alto
+def score_historico(ticker: str, session=None) -> int:
+    # Buscar dy_mes_pct dos últimos 24 meses de RelatorioMensal
+    # Calcular CV; inverter e normalizar para 0-100
+    ...
 ```
 
 **Dataclass de resultado:**
@@ -154,24 +284,40 @@ class ScoreFII:
     ticker: str
     data_referencia: date
     score_total: int           # 0–100
-    score_valuation: int
-    score_risco: int
-    score_liquidez: int
-    score_historico: int
-    sinal_score: str           # "COMPRAR" (≥80), "MANTER" (65–79), etc.
-    conviccao_score: str       # "ALTA" (sub-scores convergem), etc.
+    score_valuation: int       # 0–100
+    score_risco: int           # 0–100
+    score_liquidez: int        # 0–100
+    score_historico: int       # 0–100
+    # Campos auxiliares para debug/UI
+    pvp_percentil: float | None
+    dy_gap_percentil: float | None
+    volatilidade: float | None
+    liquidez_21d_brl: float | None
 ```
 
-**Integração:**
-- `SnapshotTickerMetrics`: nova coluna `score_total`, `score_breakdown` (JSON)
-- `SnapshotDecisions`: coluna `score_fii` ligada ao score calculado
-- UI em `14_Dossie_FII.py`: barras horizontais Plotly por sub-score
-- UI em `13_Hoje.py`: badge colorido com o score total ao lado do badge COMPRAR/EVITAR
+**Função pública:**
+```python
+def calcular_score(ticker: str, session=None,
+                   todos_tickers: list[str] | None = None) -> ScoreFII | None:
+    """
+    todos_tickers: lista de todos os FIIs ativos (para normalização de risco relativo).
+    Se None, usa apenas os dados absolutos (score_risco usa faixas fixas).
+    """
+```
 
-**Notas críticas:**
-- O score **não substitui** o motor estatístico atual. É uma camada paralela de *comunicação*.
-- A ação final continua sendo derivada dos 3 sinais + flags. O score serve para a UI e para a justificativa LLM.
-- Documentar explicitamente que score ≥ 80 ≠ sinal COMPRAR — podem divergir quando walk-forward diz NEUTRO.
+**Integração no banco:**
+- `SnapshotTickerMetrics`: adicionar `score_total`, `score_breakdown` (JSON com sub-scores)
+- `SnapshotDecisions`: adicionar `score_total` (redundância intencional para queries simples)
+
+**Integração UI:**
+- `14_Dossie_FII.py`: barras horizontais Plotly mostrando cada sub-score
+- `13_Hoje.py`: badge colorido com score ao lado do badge COMPRAR/EVITAR
+  - Score ≥ 80: verde escuro
+  - Score 65–79: verde médio
+  - Score 50–64: amarelo
+  - Score < 50: vermelho
+
+**Nota crítica:** score ≥ 80 ≠ sinal COMPRAR (podem divergir). Exibir os dois separadamente.
 
 ---
 
@@ -180,28 +326,26 @@ class ScoreFII:
 
 Criar `src/fii_analysis/decision/justifier.py`.
 
-**Arquitetura:**
+**Dependências:**
+- `anthropic` (já instalado: `pip show anthropic` para verificar versão)
+- API key: variável de ambiente `ANTHROPIC_API_KEY` (no `.env` do projeto ou variável do sistema)
 
+**Assinatura:**
 ```python
-from anthropic import Anthropic
-
 def gerar_justificativa(
-    decision: TickerDecision,
-    score: ScoreFII | None = None,
-    holding: HoldingAdvice | None = None,
-    cache: dict | None = None,    # dict mutável para cache em memória
+    decision: TickerDecision,          # de src.fii_analysis.decision.recommender
+    score: ScoreFII | None = None,     # de src.fii_analysis.features.score
+    holding: HoldingAdvice | None = None,  # de src.fii_analysis.decision.portfolio_advisor
+    cache: dict | None = None,
 ) -> str:
     """
-    Gera 3–6 frases em PT-BR explicando a recomendação.
-    
-    Não decide o sinal — apenas comunica o que já foi decidido.
-    Cache por hash(ação + concordância + pvp_percentil + dy_gap_percentil).
-    Se Anthropic falhar, retorna template estático com os dados crus.
+    Retorna 3–6 frases em PT-BR explicando a recomendação.
+    Nunca decide o sinal — apenas o comunica.
+    Em caso de falha da API, retorna template estático com dados crus.
     """
 ```
 
-**Prompt template** (baseado na especificação do PROJETO-completo.md):
-
+**Prompt template:**
 ```
 Você é um analista de FIIs comunicando uma recomendação a um investidor pessoa física brasileiro.
 
@@ -216,7 +360,7 @@ Dados calculados pelo sistema:
 
 Regras obrigatórias:
 1. NUNCA prometa retorno futuro. NUNCA diga "vai subir/cair".
-2. Cite no máximo 3 indicadores, com valores numéricos reais dos dados acima.
+2. Cite no máximo 3 indicadores com valores numéricos reais dos dados acima.
 3. Mencione 1 risco mesmo em ações positivas.
 4. Linguagem clara, sem jargão sem explicação.
 5. NÃO use: "garantido", "certeza", "infalível", "recomendo fortemente".
@@ -226,21 +370,21 @@ Regras obrigatórias:
 Devolva APENAS o texto da justificativa, sem cabeçalho.
 ```
 
+**Modelo:** `claude-haiku-4-5` por padrão. Fallback: template estático com dados crus.
+
 **Guardrails pós-geração:**
-- Comprimento: 150–600 caracteres → se fora, refazer com prompt reforçado, senão template estático
+- Comprimento: 150–600 caracteres → se fora do range, refazer 1 vez com prompt reforçado, senão template
 - Palavras proibidas (regex): `garanti|certez|infalív|vai subir|vai cair|lucro cert`
-- Validação: deve conter pelo menos 1 número presente nos dados de input
+- Validação: o texto deve conter pelo menos 1 número que aparece nos dados de input
 
 **Cache:**
 - Chave: `md5(f"{ticker}|{acao}|{nivel_concordancia}|{pvp_pct:.0f}|{dy_gap_pct:.0f}")`
-- Persistência: coluna `justificativa_llm` e `justificativa_hash` em `SnapshotDecisions`
-- Regenerar apenas quando hash muda (economia de ~90% de tokens)
+- Persistência: colunas `justificativa_llm` e `justificativa_hash` em `SnapshotDecisions`
+- Regenerar SOMENTE quando hash muda
 
 **Integração UI:**
-- `13_Hoje.py`: expandir card de cada ação para mostrar justificativa (colapsável)
-- `14_Dossie_FII.py`: seção de destaque na aba "Análise"
-
-**Modelo:** Claude Haiku 4.5 por padrão. Fallback: template estático formatado com os dados crus.
+- `13_Hoje.py`: expandir card de cada ação para mostrar justificativa (colapsável via `st.expander`)
+- `14_Dossie_FII.py`: seção destacada na aba "Análise"
 
 ---
 
@@ -249,66 +393,78 @@ Devolva APENAS o texto da justificativa, sem cabeçalho.
 
 Criar `src/fii_analysis/decision/portfolio_diagnostics.py`.
 
-**O que faz:**
-- Recebe todos os `HoldingAdvice` + `AlertaEstrutural` + scores individuais
-- Calcula `score_carteira`: média ponderada pelo valor de mercado dos scores individuais
-- Chama LLM para gerar 1 parágrafo de diagnóstico da carteira como um todo
+**Função:**
+```python
+def gerar_diagnostico_carteira(
+    advices: list[HoldingAdvice],
+    alertas: list[AlertaEstrutural],
+    scores: dict[str, ScoreFII],  # ticker → ScoreFII
+    cache: dict | None = None,
+) -> tuple[str, float]:
+    """
+    Retorna (diagnostico_texto, score_carteira_ponderado).
+    score_carteira = média ponderada por valor_mercado dos score_total individuais.
+    """
+```
 
 **Prompt:**
 ```
 Você é um analista de FIIs resumindo o estado de uma carteira de investimentos.
 
-Carteira: {n_holdings} FIIs
-Composição: {segmentos_pct}
-Score médio ponderado: {score_carteira}/100
+Carteira: {n_holdings} FIIs | Score médio ponderado: {score_carteira}/100
+Composição por segmento: {segmentos_pct}
 Ações prioritárias: {n_comprar} COMPRAR, {n_reduzir} REDUZIR/SAIR, {n_manter} MANTER
-Maior posição: {top_holding} ({top_peso:.1f}%)
-Alertas estruturais: {alertas}
+Maior posição: {top_peso:.1f}% | Alertas estruturais: {alertas}
 
-Escreva 3–5 frases descrevendo a saúde da carteira. 
-Mencione 1 ponto forte e 1 ponto de atenção. 
+Escreva 3–5 frases descrevendo a saúde da carteira.
+Mencione 1 ponto forte e 1 ponto de atenção.
 Não cite nomes de FIIs específicos — fale de segmentos e métricas.
 Tom: técnico, sóbrio, sem promessas.
 ```
 
 **Integração UI:**
-- `13_Hoje.py`: painel de topo, antes das ações individuais
+- `13_Hoje.py`: painel de topo antes das ações individuais
 - `3_Carteira.py`: nova seção "Diagnóstico da Carteira"
 
-**Novo campo em `SnapshotPortfolioAdvices`:** `score_carteira`, `diagnostico_llm`, `diagnostico_hash`
+**Novos campos em `SnapshotPortfolioAdvices`:** `score_carteira`, `diagnostico_llm`, `diagnostico_hash`
 
 ---
 
 ### Fase 5 — Spread sobre NTN-B
 **Estimativa: 2 dias | Independente das outras fases**
 
-**Por que:** o DY Gap atual usa CDI como benchmark. O CDI representa risco de crédito zero.
-Para FIIs (ativos reais), o benchmark mais relevante é NTN-B (IPCA+), que é o que
-gestores de tijolo e papel competem contra na alocação de capital.
+**Por que:** o DY Gap atual usa CDI como benchmark. Para FIIs, o benchmark mais relevante
+é NTN-B (IPCA+) — é o que gestores de tijolo e papel competem na alocação de capital.
 
 **Implementação:**
-
 ```python
 # src/fii_analysis/data/ingestion.py — adicionar função
-def get_ntnb_bcb(anos_vencimento: int = 5) -> pd.DataFrame:
+def get_ntnb_bcb(serie_bcb: int = 12466) -> pd.DataFrame:
     """
-    BCB SGS série 12466 (NTN-B 5a) ou 12464 (NTN-B 2a).
-    Retorna DataFrame com data, ytm_real_aa (yield IPCA+, em %).
+    Série BCB SGS 12466 = NTN-B 5a (taxa IPCA+ % a.a.).
+    Retorna DataFrame com colunas: data, ytm_real_aa.
+    Endpoint: https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados?formato=json
     """
 
-# Nova tabela: benchmark_ntnb (data, ytm_real_aa, fonte)
+# Nova tabela no database.py:
+class BenchmarkNtnb(Base):
+    __tablename__ = "benchmark_ntnb"
+    data: date (PK)
+    ytm_real_aa: float  # yield IPCA+ % a.a.
+    serie_bcb: int
+    coletado_em: datetime
 ```
 
 **Cálculo:**
 ```python
-spread_ntnb = DY_12m - YTM_NTNB_vigente
-# Positivo = FII oferece prêmio vs renda fixa real
-# Negativo = renda fixa real é mais atraente
+spread_ntnb = DY_12m - ytm_ntnb_vigente_em_t  # em pontos percentuais
+# > 0: FII oferece prêmio vs renda fixa real
+# < 0: renda fixa real é mais atraente
 ```
 
 **Integração:**
-- `SnapshotTickerMetrics`: coluna `spread_ntnb_pp` (em pontos percentuais)
-- `ScoreValuation`: substituir componente CDI por NTN-B quando disponível
+- `SnapshotTickerMetrics`: coluna `spread_ntnb_pp`
+- `ScoreValuation` (Fase 2+): usar spread NTN-B como substituto do DY Gap CDI quando disponível
 - `7_Fundamentos.py`: gráfico de série histórica do spread
 
 ---
@@ -316,57 +472,50 @@ spread_ntnb = DY_12m - YTM_NTNB_vigente
 ### Fase 6 — Comparativo com Pares do Segmento
 **Estimativa: 2–3 dias | Depende das Fases 1 e 2**
 
-**O que faz:** tabela side-by-side de todos os FIIs ativos por segmento (Papel, Tijolo, Híbrido),
-com ranking por score, mostrando as métricas principais.
-
-**Implementação:**
-
 ```python
 # src/fii_analysis/features/peer_comparison.py
 def comparar_pares(tickers: list[str], session=None) -> pd.DataFrame:
     """
-    Retorna DataFrame com uma linha por ticker e colunas:
+    Uma linha por ticker. Colunas:
     ticker, segmento, pvp_atual, pvp_percentil, dy_12m, dy_gap_percentil,
-    score_total, acao, concordancia, volatilidade, liquidez_21d_brl
+    score_total, acao, concordancia, volatilidade_anual, liquidez_21d_brl
     Ordenado por score_total DESC.
+    Fonte: snapshot_ticker_metrics + snapshot_decisions mais recentes.
     """
 ```
 
 **Integração UI:**
 - Nova aba "Comparar" em `14_Dossie_FII.py`
-- `4_Radar.py`: expandir a matriz booleana para mostrar ranking por score
+- `4_Radar.py`: expandir matriz booleana para mostrar ranking por score ao lado
 
 ---
 
 ### Fase 7 — Histórico de Recomendações Versionado
 **Estimativa: 2–3 dias | Depende da Fase 3**
 
-**Por que:** permite ao usuário ver como a recomendação evoluiu no tempo, gerando confiança
-e auditabilidade. O PROJETO-completo.md coloca isso como item de V1.
-
 **Nova tabela:**
-
 ```sql
 recommendation_history (
-    id          INTEGER PRIMARY KEY,
-    ticker      TEXT,
-    data_ref    DATE,
-    acao        TEXT,           -- COMPRAR / VENDER / AGUARDAR / EVITAR
-    badge       TEXT,           -- AUMENTAR / REDUZIR / HOLD / SAIR
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker       TEXT NOT NULL,
+    data_ref     DATE NOT NULL,
+    acao         TEXT,   -- COMPRAR | VENDER | AGUARDAR | EVITAR
+    badge        TEXT,   -- AUMENTAR | REDUZIR | HOLD | SAIR | EVITAR_NOVOS_APORTES
     concordancia TEXT,
     score_total  INTEGER,
     justificativa TEXT,
     pvp_snapshot REAL,
     dy_gap_snapshot REAL,
-    criado_em   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    criado_em    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 ```
 
-**Lógica:** a cada `generate_daily_snapshots.py`, gravar na tabela somente quando a ação ou badge mudou vs o registro anterior (diff-based).
+**Lógica:** em `generate_daily_snapshots.py`, após calcular decisões, gravar SOMENTE quando
+`acao` ou `badge` mudou vs o registro mais recente na tabela (diff-based — evita duplicatas diárias).
 
 **Integração UI:**
-- `14_Dossie_FII.py`: nova aba "Histórico" com timeline de mudanças de ação
-- `13_Hoje.py`: badge "Mudou ontem" quando ação mudou no último snapshot
+- `14_Dossie_FII.py`: aba "Histórico" com timeline de mudanças de ação
+- `13_Hoje.py`: badge visual "↑ Mudou hoje" quando ação mudou no último snapshot vs o anterior
 
 ---
 
@@ -378,35 +527,32 @@ recommendation_history (
 ```python
 def export_report_html(report: DailyCommandCenter, holdings: list) -> str:
     """
-    Relatório HTML formatado com:
+    HTML formatado com:
     - Diagnóstico da carteira (LLM)
     - Cards por FII com score, justificativa, indicadores
     - Alertas estruturais
     - Data de geração + disclaimer CVM
-    Usando Jinja2 template (dependência já disponível via Streamlit)
+    Usar Jinja2 (disponível via Streamlit já instalado).
     """
 ```
 
 **Integração UI:**
-- Botão "Exportar Relatório" em `13_Hoje.py`
-- Download como `.html` (abre no browser) ou `.md`
+- Botão "Exportar Relatório" em `13_Hoje.py` → `st.download_button` com MIME `text/html`
 
 ---
 
 ### Fase 9 — Dados Qualitativos (Vacância, WAULT, LTV)
 **Estimativa: 1–2 semanas | Longo prazo | Alta complexidade**
 
-Estes dados vêm de relatórios gerenciais (PDFs das gestoras). Pipeline:
+1. **Coleta manual inicial:** CSV atualizado trimestralmente para os 6 FIIs monitorados.
 
-1. **Coleta manual inicial** (para os 5 FIIs monitorados): CSV com os campos-chave preenchidos manualmente, atualizado trimestralmente. Custo: ~1h/trimestre.
-
-2. **Nova tabela `fii_qualitativo`**:
+2. **Nova tabela `fii_qualitativo`:**
    ```sql
-   (cnpj, data_referencia, vacancia_fisica_pct, vacancia_financeira_pct,
-    wault_anos, ltv_pct, top_inquilino_pct, indexador_predominante, fonte)
+   cnpj, data_referencia, vacancia_fisica_pct, vacancia_financeira_pct,
+   wault_anos, ltv_pct, top_inquilino_pct, indexador_predominante, fonte
    ```
 
-3. **Integração no ScoreQualidade** (novo sub-score na Fase 2+):
+3. **Integração no ScoreQualidade** (sub-score extra na Fase 2+):
    - Tijolo: vacância baixa + WAULT alto = qualidade alta
    - Papel: LTV < 60% + indexador IPCA+ = qualidade alta
 
@@ -414,11 +560,11 @@ Estes dados vêm de relatórios gerenciais (PDFs das gestoras). Pipeline:
 
 ---
 
-## 4. Roadmap Consolidado
+## 5. Roadmap Consolidado
 
 ```
 MAIO 2026
-├── Fase 1: Métricas de Risco (vol, beta, drawdown, liquidez, DY3m, retorno12m, YoC)
+├── Fase 1.5: Integrar risk_metrics no snapshot + UI (7_Fundamentos, 14_Dossie_FII)
 ├── Fase 2: Score 0-100 com barras de decomposição na UI
 │
 JUNHO 2026
@@ -434,24 +580,8 @@ AGOSTO 2026
 ├── Fase 8: Relatório exportável HTML
 │
 SETEMBRO 2026+
-└── Fase 9: Dados qualitativos (vacância, WAULT, LTV) — coleta manual → automação
+└── Fase 9: Dados qualitativos (vacância, WAULT, LTV)
 ```
-
----
-
-## 5. Impacto Esperado por Fase
-
-| Fase | Impacto na decisão | Impacto na UX | Esforço |
-|---|---|---|---|
-| 1 — Métricas de risco | Médio (enriquece contexto) | Alto (novas métricas visíveis) | Baixo |
-| 2 — Score 0-100 | Médio (camada comunicacional) | Muito alto (clareza visual) | Baixo |
-| 3 — Justificativa LLM | Nenhum no sinal, alto na compreensão | **Transformador** | Baixo |
-| 4 — Diagnóstico carteira LLM | Nenhum no sinal | Alto | Baixo |
-| 5 — Spread NTN-B | Alto (melhora ScoreValuation) | Médio | Médio |
-| 6 — Comparativo pares | Nenhum no sinal | Alto | Médio |
-| 7 — Histórico versionado | Nenhum no sinal | Alto (confiança) | Médio |
-| 8 — Relatório exportável | Nenhum | Médio | Baixo |
-| 9 — Vacância/WAULT/LTV | **Alto** (ScoreQualidade real) | Alto | Alto |
 
 ---
 
@@ -463,18 +593,17 @@ validade estatística. O score 0–100 é uma *camada de comunicação* — torn
 para o usuário sem comprometer o rigor do sinal.
 
 **A justificativa LLM NÃO decide o sinal.**
-O LLM recebe o sinal já decidido e gera o texto. Guardrails impedem que o texto contradiga o
-sinal ou use linguagem de certeza. Se o Anthropic falhar, fallback é template estático com dados.
+O LLM recebe o sinal já decidido e gera o texto. Guardrails impedem linguagem de certeza.
+Se o Anthropic falhar, fallback é template estático com os dados crus.
 
 **Métricas de risco entram como CONTEXTO antes de entrar como SINAL.**
-Nas Fases 1 e 2, volatilidade e beta aparecem no score e na UI. Só depois de validar empiricamente
-se eles predizem retornos nos 5 FIIs monitorados é que entram nos sinais do recommender.
+Nas Fases 1–2, volatilidade e beta aparecem na UI e no score. Só depois de validar empiricamente
+se eles predizem retornos nos FIIs monitorados é que entram nos sinais do recommender.
 Regra do CLAUDE.md: separar inferência estatística de comunicação operacional.
 
-**Pesos do score são fixos por agora, ajustáveis por tipo em Fase futura.**
-O PROJETO-completo.md propõe pesos diferentes por tipo (Tijolo/Papel/FoF). Com apenas 5 FIIs,
-não há amostra suficiente para calibrar pesos por tipo. Implementar peso único e documentar
-como dívida técnica a ser revisada quando o universo crescer.
+**beta_vs_ifix retorna None enquanto benchmark_diario não tiver dados do IFIX.**
+O IFIX precisa ser coletado via brapi separadamente. A função está correta — é o banco que precisa
+ser populado com dados IFIX antes que o beta funcione.
 
 ---
 
@@ -482,10 +611,10 @@ como dívida técnica a ser revisada quando o universo crescer.
 
 | Item | Onde está | O que falta |
 |---|---|---|
+| IFIX no banco | `benchmark_diario` vazio para IFIX | Coletar via brapi (`ingestion.py`) |
 | Alavancagem no sinal | `features/fundamentos.py` | Adicionar como flag suave no recommender |
 | Pesos score por tipo | `features/score.py` (Fase 2) | Calibrar quando universo > 15 FIIs |
 | Custos reais de transação | `models/trade_simulator.py` | Emolumentos B3 (0.03%), IR 20% |
-| Slippage | `models/trade_simulator.py` | Spread bid-ask para fundos ilíquidos |
 | Vacância automática | Fase 9 | Pipeline PDF → LLM → JSON |
 | Config reconciliação | `config.py` + `config.yaml` | Unificar em único ponto |
 | Testes automatizados | `tests/` (vazio) | Cobertura mínima das features de score |
