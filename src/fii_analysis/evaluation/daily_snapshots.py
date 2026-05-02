@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.fii_analysis.config import TICKERS, tickers_ativos
+from src.fii_analysis.features import risk_metrics as _rm
 from src.fii_analysis.data.database import (
     Carteira,
     CdiDiario,
@@ -237,6 +238,43 @@ def build_snapshot_ticker_metrics(
             dy_gap = get_dy_gap(ticker, data_ref, session)
             dy_gap_pct = get_dy_gap_percentil(ticker, data_ref, 252, session)
 
+            # Risk metrics — Fase 1.5 (cada um isolado: falha individual não derruba snapshot)
+            vol_anual = None
+            try:
+                vol_anual = _rm.volatilidade_anualizada(ticker, session=session)
+            except Exception:
+                pass
+
+            beta = None
+            try:
+                beta = _rm.beta_vs_ifix(ticker, session=session)
+            except Exception:
+                pass
+
+            mdd = None
+            try:
+                mdd = _rm.max_drawdown(ticker, session=session)
+            except Exception:
+                pass
+
+            liq_21d = None
+            try:
+                liq_21d = _rm.liquidez_media_21d(ticker, session=session)
+            except Exception:
+                pass
+
+            ret_12m = None
+            try:
+                ret_12m = _rm.retorno_total_12m(ticker, session=session)
+            except Exception:
+                pass
+
+            dy3m = None
+            try:
+                dy3m = _rm.dy_3m_anualizado(ticker, session=session)
+            except Exception:
+                pass
+
             session.add(SnapshotTickerMetrics(
                 run_id=run_id,
                 ticker=ticker,
@@ -253,6 +291,12 @@ def build_snapshot_ticker_metrics(
                 volume_21d=vol_21d,
                 cvm_defasada=cvm_defasada,
                 segmento=segmento,
+                volatilidade_anual=vol_anual,
+                beta_ifix=beta,
+                max_drawdown=mdd,
+                liquidez_21d_brl=liq_21d,
+                retorno_total_12m=ret_12m,
+                dy_3m_anualizado=dy3m,
             ))
             count += 1
 
@@ -869,3 +913,33 @@ def get_latest_ready_snapshot(
 ) -> SnapshotRun | None:
     """Retorna o SnapshotRun mais recente com status=ready."""
     return get_latest_ready_snapshot_run(session, scope=scope)
+
+
+def load_risk_metrics_snapshot(ticker: str, session: Session) -> dict:
+    """Retorna risk metrics do snapshot mais recente para o ticker.
+
+    Retorna dict com chaves: volatilidade_anual, beta_ifix, max_drawdown,
+    liquidez_21d_brl, retorno_total_12m, dy_3m_anualizado.
+    Todos os valores podem ser None se o snapshot não tiver dados.
+    """
+    run = get_latest_ready_snapshot_run(session)
+    if run is None:
+        return {}
+    row = session.execute(
+        select(SnapshotTickerMetrics)
+        .where(
+            SnapshotTickerMetrics.run_id == run.id,
+            SnapshotTickerMetrics.ticker == ticker,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return {}
+    return {
+        "volatilidade_anual": _float_or_none(getattr(row, "volatilidade_anual", None)),
+        "beta_ifix": _float_or_none(getattr(row, "beta_ifix", None)),
+        "max_drawdown": _float_or_none(getattr(row, "max_drawdown", None)),
+        "liquidez_21d_brl": _float_or_none(getattr(row, "liquidez_21d_brl", None)),
+        "retorno_total_12m": _float_or_none(getattr(row, "retorno_total_12m", None)),
+        "dy_3m_anualizado": _float_or_none(getattr(row, "dy_3m_anualizado", None)),
+    }

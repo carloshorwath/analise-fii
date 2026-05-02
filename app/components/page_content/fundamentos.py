@@ -10,6 +10,7 @@ from plotly.subplots import make_subplots
 
 from app.components.tables import format_number, format_pct
 from src.fii_analysis.data.database import get_session_ctx
+from src.fii_analysis.evaluation.daily_snapshots import load_risk_metrics_snapshot
 from src.fii_analysis.features.data_loader import get_info_ticker
 from src.fii_analysis.features.fundamentos import (
     classificar_alerta_distribuicao,
@@ -32,8 +33,8 @@ def render(ticker: str, *, key_prefix: str = "fund") -> None:
 
     st.markdown("---")
 
-    tab_dist, tab_pl, tab_dy, tab_pvp = st.tabs(
-        ["Distribuicao vs Geracao", "PL e Cotas", "DY Historico", "P/VP Historico"]
+    tab_dist, tab_pl, tab_dy, tab_pvp, tab_risco = st.tabs(
+        ["Distribuicao vs Geracao", "PL e Cotas", "DY Historico", "P/VP Historico", "Risco e Retorno"]
     )
 
     with tab_dist:
@@ -159,6 +160,67 @@ def render(ticker: str, *, key_prefix: str = "fund") -> None:
                 st.plotly_chart(fig_pvp, use_container_width=True)
             else:
                 st.info("Sem serie historica de P/VP disponivel.")
+
+    with tab_risco:
+        with get_session_ctx() as session:
+            rm = load_risk_metrics_snapshot(ticker, session)
+
+        st.header("Risco e Retorno")
+
+        if not rm:
+            st.info("Metricas de risco nao disponiveis. Execute o snapshot diario primeiro.")
+        else:
+            col_r1, col_r2, col_r3 = st.columns(3)
+
+            vol = rm.get("volatilidade_anual")
+            col_r1.metric(
+                "Volatilidade Anual",
+                f"{vol:.1%}" if vol is not None else "n/d",
+                help="Desvio padrao dos log-retornos diarios anualizado (sqrt(252)). Ultimos 252 pregoes.",
+            )
+
+            beta = rm.get("beta_ifix")
+            col_r2.metric(
+                "Beta vs IFIX",
+                f"{beta:.2f}" if beta is not None else "n/d",
+                help="Cov(R_FII, R_IFIX) / Var(R_IFIX). Requer dados IFIX no banco (benchmark_diario).",
+            )
+
+            mdd = rm.get("max_drawdown")
+            col_r3.metric(
+                "Max Drawdown (2a)",
+                f"{mdd:.1%}" if mdd is not None else "n/d",
+                help="Maior queda pico-a-vale nos ultimos 504 pregoes (fechamento ajustado).",
+            )
+
+            col_r4, col_r5, col_r6 = st.columns(3)
+
+            liq = rm.get("liquidez_21d_brl")
+            if liq is not None:
+                liq_fmt = f"R$ {liq / 1e6:.1f} mi" if liq >= 1e6 else f"R$ {liq / 1e3:.0f} k"
+            else:
+                liq_fmt = "n/d"
+            col_r4.metric(
+                "Liquidez Media 21d",
+                liq_fmt,
+                help="Media do volume financeiro diario (fechamento x volume) nos ultimos 21 pregoes.",
+            )
+
+            ret12 = rm.get("retorno_total_12m")
+            col_r5.metric(
+                "Retorno Total 12m",
+                f"{ret12:+.1%}" if ret12 is not None else "n/d",
+                help="(P_hoje - P_252 + dividendos_12m) / P_252. Retorno total incluindo proventos.",
+            )
+
+            dy3m = rm.get("dy_3m_anualizado")
+            col_r6.metric(
+                "DY 3m Anualizado",
+                f"{dy3m:.1%}" if dy3m is not None else "n/d",
+                help="Soma de dividendos dos ultimos 63 pregoes x 4, dividida pelo preco atual.",
+            )
+
+            st.caption("Fonte: snapshot diario mais recente (status=ready). Calculos sobre precos ajustados yfinance.")
 
     with tab_pl:
         with get_session_ctx() as session:

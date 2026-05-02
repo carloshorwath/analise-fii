@@ -78,4 +78,13 @@ def run_migrations(db_path: Path | None = None) -> None:
         _add_column(conn, "snapshot_decisions", "cdi_repricing_12m", "REAL")
         conn.commit()
 
+        # Migração 003: Risk metrics em snapshot_ticker_metrics (Fase 1.5)
+        _add_column(conn, "snapshot_ticker_metrics", "volatilidade_anual", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "beta_ifix", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "max_drawdown", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "liquidez_21d_brl", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "retorno_total_12m", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "dy_3m_anualizado", "REAL")
+        conn.commit()
+
     logger.info("Migracoes aplicadas em {}", db_path)

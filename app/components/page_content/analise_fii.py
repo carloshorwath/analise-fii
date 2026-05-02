@@ -16,6 +16,7 @@ from app.components.charts import (
 )
 from app.components.tables import format_currency, format_number
 from src.fii_analysis.config_yaml import get_piso_liquidez, get_threshold
+from src.fii_analysis.evaluation.daily_snapshots import load_risk_metrics_snapshot
 from src.fii_analysis.data.database import get_session_ctx, get_ultimo_preco_date
 from src.fii_analysis.features.composicao import classificar_fii, composicao_ativo
 from src.fii_analysis.features.data_loader import (
@@ -137,6 +138,20 @@ def render(ticker: str, *, key_prefix: str = "afii") -> None:
                 st.metric("DY Gap vs CDI", f"{dy_gap:.2%}", delta=f"{delta_gap:+.2%}")
             else:
                 st.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap else "n/d")
+
+            st.markdown("**Risco e Retorno**")
+            with get_session_ctx() as _s:
+                _rm = load_risk_metrics_snapshot(ticker, _s)
+            if _rm:
+                _vol = _rm.get("volatilidade_anual")
+                _mdd = _rm.get("max_drawdown")
+                _ret = _rm.get("retorno_total_12m")
+                _liq = _rm.get("liquidez_21d_brl")
+                st.metric("Volatilidade Anual", f"{_vol:.1%}" if _vol is not None else "n/d")
+                st.metric("Max Drawdown 2a", f"{_mdd:.1%}" if _mdd is not None else "n/d")
+                st.metric("Retorno Total 12m", f"{_ret:+.1%}" if _ret is not None else "n/d")
+                if _liq is not None:
+                    st.metric("Liquidez 21d", f"R$ {_liq/1e6:.1f} mi" if _liq >= 1e6 else f"R$ {_liq/1e3:.0f} k")
 
         with col_v2:
             if inicio is not None and not pvp_df.empty:

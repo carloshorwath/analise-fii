@@ -187,6 +187,14 @@ class SnapshotTickerMetrics(Base):
     cvm_defasada: Mapped[bool | None] = mapped_column(Boolean)
     segmento: Mapped[str | None] = mapped_column(String)
 
+    # Fase 1.5 — risk metrics
+    volatilidade_anual: Mapped[float | None] = mapped_column(Numeric)
+    beta_ifix: Mapped[float | None] = mapped_column(Numeric)
+    max_drawdown: Mapped[float | None] = mapped_column(Numeric)
+    liquidez_21d_brl: Mapped[float | None] = mapped_column(Numeric)
+    retorno_total_12m: Mapped[float | None] = mapped_column(Numeric)
+    dy_3m_anualizado: Mapped[float | None] = mapped_column(Numeric)
+
 
 class SnapshotRadar(Base):
     """Flags booleanas do radar por ticker em um snapshot_run."""
