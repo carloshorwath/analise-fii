@@ -31,6 +31,7 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 import pandas as pd
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -130,7 +131,8 @@ def _build_optimizer_params_map(session: Session, tickers: list[str]) -> dict[st
     for ticker in tickers:
         try:
             result = optimizer.optimize(ticker, session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Optimizer falhou para {ticker}: {e}")
             continue
         if "error" not in result and result.get("best_params"):
             params_map[ticker] = result["best_params"]
@@ -218,7 +220,8 @@ def build_snapshot_ticker_metrics(
 
     try:
         df_pan: pd.DataFrame = carteira_panorama(tickers, session)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"carteira_panorama falhou (tickers={tickers}): {e}")
         df_pan = pd.DataFrame()
 
     pan_map: dict[str, dict] = {}
@@ -232,27 +235,33 @@ def build_snapshot_ticker_metrics(
         rm: dict = {}
         try:
             rm["volatilidade"] = volatilidade_anualizada(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"volatilidade_anualizada falhou para {ticker}: {e}")
             rm["volatilidade"] = None
         try:
             rm["beta"] = beta_vs_ifix(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"beta_vs_ifix falhou para {ticker}: {e}")
             rm["beta"] = None
         try:
             rm["mdd"] = max_drawdown(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"max_drawdown falhou para {ticker}: {e}")
             rm["mdd"] = None
         try:
             rm["liquidez_21d_brl"] = liquidez_media_21d(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"liquidez_media_21d falhou para {ticker}: {e}")
             rm["liquidez_21d_brl"] = None
         try:
             rm["retorno_total_12m"] = retorno_total_12m(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"retorno_total_12m falhou para {ticker}: {e}")
             rm["retorno_total_12m"] = None
         try:
             rm["dy_3m_anualizado"] = rm_dy_3m_anualizado(ticker, session=session)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"dy_3m_anualizado falhou para {ticker}: {e}")
             rm["dy_3m_anualizado"] = None
         risk_map[ticker] = rm
 
@@ -307,7 +316,8 @@ def build_snapshot_ticker_metrics(
             ))
             count += 1
 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Falha ao calcular métricas para {ticker}: {e}")
             tickers_falhos.append(ticker)
 
     session.flush()
@@ -343,7 +353,8 @@ def _build_scores_into_metrics(
 
     try:
         scores = calcular_score_batch(tickers, metricas, session)
-    except Exception:
+    except Exception as e:
+        logger.error(f"calcular_score_batch falhou (scores serão NULL): {e}")
         return
 
     for ticker, sc in scores.items():
@@ -362,8 +373,8 @@ def _build_scores_into_metrics(
                     score_historico=sc.score_historico,
                 )
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Falha ao persistir score para {ticker}: {e}")
     session.flush()
 
 
@@ -387,7 +398,8 @@ def build_snapshot_radar(
 
     try:
         df: pd.DataFrame = radar_matriz(tickers=tickers, session=session)
-    except Exception:
+    except Exception as e:
+        logger.error(f"radar_matriz falhou para run_id={run_id}: {e}")
         return 0, list(tickers)
 
     for _, row in df.iterrows():
@@ -406,7 +418,8 @@ def build_snapshot_radar(
                 saude_motivo=row.get("saude_motivo"),
             ))
             count += 1
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Falha ao calcular radar para {ticker}: {e}")
             tickers_falhos.append(ticker)
 
     session.flush()
@@ -494,15 +507,15 @@ def build_snapshot_decisions(
         cdi_sensitivity_por_ticker = {
             t: cdi_sensitivity_to_dict(r) for t, r in raw.items()
         }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"compute_cdi_sensitivity_batch falhou: {e}")
 
     # Focus CDI explanation (contexto macro — NÃO altera ação)
     focus_data: FocusSelicResult | None = None
     try:
         focus_data = fetch_focus_selic()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"fetch_focus_selic falhou: {e}")
 
     focus_explanation_por_ticker: dict[str, dict] | None = None
     if focus_data is not None:
@@ -514,8 +527,8 @@ def build_snapshot_decisions(
                     cdi_sensitivity=cdi_sensitivity_por_ticker.get(ticker) if cdi_sensitivity_por_ticker else None,
                 )
                 focus_explanation_por_ticker[ticker] = expl
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"build_cdi_focus_explanation falhou para {ticker}: {e}")
 
     decisions = decidir_universo(
         session,
@@ -533,7 +546,8 @@ def build_snapshot_decisions(
             row = serialize_ticker_decision(decision, run_id)
             session.add(SnapshotDecisions(**row))
             count += 1
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Falha ao persistir decisão para {decision.ticker}: {e}")
             tickers_falhos.append(decision.ticker)
 
     session.flush()
@@ -664,7 +678,8 @@ def build_snapshot_portfolio_advices(
                 valida_ate=advice.valida_ate,
             ))
             count += 1
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Falha ao persistir advice para {advice.ticker}: {e}")
             tickers_falhos.append(advice.ticker)
 
     session.flush()
@@ -716,12 +731,12 @@ def _sync_score_to_decisions(session: Session, run_id: int) -> None:
                 .where(SnapshotDecisions.run_id == run_id, SnapshotDecisions.ticker == ticker)
                 .values(score_total=score)
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Falha ao sincronizar score para {ticker}: {e}")
     try:
         session.flush()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Flush falhou em _sync_score_to_decisions: {e}")
 
 
 # =============================================================================
@@ -833,8 +848,8 @@ def generate_daily_snapshot(
             run_obj.focus_selic_6m = focus.focus_selic_6m
             run_obj.focus_selic_12m = focus.focus_selic_12m
             run_obj.focus_status = focus.focus_status
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Falha ao persistir focus_data no run_id={run_id}: {e}")
 
         run = session.get(SnapshotRun, run_id)
         run.status = "ready"
@@ -920,8 +935,8 @@ def load_snapshot_holding_advices(
                 flags_resumo=row.flags_resumo or "—",
                 valida_ate=row.valida_ate or date.today(),
             ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Falha ao desserializar HoldingAdvice (ticker={getattr(row, 'ticker', '?')}): {e}")
     return advices
 
 
@@ -945,8 +960,8 @@ def load_snapshot_structural_alerts_objs(
                 descricao=row.descricao or "",
                 valor=float(row.valor) if row.valor is not None else 0.0,
             ))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Falha ao desserializar AlertaEstrutural: {e}")
     return result
 
 
