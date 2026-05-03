@@ -2,11 +2,12 @@ from datetime import date, timedelta
 
 import pandas as pd
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
 
 
-def get_pvp(ticker: str, data: date, session) -> float | None:
+def get_pvp(ticker: str, data: date, session: Session) -> float | None:
     # BUG 1 fix: último preço disponível até data t (não exige match exato)
     preco_row = session.execute(
         select(PrecoDiario.fechamento).where(
@@ -37,7 +38,7 @@ def get_pvp(ticker: str, data: date, session) -> float | None:
     return float(preco_row) / float(vp)
 
 
-def get_dy_trailing(ticker: str, data: date, session, janela_dias: int = 365) -> float | None:
+def get_dy_trailing(ticker: str, data: date, session: Session, janela_dias: int = 365) -> float | None:
     # último preço disponível até data t (não exige match exato)
     preco_row = session.execute(
         select(PrecoDiario.fechamento).where(
@@ -62,7 +63,7 @@ def get_dy_trailing(ticker: str, data: date, session, janela_dias: int = 365) ->
     return float(soma) / float(preco_row)
 
 
-def get_pvp_serie(ticker: str, session) -> pd.DataFrame:
+def get_pvp_serie(ticker: str, session: Session) -> pd.DataFrame:
     cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return pd.DataFrame(columns=["data", "fechamento", "vp_por_cota", "pvp"])
@@ -105,7 +106,7 @@ def get_pvp_serie(ticker: str, session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def get_dy_serie(ticker: str, session, janela_dias: int = 365) -> pd.DataFrame:
+def get_dy_serie(ticker: str, session: Session, janela_dias: int = 365) -> pd.DataFrame:
     precos = session.execute(
         select(PrecoDiario.data, PrecoDiario.fechamento)
         .where(PrecoDiario.ticker == ticker)

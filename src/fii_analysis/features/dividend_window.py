@@ -2,11 +2,12 @@ from datetime import date
 
 import pandas as pd
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.fii_analysis.data.database import Dividendo, PrecoDiario
 
 
-def get_dividend_windows(ticker: str, session) -> pd.DataFrame:
+def get_dividend_windows(ticker: str, session: Session) -> pd.DataFrame:
     """
     Retorna janela ±10 pregões ao redor de cada data-com.
 
@@ -88,7 +89,7 @@ def get_dividend_windows(ticker: str, session) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def get_abnormal_returns(ticker: str, benchmark_returns: pd.Series, session) -> pd.DataFrame:
+def get_abnormal_returns(ticker: str, benchmark_returns: pd.Series, session: Session) -> pd.DataFrame:
     windows = get_dividend_windows(ticker, session)
     if windows.empty:
         return pd.DataFrame(

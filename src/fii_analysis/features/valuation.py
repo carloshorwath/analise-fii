@@ -1,8 +1,10 @@
 from datetime import date, timedelta
 
 import numpy as np
+import pandas as pd
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from src.fii_analysis.config_yaml import get_threshold
 from src.fii_analysis.data.database import CdiDiario, Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
@@ -10,7 +12,7 @@ from src.fii_analysis.data.cdi import get_cdi_acumulado_12m
 from src.fii_analysis.features.indicators import get_pvp_serie
 
 
-def _extract_pvp_tuples(serie_df) -> list[tuple]:
+def _extract_pvp_tuples(serie_df: pd.DataFrame) -> list[tuple]:
     result = []
     for _, row in serie_df.iterrows():
         pvp = row.get("pvp")
@@ -19,7 +21,7 @@ def _extract_pvp_tuples(serie_df) -> list[tuple]:
     return result
 
 
-def get_pvp_percentil(ticker: str, t: date, janela: int | None = None, session=None) -> tuple[float | None, int]:
+def get_pvp_percentil(ticker: str, t: date, janela: int | None = None, session: Session | None = None) -> tuple[float | None, int]:
     if janela is None:
         janela = get_threshold("pvp_janela_pregoes", 504)
     serie_df = get_pvp_serie(ticker, session)
@@ -66,7 +68,7 @@ def _meses_atras(t: date, n_meses: int) -> date:
     return (t - relativedelta(months=n_meses))
 
 
-def get_dy_n_meses(ticker: str, t: date, n_meses: int, session=None) -> float | None:
+def get_dy_n_meses(ticker: str, t: date, n_meses: int, session: Session | None = None) -> float | None:
     inicio = _meses_atras(t, n_meses)
 
     preco_ref = session.execute(
@@ -95,7 +97,7 @@ def get_dy_n_meses(ticker: str, t: date, n_meses: int, session=None) -> float | 
     return float(soma_div) / float(preco_ref)
 
 
-def get_dy_gap(ticker: str, t: date, session=None) -> float | None:
+def get_dy_gap(ticker: str, t: date, session: Session | None = None) -> float | None:
     """DY Gap = DY 12m - CDI acumulado 12m em t (point-in-time via tabela cdi_diario).
 
     Se não houver CDI suficiente na tabela, retorna None (não usa fallback estático).
@@ -109,7 +111,7 @@ def get_dy_gap(ticker: str, t: date, session=None) -> float | None:
     return dy_12m - cdi
 
 
-def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, session=None) -> float | None:
+def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, session: Session | None = None) -> float | None:
     if janela is None:
         janela = get_threshold("dy_janela_pregoes", 252)
     """Percentil do DY Gap na janela rolling ate t-1. Batch queries em vez de N+1."""
