@@ -134,4 +134,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Remove all loguru handlers then add exactly one to prevent duplicate output
+    # if this module is somehow imported and main() called more than once.
+    logger.remove()
+    logger.add(sys.stderr)
     main()
