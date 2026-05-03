@@ -83,3 +83,46 @@ Pseudocódigo:
 ```
 
 **4. Risco da Correção:** Baixo/Médio (deve-se ter cuidado para evitar loops infinitos caso a data não seja avançada antes do `continue`).
+
+---
+
+## Critérios de Aceite
+
+### AC-1: Anomalia 1 — `keys_to_extract` em `load_cvm_zip`
+
+| # | Cenário | Comportamento esperado |
+|---|---|---|
+| 1.1 | `load_cvm_zip(path, 2024)` sem argumento | Extrai `complemento`, `geral` e `ativo_passivo` (retrocompat.) |
+| 1.2 | `load_cvm_zip(path, 2024, keys_to_extract=["complemento", "geral"])` | Retorna dict com exatamente as chaves `complemento` e `geral`; nenhum log "Lendo inf_mensal_fii_ativo_passivo_..." é emitido |
+| 1.3 | `load_cvm_zip(path, 2024, keys_to_extract=["ativo_passivo", "geral"])` | Retorna dict com exatamente as chaves `ativo_passivo` e `geral`; nenhum log "Lendo inf_mensal_fii_complemento_..." é emitido |
+| 1.4 | `load_cvm_to_db` chamado para qualquer ano | Log NÃO contém "Lendo inf_mensal_fii_ativo_passivo_..." |
+| 1.5 | `load_ativo_passivo_to_db` chamado para qualquer ano | Log NÃO contém "Lendo inf_mensal_fii_complemento_..." |
+| 1.6 | `load_cvm_to_db` + `load_ativo_passivo_to_db` chamados sequencialmente para o mesmo ZIP | Log contém cada arquivo (`complemento`, `geral`, `ativo_passivo`) exatamente **uma** vez |
+
+**Como verificar:** Executar com `PYTHONPATH=. python scripts/load_database.py` e inspecionar o log ou adicionar mock de `ZipFile.open` em teste unitário capturando calls.
+
+---
+
+### AC-2: Anomalia 2 — Logger sem handlers duplicados
+
+| # | Cenário | Comportamento esperado |
+|---|---|---|
+| 2.1 | `python scripts/load_database.py` executado normalmente | Cada mensagem de log aparece **exatamente uma vez** na saída |
+| 2.2 | `if __name__ == "__main__"` removido e `main()` importado de outro módulo | `logger.remove()` no bloco garante que o handler anterior é descartado antes de adicionar o novo |
+| 2.3 | Nenhum módulo importado (`ingestion.py`, `focus_bcb.py`, etc.) adiciona `logger.add()` extra | Confirmado via `grep -rn "logger.add"` no projeto (resultado: vazio) |
+
+**Como verificar:** `grep -rn "logger.add" src/ scripts/ app/` deve retornar vazio. Executar o script e contar ocorrências de qualquer mensagem: `python scripts/load_database.py 2>&1 | grep -c "Etapa 5"` deve retornar `1`.
+
+---
+
+### AC-3: Anomalia 3 — CDI 404 não interrompe backfill
+
+| # | Cenário | Comportamento esperado |
+|---|---|---|
+| 3.1 | BCB retorna HTTP 404 para um chunk específico | Log exibe "Sem dados CDI (404)"; `chunk_start` avança para `chunk_end + 1 dia`; loop continua para chunks seguintes |
+| 3.2 | BCB retorna HTTP 500 ou timeout para um chunk | Log exibe "Parando backfill"; loop é interrompido com `break` |
+| 3.3 | Todos os chunks respondem com 200 | Comportamento idêntico ao original; todos os registros são inseridos |
+| 3.4 | Dois chunks consecutivos retornam 404 | Ambos são pulados individualmente; o terceiro chunk tenta normalmente (sem loop infinito) |
+| 3.5 | `chunk_start` avança corretamente antes do `continue` | Loop termina em tempo finito mesmo com múltiplos 404 consecutivos |
+
+**Como verificar:** Mockar `requests.get` para retornar status 404 no primeiro chunk e 200 nos demais. Verificar que `total_inseridos > 0` e que o warning de "Sem dados CDI (404)" aparece apenas para o chunk mockado.
