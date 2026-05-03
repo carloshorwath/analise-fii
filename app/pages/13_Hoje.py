@@ -15,6 +15,7 @@ from app.components.carteira_ui import load_carteira_db
 from app.components.snapshot_ui import (
     load_command_center_snapshot,
     load_latest_snapshot_meta,
+    load_panorama_snapshot,
     render_snapshot_info,
 )
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
@@ -106,15 +107,22 @@ def main():
         "Nao sao ordens executaveis e devem ser validadas antes de operar."
     )
 
+    # Carregar scores do snapshot para exibir badges coloridos
+    _, snap_df = load_panorama_snapshot(snapshot_scope)
+    scores: dict[str, int | None] = {}
+    if not snap_df.empty and "ticker" in snap_df.columns and "score_total" in snap_df.columns:
+        for _, row in snap_df.iterrows():
+            scores[row["ticker"]] = row.get("score_total")
+
     tab_actions, tab_holdings, tab_watchlist, tab_risks, tab_cdi = st.tabs(
         ["Acoes do Dia", "Carteira Cruzada", "Watchlist", "Riscos e Vetos", "Contexto de Juros"]
     )
     with tab_actions:
-        _render_actions_today(report)
+        _render_actions_today(report, scores)
     with tab_holdings:
         _render_holdings(report)
     with tab_watchlist:
-        _render_watchlist(report)
+        _render_watchlist(report, scores)
     with tab_risks:
         _render_risks(report)
     with tab_cdi:
@@ -123,16 +131,31 @@ def main():
     render_footer()
 
 
-def _render_actions_today(report):
+def _render_actions_today(report, scores: dict | None = None):
     st.markdown("---")
     st.subheader("Acoes Hoje")
     if not report.action_today:
         st.info("Nenhuma acao tatica prioritaria hoje.")
         return
 
+    def _score_badge(ticker: str) -> str:
+        if scores is None:
+            return "n/d"
+        s = scores.get(ticker)
+        if s is None:
+            return "n/d"
+        if s >= 80:
+            return f"{s} (Excelente)"
+        if s >= 65:
+            return f"{s} (Bom)"
+        if s >= 50:
+            return f"{s} (Neutro)"
+        return f"{s} (Fraco)"
+
     df = pd.DataFrame([{
         "Ticker": d.ticker,
         "Acao": d.acao,
+        "Score": _score_badge(d.ticker),
         "Confianca": d.nivel_concordancia,
         "Otimizador": d.sinal_otimizador,
         "Episodios": d.sinal_episodio,
@@ -146,13 +169,15 @@ def _render_actions_today(report):
 
     with st.expander("Ver racional das acoes do dia"):
         for d in report.action_today:
-            st.markdown(f"**{d.ticker}** - {d.acao} ({d.nivel_concordancia})")
+            score_val = scores.get(d.ticker) if scores else None
+            score_txt = f" | Score: {score_val}/100" if score_val is not None else ""
+            st.markdown(f"**{d.ticker}** - {d.acao} ({d.nivel_concordancia}){score_txt}")
             for item in d.rationale:
                 st.write(f"- {item}")
             st.markdown("---")
 
 
-def _render_watchlist(report):
+def _render_watchlist(report, scores: dict | None = None):
     st.markdown("---")
     st.subheader("Watchlist")
     if not report.watchlist:
@@ -162,6 +187,7 @@ def _render_watchlist(report):
     df = pd.DataFrame([{
         "Ticker": d.ticker,
         "Estado": d.acao,
+        "Score": f"{scores.get(d.ticker, 'n/d')}/100" if scores and scores.get(d.ticker) is not None else "n/d",
         "Otimizador": d.sinal_otimizador,
         "Episodios": d.sinal_episodio,
         "WalkForward": d.sinal_walkforward,

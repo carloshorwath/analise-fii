@@ -78,4 +78,22 @@ def run_migrations(db_path: Path | None = None) -> None:
         _add_column(conn, "snapshot_decisions", "cdi_repricing_12m", "REAL")
         conn.commit()
 
+        # Migração 003: risk_metrics em snapshot_ticker_metrics (Fase 1.5)
+        _add_column(conn, "snapshot_ticker_metrics", "volatilidade_anual", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "beta_ifix", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "max_drawdown", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "liquidez_21d_brl", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "retorno_total_12m", "REAL")
+        _add_column(conn, "snapshot_ticker_metrics", "dy_3m_anualizado", "REAL")
+        conn.commit()
+
+        # Migração 004: score 0-100 em snapshot_ticker_metrics + snapshot_decisions (Fase 2)
+        _add_column(conn, "snapshot_ticker_metrics", "score_total", "INTEGER")
+        _add_column(conn, "snapshot_ticker_metrics", "score_valuation", "INTEGER")
+        _add_column(conn, "snapshot_ticker_metrics", "score_risco", "INTEGER")
+        _add_column(conn, "snapshot_ticker_metrics", "score_liquidez", "INTEGER")
+        _add_column(conn, "snapshot_ticker_metrics", "score_historico", "INTEGER")
+        _add_column(conn, "snapshot_decisions", "score_total", "INTEGER")
+        conn.commit()
+
     logger.info("Migracoes aplicadas em {}", db_path)

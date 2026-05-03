@@ -20,6 +20,14 @@ from src.fii_analysis.features.fundamentos import (
     get_pl_cotas_historico,
     get_pvp_medias,
 )
+from src.fii_analysis.features.risk_metrics import (
+    beta_vs_ifix,
+    dy_3m_anualizado as rm_dy_3m_anualizado,
+    liquidez_media_21d,
+    max_drawdown,
+    retorno_total_12m,
+    volatilidade_anualizada,
+)
 
 
 def render(ticker: str, *, key_prefix: str = "fund") -> None:
@@ -32,8 +40,8 @@ def render(ticker: str, *, key_prefix: str = "fund") -> None:
 
     st.markdown("---")
 
-    tab_dist, tab_pl, tab_dy, tab_pvp = st.tabs(
-        ["Distribuicao vs Geracao", "PL e Cotas", "DY Historico", "P/VP Historico"]
+    tab_dist, tab_pl, tab_dy, tab_pvp, tab_risco = st.tabs(
+        ["Distribuicao vs Geracao", "PL e Cotas", "DY Historico", "P/VP Historico", "Risco e Retorno"]
     )
 
     with tab_dist:
@@ -210,3 +218,77 @@ def render(ticker: str, *, key_prefix: str = "fund") -> None:
                     st.caption("Ativo total nao disponivel — impossivel calcular alavancagem")
             else:
                 st.info("Sem dados de PL e cotas disponiveis.")
+
+    with tab_risco:
+        with get_session_ctx() as session:
+            st.header("5. Risco e Retorno")
+
+            vol = None
+            beta = None
+            mdd = None
+            liq = None
+            ret12 = None
+            dy3m = None
+            try:
+                vol = volatilidade_anualizada(ticker, session=session)
+            except Exception:
+                pass
+            try:
+                beta = beta_vs_ifix(ticker, session=session)
+            except Exception:
+                pass
+            try:
+                mdd = max_drawdown(ticker, session=session)
+            except Exception:
+                pass
+            try:
+                liq = liquidez_media_21d(ticker, session=session)
+            except Exception:
+                pass
+            try:
+                ret12 = retorno_total_12m(ticker, session=session)
+            except Exception:
+                pass
+            try:
+                dy3m = rm_dy_3m_anualizado(ticker, session=session)
+            except Exception:
+                pass
+
+            col_r1, col_r2, col_r3 = st.columns(3)
+            col_r1.metric(
+                "Volatilidade Anual",
+                format_pct(vol) if vol is not None else "n/d",
+                help="Desvio padrao anualizado dos log-retornos diarios (252d)",
+            )
+            col_r2.metric(
+                "Beta vs IFIX",
+                f"{beta:.2f}" if beta is not None else "n/d",
+                help="Cov(FII, IFIX) / Var(IFIX) nos ultimos 252 pregoes. n/d se IFIX sem dados.",
+            )
+            col_r3.metric(
+                "Max Drawdown",
+                format_pct(mdd) if mdd is not None else "n/d",
+                help="Maior queda pico-a-vale nos ultimos 504 pregoes (preco ajustado)",
+            )
+
+            col_r4, col_r5, col_r6 = st.columns(3)
+            col_r4.metric(
+                "Liquidez Media 21d",
+                f"R$ {liq / 1e6:,.1f} mi" if liq is not None and liq >= 1e6
+                else (f"R$ {liq / 1e3:,.0f} k" if liq is not None and liq >= 1e3
+                      else (f"R$ {liq:,.0f}" if liq is not None else "n/d")),
+                help="Volume financeiro medio diario (fechamento x volume) dos ultimos 21 pregoes",
+            )
+            col_r5.metric(
+                "Retorno Total 12m",
+                format_pct(ret12) if ret12 is not None else "n/d",
+                help="(P_hoje - P_252 + dividendos_12m) / P_252",
+            )
+            col_r6.metric(
+                "DY 3m Anualizado",
+                format_pct(dy3m) if dy3m is not None else "n/d",
+                help="Soma de dividendos dos ultimos 63 pregoes x 4 / preco atual",
+            )
+
+            if all(v is None for v in [vol, beta, mdd, liq, ret12, dy3m]):
+                st.info("Sem dados de preco suficientes para calcular metricas de risco (minimo 63 pregoes).")
