@@ -59,6 +59,15 @@ from src.fii_analysis.decision.portfolio_advisor import (
 from src.fii_analysis.decision.recommender import TickerDecision, decidir_universo
 from src.fii_analysis.features.portfolio import carteira_panorama
 from src.fii_analysis.features.radar import radar_matriz
+from src.fii_analysis.features.risk_metrics import (
+    beta_vs_ifix,
+    dy_3m_anualizado as rm_dy_3m_anualizado,
+    liquidez_media_21d,
+    max_drawdown,
+    retorno_total_12m,
+    volatilidade_anualizada,
+)
+from src.fii_analysis.features.score import ScoreFII, calcular_score_batch
 from src.fii_analysis.features.valuation import (
     get_dy_gap,
     get_dy_gap_percentil,
@@ -217,6 +226,36 @@ def build_snapshot_ticker_metrics(
         for _, row in df_pan.iterrows():
             pan_map[row["ticker"]] = row.to_dict()
 
+    # Pre-calcular métricas de risco para todos os tickers (normalização cruzada no score)
+    risk_map: dict[str, dict] = {}
+    for ticker in tickers:
+        rm: dict = {}
+        try:
+            rm["volatilidade"] = volatilidade_anualizada(ticker, session=session)
+        except Exception:
+            rm["volatilidade"] = None
+        try:
+            rm["beta"] = beta_vs_ifix(ticker, session=session)
+        except Exception:
+            rm["beta"] = None
+        try:
+            rm["mdd"] = max_drawdown(ticker, session=session)
+        except Exception:
+            rm["mdd"] = None
+        try:
+            rm["liquidez_21d_brl"] = liquidez_media_21d(ticker, session=session)
+        except Exception:
+            rm["liquidez_21d_brl"] = None
+        try:
+            rm["retorno_total_12m"] = retorno_total_12m(ticker, session=session)
+        except Exception:
+            rm["retorno_total_12m"] = None
+        try:
+            rm["dy_3m_anualizado"] = rm_dy_3m_anualizado(ticker, session=session)
+        except Exception:
+            rm["dy_3m_anualizado"] = None
+        risk_map[ticker] = rm
+
     for ticker in tickers:
         try:
             row = pan_map.get(ticker, {})
@@ -237,6 +276,11 @@ def build_snapshot_ticker_metrics(
             dy_gap = get_dy_gap(ticker, data_ref, session)
             dy_gap_pct = get_dy_gap_percentil(ticker, data_ref, 252, session)
 
+            rm = risk_map.get(ticker, {})
+            # Armazenar para reutilizar no cálculo de score (evitar recalcular)
+            rm["pvp_percentil"] = pvp_pct
+            rm["dy_gap_percentil"] = dy_gap_pct
+
             session.add(SnapshotTickerMetrics(
                 run_id=run_id,
                 ticker=ticker,
@@ -253,6 +297,13 @@ def build_snapshot_ticker_metrics(
                 volume_21d=vol_21d,
                 cvm_defasada=cvm_defasada,
                 segmento=segmento,
+                # Fase 1.5 — risk_metrics
+                volatilidade_anual=rm.get("volatilidade"),
+                beta_ifix=rm.get("beta"),
+                max_drawdown=rm.get("mdd"),
+                liquidez_21d_brl=rm.get("liquidez_21d_brl"),
+                retorno_total_12m=rm.get("retorno_total_12m"),
+                dy_3m_anualizado=rm.get("dy_3m_anualizado"),
             ))
             count += 1
 
@@ -260,7 +311,60 @@ def build_snapshot_ticker_metrics(
             tickers_falhos.append(ticker)
 
     session.flush()
+
+    # Fase 2 — calcular scores com normalização cruzada e persistir
+    _build_scores_into_metrics(session, run_id, tickers, pan_map, risk_map)
+
     return count, tickers_falhos
+
+
+def _build_scores_into_metrics(
+    session: Session,
+    run_id: int,
+    tickers: list[str],
+    pan_map: dict[str, dict],
+    risk_map: dict[str, dict],
+) -> None:
+    """Calcula scores batch e atualiza colunas score_* nos registros já inseridos."""
+    from sqlalchemy import update as sa_update
+
+    # Montar dict de métricas para calcular_score_batch (reutilizar pvp/dygap já calculados)
+    metricas: dict[str, dict] = {}
+    for ticker in tickers:
+        rm = risk_map.get(ticker, {})
+        metricas[ticker] = {
+            "pvp_percentil": rm.get("pvp_percentil"),
+            "dy_gap_percentil": rm.get("dy_gap_percentil"),
+            "volatilidade": rm.get("volatilidade"),
+            "beta": rm.get("beta"),
+            "mdd": rm.get("mdd"),
+            "liquidez_21d_brl": rm.get("liquidez_21d_brl"),
+        }
+
+    try:
+        scores = calcular_score_batch(tickers, metricas, session)
+    except Exception:
+        return
+
+    for ticker, sc in scores.items():
+        try:
+            session.execute(
+                sa_update(SnapshotTickerMetrics)
+                .where(
+                    SnapshotTickerMetrics.run_id == run_id,
+                    SnapshotTickerMetrics.ticker == ticker,
+                )
+                .values(
+                    score_total=sc.score_total,
+                    score_valuation=sc.score_valuation,
+                    score_risco=sc.score_risco,
+                    score_liquidez=sc.score_liquidez,
+                    score_historico=sc.score_historico,
+                )
+            )
+        except Exception:
+            pass
+    session.flush()
 
 
 # =============================================================================
@@ -592,6 +696,35 @@ def build_snapshot_structural_alerts(
 
 
 # =============================================================================
+# Helpers de Fase 2 — score
+# =============================================================================
+
+
+def _sync_score_to_decisions(session: Session, run_id: int) -> None:
+    """Copia score_total de SnapshotTickerMetrics para SnapshotDecisions (mesmo run_id)."""
+    from sqlalchemy import update as sa_update
+
+    rows = session.execute(
+        select(SnapshotTickerMetrics.ticker, SnapshotTickerMetrics.score_total)
+        .where(SnapshotTickerMetrics.run_id == run_id, SnapshotTickerMetrics.score_total.isnot(None))
+    ).all()
+
+    for ticker, score in rows:
+        try:
+            session.execute(
+                sa_update(SnapshotDecisions)
+                .where(SnapshotDecisions.run_id == run_id, SnapshotDecisions.ticker == ticker)
+                .values(score_total=score)
+            )
+        except Exception:
+            pass
+    try:
+        session.flush()
+    except Exception:
+        pass
+
+
+# =============================================================================
 # Orquestrador principal
 # =============================================================================
 
@@ -675,6 +808,9 @@ def generate_daily_snapshot(
             session, run_id, resolved_tickers, forward_days=forward_days
         )
         all_falhos.extend(falhos_d)
+
+        # Fase 2: propagar score_total de metrics → decisions
+        _sync_score_to_decisions(session, run_id)
 
         n_advices = 0
         n_alerts = 0

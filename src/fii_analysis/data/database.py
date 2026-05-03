@@ -187,6 +187,21 @@ class SnapshotTickerMetrics(Base):
     cvm_defasada: Mapped[bool | None] = mapped_column(Boolean)
     segmento: Mapped[str | None] = mapped_column(String)
 
+    # Fase 1.5 — risk_metrics
+    volatilidade_anual: Mapped[float | None] = mapped_column(Numeric)
+    beta_ifix: Mapped[float | None] = mapped_column(Numeric)
+    max_drawdown: Mapped[float | None] = mapped_column(Numeric)
+    liquidez_21d_brl: Mapped[float | None] = mapped_column(Numeric)
+    retorno_total_12m: Mapped[float | None] = mapped_column(Numeric)
+    dy_3m_anualizado: Mapped[float | None] = mapped_column(Numeric)
+
+    # Fase 2 — score 0-100
+    score_total: Mapped[int | None] = mapped_column(Integer)
+    score_valuation: Mapped[int | None] = mapped_column(Integer)
+    score_risco: Mapped[int | None] = mapped_column(Integer)
+    score_liquidez: Mapped[int | None] = mapped_column(Integer)
+    score_historico: Mapped[int | None] = mapped_column(Integer)
+
 
 class SnapshotRadar(Base):
     """Flags booleanas do radar por ticker em um snapshot_run."""
@@ -262,6 +277,9 @@ class SnapshotDecisions(Base):
     # CDI + Focus (contexto macro — NÃO altera ação)
     cdi_delta_focus_12m: Mapped[float | None] = mapped_column(Numeric)
     cdi_repricing_12m: Mapped[float | None] = mapped_column(Numeric)
+
+    # Fase 2 — score (redundância intencional para queries simples)
+    score_total: Mapped[int | None] = mapped_column(Integer)
 
     # Auditoria humana — não usar como base de queries analíticas (dívida técnica v1)
     rationale_json: Mapped[str | None] = mapped_column(Text)
