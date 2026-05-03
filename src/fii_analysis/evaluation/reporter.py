@@ -1,6 +1,9 @@
 from datetime import date
+from typing import Optional
 
+import pandas as pd
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.fii_analysis.data.database import Dividendo, PrecoDiario
 from src.fii_analysis.features.dividend_window import get_dividend_windows
@@ -18,7 +21,18 @@ def _sig(pvalue: float | None) -> str:
     return ""
 
 
-def print_report(ticker: str, session) -> None:
+def generate_report_data(ticker: str, session: Session) -> Optional[dict]:
+    """Generate event study report data for a ticker (no printing).
+
+    Returns dict with keys:
+    - header: ticker, data_ref
+    - preco_info: data_ultimo, fech_ultimo, pvp, dy
+    - event_study: DataFrame with dia_relativo, retorno_medio, retorno_acumulado, n_eventos
+    - tests: pre_post test results, day0 test results
+    - resumo: n_eventos, data_min, data_max
+
+    Returns None if insufficient data.
+    """
     hoje = date.today()
 
     ultimo_preco = session.execute(
@@ -34,21 +48,70 @@ def print_report(ticker: str, session) -> None:
     pvp = get_pvp(ticker, data_ultimo, session) if data_ultimo else None
     dy = get_dy_trailing(ticker, data_ultimo, session) if data_ultimo else None
 
-    print("=" * 70)
-    print(f"  RELATORIO FII — {ticker}    ({hoje.strftime('%Y-%m-%d')})")
-    print("=" * 70)
-
-    print(f"\n  Preco mais recente:  R$ {fech_ultimo:.2f}  ({data_ultimo})" if fech_ultimo else "\n  Preco: indisponivel")
-    print(f"  P/VP:                {pvp:.4f}" if pvp else "  P/VP:                indisponivel")
-    print(f"  DY trailing 12m:     {dy * 100:.2f}%" if dy else "  DY trailing 12m:     indisponivel")
-
     windows = get_dividend_windows(ticker, session)
     if windows.empty:
+        return {
+            "header": {"ticker": ticker, "data_ref": hoje},
+            "preco_info": {"data_ultimo": data_ultimo, "fech_ultimo": fech_ultimo, "pvp": pvp, "dy": dy},
+            "event_study": None,
+            "tests": None,
+            "resumo": None,
+        }
+
+    ev = event_study(windows)
+    pre_post = test_pre_vs_post(windows)
+    day0 = test_day0_return(windows)
+
+    eventos = windows["data_com"].unique()
+    n_eventos = len(eventos)
+    data_min = min(eventos)
+    data_max = max(eventos)
+
+    return {
+        "header": {"ticker": ticker, "data_ref": hoje},
+        "preco_info": {"data_ultimo": data_ultimo, "fech_ultimo": fech_ultimo, "pvp": pvp, "dy": dy},
+        "event_study": ev,
+        "tests": {"pre_post": pre_post, "day0": day0},
+        "resumo": {"n_eventos": n_eventos, "data_min": data_min, "data_max": data_max},
+    }
+
+
+def print_report(ticker: str, session: Session) -> None:
+    """Print formatted event study report. Calls generate_report_data() and formats output."""
+    report_data = generate_report_data(ticker, session)
+    if report_data is None:
+        print("ERRO: Falha ao gerar relatório")
+        return
+
+    header = report_data["header"]
+    preco = report_data["preco_info"]
+    ev = report_data["event_study"]
+    tests = report_data["tests"]
+    resumo = report_data["resumo"]
+
+    print("=" * 70)
+    print(f"  RELATORIO FII — {header['ticker']}    ({header['data_ref'].strftime('%Y-%m-%d')})")
+    print("=" * 70)
+
+    if preco["fech_ultimo"]:
+        print(f"\n  Preco mais recente:  R$ {preco['fech_ultimo']:.2f}  ({preco['data_ultimo']})")
+    else:
+        print("\n  Preco: indisponivel")
+
+    if preco["pvp"]:
+        print(f"  P/VP:                {preco['pvp']:.4f}")
+    else:
+        print("  P/VP:                indisponivel")
+
+    if preco["dy"]:
+        print(f"  DY trailing 12m:     {preco['dy'] * 100:.2f}%")
+    else:
+        print("  DY trailing 12m:     indisponivel")
+
+    if ev is None:
         print("\n  Nenhum dado de janela de dividendos disponivel.")
         print("=" * 70)
         return
-
-    ev = event_study(windows)
 
     print("\n" + "-" * 70)
     print("  EVENT STUDY — Janela -10 a +10 dias uteis")
@@ -60,12 +123,12 @@ def print_report(ticker: str, session) -> None:
         car_pct = row["retorno_acumulado"] * 100 if row["retorno_acumulado"] is not None else 0.0
         print(f"  {int(row['dia_relativo']):>4}  {ret_pct:>16.4f}%  {car_pct:>9.4f}%  {int(row['n_eventos']):>5}")
 
-    pre_post = test_pre_vs_post(windows)
-    day0 = test_day0_return(windows)
-
     print("\n" + "-" * 70)
     print("  TESTES ESTATISTICOS")
     print("-" * 70)
+
+    pre_post = tests["pre_post"]
+    day0 = tests["day0"]
 
     print("\n  Pre vs Pos data-com (retornos acumulados por evento):")
     if pre_post["n_eventos"] and pre_post["n_eventos"] >= 2:
@@ -85,16 +148,11 @@ def print_report(ticker: str, session) -> None:
 
     print(f"\n  * p < 0.05   ** p < 0.01")
 
-    eventos = windows["data_com"].unique()
-    n_eventos = len(eventos)
-    data_min = min(eventos)
-    data_max = max(eventos)
-
     print("\n" + "-" * 70)
     print("  RESUMO")
     print("-" * 70)
-    print(f"  Total de eventos:      {n_eventos}")
-    print(f"  Periodo:               {data_min} a {data_max}")
+    print(f"  Total de eventos:      {resumo['n_eventos']}")
+    print(f"  Periodo:               {resumo['data_min']} a {resumo['data_max']}")
     print()
     print("  ATENCAO: metricas calculadas sobre TODO o historico disponivel")
     print("  (sem separacao treino/teste). Usar apenas para exploracao.")
