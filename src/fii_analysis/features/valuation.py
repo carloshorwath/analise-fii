@@ -255,3 +255,48 @@ def get_pvp_zscore(
         return 0.0
 
     return round((pvp_atual - media) / std, 3)
+
+
+def get_cap_rate_spread(
+    ticker: str,
+    t: date,
+    session: Session | None = None,
+) -> tuple[float | None, float | None]:
+    """
+    Retorna (cap_rate_implicito_anualizado, spread_vs_cdi_12m).
+    Ambos em decimal (ex: 0.12 = 12%).
+    Retorna (None, None) se dados insuficientes.
+
+    INTERPRETACAO:
+    # spread > 0: fundo rende mais que CDI - ha premio de risco imobiliario
+    # spread < 0: CDI supera o fundo - sem margem de seguranca
+    # spread > 0.03 (300bps): zona de interesse tipica para FIIs de tijolo
+    """
+    cnpj = get_cnpj_by_ticker(ticker, session)
+    if not cnpj:
+        return None, None
+
+    records = session.execute(
+        select(RelatorioMensal.rentab_efetiva)
+        .where(
+            RelatorioMensal.cnpj == cnpj,
+            RelatorioMensal.data_entrega <= t
+        )
+        .order_by(RelatorioMensal.data_referencia.desc())
+        .limit(6)
+    ).scalars().all()
+
+    rentabilidades = [r for r in records if r is not None]
+
+    if len(rentabilidades) < 3:
+        return None, None
+
+    cap_rate_mensal_medio = sum(float(r) for r in rentabilidades) / len(rentabilidades)
+    cap_rate_anualizado = (1 + cap_rate_mensal_medio) ** 12 - 1
+
+    cdi_12m = get_cdi_acumulado_12m(t, session)
+    if cdi_12m is None:
+        return round(cap_rate_anualizado, 4), None
+
+    spread = cap_rate_anualizado - cdi_12m
+    return round(cap_rate_anualizado, 4), round(spread, 4)
