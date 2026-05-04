@@ -427,7 +427,7 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
     Retorna numero de registros inseridos.
     """
     ticker_banco = "IFIX11"
-    
+
     ultimo = session.execute(
         select(PrecoDiario.data)
         .where(PrecoDiario.ticker == ticker_banco)
@@ -450,11 +450,11 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
     # Tenta obter dados do yfinance (primeiro ^IFIX, depois IFIX11.SA)
     df = yf.download('^IFIX', start=start_date, end=hoje, auto_adjust=True)
     fonte_usada = "yfinance_ifix"
-    
+
     if df.empty or len(df) < 5:
         df = yf.download('IFIX11.SA', start=start_date, end=hoje, auto_adjust=True)
         fonte_usada = "yfinance_ifix11"
-        
+
     agora = datetime.utcnow()
     inseridos = 0
 
@@ -464,17 +464,17 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
             d = dt_idx.date()
             if ultimo and d <= ultimo:
                 continue
-                
+
             exists = session.execute(
                 select(PrecoDiario).where(
                     PrecoDiario.ticker == ticker_banco,
                     PrecoDiario.data == d,
                 )
             ).scalar_one_or_none()
-            
+
             if exists:
                 continue
-                
+
             # Extrai valores com segurança lidando com multi-index se existir
             def _get_val(col):
                 if isinstance(row, pd.Series):
@@ -487,7 +487,7 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
                         if col in row:
                             return row[col]
                 return None
-            
+
             # yfinance auto_adjust=True removes Adj Close and modifies Close
             fech_aj = _get_val('Close')
             # fallback para caso a API retorne formato diferente
@@ -508,14 +508,14 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
             )
             session.add(registro)
             inseridos += 1
-            
+
         session.commit()
         logger.info("IFIX: {} precos inseridos via {}", inseridos, fonte_usada)
         return inseridos
 
     # Fallback: Brapi
     logger.info("IFIX: yfinance falhou ou retornou poucos dados. Tentando Brapi.")
-    
+
     load_dotenv(r"C:\Modelos-AI\Brapi\.env")
     token = os.getenv("BRAPI_API_KEY")
     if not token:
@@ -545,7 +545,7 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
             continue
         if ultimo and d <= ultimo:
             continue
-            
+
         exists = session.execute(
             select(PrecoDiario).where(
                 PrecoDiario.ticker == ticker_banco,
@@ -554,11 +554,11 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
         ).scalar_one_or_none()
         if exists:
             continue
-            
+
         fech = item.get("close") or item.get("adjustedClose")
         if fech is None:
             continue
-            
+
         registro = PrecoDiario(
             ticker=ticker_banco,
             data=d,
@@ -573,7 +573,7 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
         )
         session.add(registro)
         inseridos += 1
-        
+
     session.commit()
     logger.info("IFIX: {} precos inseridos via Brapi", inseridos)
     return inseridos
