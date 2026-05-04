@@ -36,8 +36,8 @@ class ThresholdOptimizerV2:
     """
 
     def __init__(self):
-        self.pvp_percentil_buy_grid = [15, 20, 25]
-        self.pvp_percentil_sell_grid = [65, 70, 75]
+        self.pvp_percentil_buy_grid = [15, 20, 25, 30, 35, 40, 45, 50]
+        self.pvp_percentil_sell_grid = [55, 60, 65, 70, 75, 80, 85, 90]
         self.meses_alerta_sell_grid = [1, 2]
         self.dy_gap_pct_sell_grid = [25, 35]
         self.forward_days = 20
@@ -52,7 +52,7 @@ class ThresholdOptimizerV2:
             return pd.DataFrame()
 
         prices_db = session.execute(
-            select(PrecoDiario.data, PrecoDiario.fechamento, PrecoDiario.fechamento_aj)
+            select(PrecoDiario.data, PrecoDiario.fechamento, PrecoDiario.fechamento_aj, PrecoDiario.volume)
             .where(PrecoDiario.ticker == ticker)
             .order_by(PrecoDiario.data.asc())
         ).all()
@@ -60,7 +60,7 @@ class ThresholdOptimizerV2:
             return pd.DataFrame()
 
         prices_df = pd.DataFrame([
-            {"data": p.data, "fechamento": float(p.fechamento), "fechamento_aj": float(p.fechamento_aj)}
+            {"data": p.data, "fechamento": float(p.fechamento), "fechamento_aj": float(p.fechamento_aj), "volume": int(p.volume) if p.volume is not None else None}
             for p in prices_db if p.fechamento is not None and p.fechamento_aj is not None
         ])
         prices_df["data"] = pd.to_datetime(prices_df["data"])
@@ -408,6 +408,8 @@ class ThresholdOptimizerV2:
         results_grid = []
 
         for pvp_b, pvp_s, al_s, dy_s in combinations:
+            if pvp_s - pvp_b < 15:
+                continue
             params = {
                 "pvp_percentil_buy": pvp_b,
                 "pvp_percentil_sell": pvp_s,
