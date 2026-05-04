@@ -73,8 +73,8 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
     test_result = result["test_result"]
     n_splits = result["n_splits"]
 
-    tab_res, tab_sim, tab_risk, tab_overfit, tab_sens, tab_regime = st.tabs([
-        "Resultado & Sinal", "Simulação Operacional", "Risco Ajustado", "Overfitting", "Sensibilidade 2D", "Regime"
+    tab_res, tab_sim, tab_risk, tab_overfit, tab_sens, tab_regime, tab_grid = st.tabs([
+        "Resultado & Sinal", "Simulação Operacional", "Risco Ajustado", "Overfitting", "Sensibilidade 2D", "Regime", "Grid Completo"
     ])
 
     with tab_res:
@@ -399,6 +399,81 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
                 yaxis_title="Retorno (%)", template="plotly_white", height=350, barmode="group",
             )
             st.plotly_chart(fig_regime, use_container_width=True)
+
+    with tab_grid:
+        st.subheader('Heatmap: Todas as Combinacoes Buy x Sell')
+        grid_results = result.get('grid_results', [])
+        if not grid_results:
+            st.info('Sem dados de grid. Execute a otimizacao.')
+        else:
+            metrica_opcoes = {
+                'Retorno Medio Val (%)': ('val', 'avg_return_buy_independent'),
+                'Win Rate Val': ('val', 'win_rate_independent'),
+                'N Trades Val (thinned)': ('val', 'n_buy_thinned'),
+                'P-Value Buy Val': ('val', 'p_value_buy'),
+            }
+            metrica_label = st.selectbox('Metrica do heatmap', list(metrica_opcoes.keys()), key=f'{key_prefix}_grid_metrica')
+            split_key, field_key = metrica_opcoes[metrica_label]
+
+            # Agregar por buy_pct x sell_pct (media sobre meses_alerta e dy_gap)
+            from collections import defaultdict
+            agg = defaultdict(list)
+            for row in grid_results:
+                p = row['params']
+                v = row.get(split_key, {}).get(field_key)
+                if v is not None:
+                    agg[(p['pvp_percentil_buy'], p['pvp_percentil_sell'])].append(v)
+
+            if not agg:
+                st.warning('Sem dados suficientes para o heatmap.')
+            else:
+                import pandas as pd
+                import plotly.graph_objects as go
+                rows_list = []
+                for (buy_pct, sell_pct), vals in agg.items():
+                    media = float(sum(vals) / len(vals))
+                    if metrica_label == 'Retorno Medio Val (%)':
+                        media = round(media * 100, 2)
+                    rows_list.append({'buy_pct': buy_pct, 'sell_pct': sell_pct, 'valor': media})
+                df_grid = pd.DataFrame(rows_list)
+                pivot = df_grid.pivot(index='sell_pct', columns='buy_pct', values='valor')
+                pivot = pivot.sort_index(ascending=False)
+
+                best_buy = best_params.get('pvp_percentil_buy')
+                best_sell = best_params.get('pvp_percentil_sell')
+
+                fig = go.Figure(data=go.Heatmap(
+                    z=pivot.values.tolist(),
+                    x=[str(c) for c in pivot.columns],
+                    y=[str(r) for r in pivot.index],
+                    colorscale='RdYlGn',
+                    text=[[f'{v:.2f}' if v is not None else '' for v in row] for row in pivot.values.tolist()],
+                    texttemplate='%{text}',
+                    hovertemplate='Buy: %{x}<br>Sell: %{y}<br>Valor: %{z:.4f}<extra></extra>',
+                    showscale=True,
+                ))
+                if best_buy is not None and best_sell is not None:
+                    fig.add_shape(type='rect',
+                        x0=str(best_buy), x1=str(best_buy),
+                        y0=str(best_sell), y1=str(best_sell),
+                        xref='x', yref='y',
+                        line=dict(color='blue', width=3))
+                    fig.add_annotation(
+                        x=str(best_buy), y=str(best_sell),
+                        text='MELHOR', showarrow=True, arrowhead=2,
+                        font=dict(color='blue', size=11))
+                fig.update_layout(
+                    title=f'{metrica_label} — Buy (X) vs Sell (Y)',
+                    xaxis_title='Threshold Compra (P/VP percentil)',
+                    yaxis_title='Threshold Venda (P/VP percentil)',
+                    height=500,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption(
+                    f'Total de combinacoes no grid: {len(grid_results)} | '
+                    f'Exibindo media por par buy/sell (agrega meses_alerta e dy_gap). '
+                    f'Melhor combinacao (azul): buy={best_buy}, sell={best_sell}.'
+                )
 
     with tab_sim:
         sim = v2.get("simulation")
