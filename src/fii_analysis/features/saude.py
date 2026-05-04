@@ -5,7 +5,7 @@ from scipy import stats as sp_stats
 from sqlalchemy import select
 
 from src.fii_analysis.config_yaml import get_threshold
-from src.fii_analysis.data.database import RelatorioMensal, get_cnpj_by_ticker
+from src.fii_analysis.data.database import AtivoPassivo, RelatorioMensal, get_cnpj_by_ticker
 
 
 def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t: date | None = None) -> dict:
@@ -182,3 +182,39 @@ def emissoes_recentes(ticker: str, threshold_pct: float = 1.0, session=None) -> 
                 })
 
     return emissoes
+
+
+def get_ltv_flag(
+    ticker: str,
+    target_date: date,
+    session: "Session",
+    limite_ltv: float = 0.20,
+) -> tuple[bool, float | None]:
+    """Estima LTV como (ativo_total - pl) / ativo_total."""
+    cnpj = get_cnpj_by_ticker(ticker, session)
+    if not cnpj:
+        return False, None
+
+    ap = session.execute(
+        select(AtivoPassivo.ativo_total)
+        .where(AtivoPassivo.cnpj == cnpj, AtivoPassivo.data_entrega <= target_date)
+        .order_by(AtivoPassivo.data_referencia.desc())
+        .limit(1)
+    ).first()
+    if ap is None or ap.ativo_total is None or float(ap.ativo_total) == 0:
+        return False, None
+
+    rm = session.execute(
+        select(RelatorioMensal.patrimonio_liq)
+        .where(RelatorioMensal.cnpj == cnpj, RelatorioMensal.data_entrega <= target_date)
+        .order_by(RelatorioMensal.data_referencia.desc())
+        .limit(1)
+    ).first()
+    if rm is None or rm.patrimonio_liq is None:
+        return False, None
+
+    ativo_total = float(ap.ativo_total)
+    pl = float(rm.patrimonio_liq)
+    passivo_estimado = max(0.0, ativo_total - pl)
+    ltv = passivo_estimado / ativo_total
+    return ltv > limite_ltv, round(ltv, 4)
