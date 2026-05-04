@@ -13,6 +13,7 @@ from src.fii_analysis.data.ingestion import (
     load_cdi_to_db,
     load_cvm_to_db,
     load_dividends_yfinance,
+    load_ifix_to_db,
     load_prices_yfinance,
 )
 from src.fii_analysis.evaluation.daily_snapshots import generate_daily_snapshot
@@ -94,6 +95,12 @@ def main():
             load_dividends_yfinance(t.ticker, session)
         except Exception as e:
             logger.error("Erro dividendos {}: {}", t.ticker, e)
+
+    logger.info("--- Etapa 4.1: Carga IFIX (Benchmark) ---")
+    try:
+        load_ifix_to_db(session)
+    except Exception as e:
+        logger.error("Erro IFIX: {}", e)
 
     logger.info("--- Etapa 5: Focus Selic (BCB ExpectativasMercadoSelic) ---")
     try:
