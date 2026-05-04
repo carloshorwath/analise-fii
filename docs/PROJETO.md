@@ -19,7 +19,7 @@ Identificar padrões estatísticos de comportamento de preço de FIIs em janelas
 | 5 | Onde olhar primeiro? | Radar descritivo |
 | 6 | O que mudou desde ontem? | Alertas e relatórios |
 
-**Princípio:** nenhuma hipótese não validada é usada como input de decisão. O radar é uma matriz booleana, não um score ponderado arbitrário.
+**Princípio:** nenhuma hipótese não validada é usada como input de decisão. O radar é uma matriz booleana; o score é uma camada comunicativa que não substitui a concordância heurística de sinais estatísticos.
 
 ---
 
@@ -31,8 +31,9 @@ Identificar padrões estatísticos de comportamento de preço de FIIs em janelas
 | 2 | Valuation histórico | P/VP e DY comparados à própria série histórica | `features/indicators.py`, `features/valuation.py` |
 | 3 | Saúde financeira | Detecção de destruição de capital, tendência PL, emissões | `features/saude.py`, `features/composicao.py` |
 | 4 | Event study | CAR/BHAR, testes estatísticos, walk-forward com gap | `features/dividend_window.py`, `models/statistical.py`, `models/walk_forward.py`, `models/critic.py` |
-| 5 | Radar descritivo | Filtros booleanos sem score numérico | `features/radar.py`, `evaluation/radar.py` |
-| 6 | Alertas e relatórios | Diff diário, Markdown, alertas por threshold | `evaluation/alertas.py`, `evaluation/reporter.py` |
+| 5 | Radar descritivo | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) | `features/radar.py`, `evaluation/radar.py` |
+| 6 | Score comunicativo (Fase 2) | Score 0–100 com 4 sub-scores (Valuation/Risco/Liquidez/Histórico) | `features/score.py` |
+| 7 | Alertas e relatórios | Diff diário, Markdown, alertas por threshold | `evaluation/alertas.py`, `evaluation/reporter.py` |
 
 ---
 
@@ -156,7 +157,8 @@ D:/analise-de-acoes/
 │   │   ├── fundamentos.py             # Rentabilidade efetiva/patrimonial, alavancagem, payout
 │   │   ├── composicao.py              # Classificação Tijolo/Papel/Híbrido
 │   │   ├── data_loader.py             # Agregadores de dados para src/ (CLI e páginas)
-│   │   └── radar.py                   # Matriz booleana (sem score numérico)
+│   │   ├── radar.py                   # Matriz booleana (P/VP, DY Gap, Saúde, Liquidez)
+│   │   └── score.py                   # Score 0–100 com 4 sub-scores (Valuation/Risco/Liquidez/Histórico)
 │   ├── models/
 │   │   ├── statistical.py             # Event study CAR, t-test, Mann-Whitney
 │   │   ├── walk_forward.py            # Splits temporais com gap + validação leakage
@@ -339,9 +341,9 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 
 Fonte: arquivo `ativo_passivo` da CVM. Campos: `Direitos_Bens_Imoveis`, `CRI`, `LCI`, `LCI_LCA`, `Disponibilidades`.
 
-### 5.4 Radar descritivo
+### 5.4 Radar descritivo (Fase 1)
 
-Matriz booleana — **sem score numérico** até existir backtest validando a fórmula.
+Matriz booleana — 4 filtros independentes, sem ponderação:
 
 | Filtro | Critério |
 |---|---|
@@ -354,7 +356,20 @@ FIIs com todos os ✓ aparecem no topo. Ordenação por número de ✓.
 
 **Proximidade da data-com não entra no radar** enquanto o event study não validar padrão estatisticamente significativo.
 
-### 5.5 Event study
+### 5.5 Score comunicativo (Fase 2)
+
+Score 0–100 com 4 sub-scores ponderados (não altera decisões, apenas comunica qualidade geral):
+
+| Sub-score | Peso | Composição |
+|---|---|---|
+| Valuation | 35% | P/VP percentil (invertido) + DY Gap percentil (pesos 60/40) |
+| Risco | 30% | Volatilidade + Beta vs IFIX + Max Drawdown (percentis no universo) |
+| Liquidez | 20% | Faixas fixas em R$/dia (< R$ 200k: 20 pts; R$ 1–5M: 75 pts; ≥ R$ 5M: 90 pts) |
+| Histórico | 15% | Consistência DY 24m (CV invertido: CV ≤ 0.5 → 100 pts) |
+
+Score é **purely informativo** — não substitui concordância heurística de sinais (BUY/SELL/HOLD) nem aparece em cálculos de risco.
+
+### 5.6 Event study
 
 - **CAR** (Cumulative Abnormal Return): retorno acumulado do FII menos retorno acumulado do benchmark (IFIX) na janela ±10 pregões.
 - **BHAR** (Buy-and-Hold Abnormal Return): variação buy-and-hold vs benchmark.
@@ -637,7 +652,6 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 
 ### Fora do escopo
 - ML / LightGBM enquanto event study não validar padrão.
-- Score numérico ponderado no radar (substituído por matriz booleana).
 - Streamlit/Flask adicionais (dashboard atual é suficiente).
 - Multi-usuário, autenticação, notificações push.
 - Exportação para IR.
@@ -653,7 +667,7 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 | ADR-02 | P/VP e DY como cálculo | Risco de inconsistência com dados históricos | Nunca persistir, sempre calcular | Evita divergência entre preço ajustado retroativo e VP salvo |
 | ADR-03 | Point-in-time no VP | VP muda com cada relatório CVM | Filtrar por `Data_Entrega`, não `Data_Referencia` | Elimina lookahead bias — o investidor só conhece o VP após a entrega à CVM |
 | ADR-04 | Janela ±10 dias úteis | FIIs pagam dividendos mensalmente | ±10 pregões, não ±30 | Janelas de ±30 se sobrepõem entre dividendos consecutivos; sobreposição viola independência estatística |
-| ADR-05 | Radar booleano | Score composto exige pesos arbitrários | Matriz de filtros (P/VP pct, DY Gap pct, saúde, liquidez) | Sem backtest validando pesos, score ponderado é enganoso. Booleanos são honestos. |
+| ADR-05 | Radar booleano + Score comunicativo (Fase 2) | Matriz honesta (sem ponderação) + Score 0–100 informativo | Filtros booleanos + Score 4 sub-scores ponderados (não altera decisões) | Booleanos são honestos e testáveis; score é complemento comunicativo que não entra na lógica de decisão. |
 | ADR-06 | Data-com via yfinance | CVM não publica data-com | yfinance (ex-date convertida via calendário B3) | Única fonte gratuita e acessível |
 | ADR-07 | Preços: yfinance + brapi | Necessidade de histórico longo + atualização diária | yfinance para carga inicial; brapi para updates diários | yfinance tem histórico desde 2015+; brapi é mais rápido para última cotação |
 | ADR-08 | Sem ML prematuro | Tentação de aplicar LightGBM antes de validar base | Modelos estatísticos clássicos até event study confirmar padrão | Projeto anterior atingiu 96% de acurácia falsa por data leakage. Validação estatística antes de ML. |

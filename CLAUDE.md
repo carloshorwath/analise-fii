@@ -198,67 +198,128 @@ KNIP11 substituiu SNFF11 como FII canário de validação cruzada (`scripts/vali
 ## Estrutura de pastas
 
 ```
-D:/analise-de-acoes/
+D:/analise-de-acoes-v2/
 ├── CLAUDE.md
 ├── config.yaml                ← thresholds, janelas, fontes (defaults runtime)
 ├── pyproject.toml
 ├── dados/
 │   ├── cvm/raw/               ← ZIPs da CVM (.gitignored)
 │   ├── alertas/               ← Markdown diário gerado por evaluation/alertas.py
+│   ├── cache/                 ← cache JSON (Focus BCB, optimizer_cache, etc)
 │   └── fii_data.db            ← banco SQLite (.gitignored)
 ├── src/fii_analysis/
 │   ├── config.py              ← TICKERS, períodos treino/teste, custos, IR
 │   ├── config_yaml.py         ← loader do config.yaml
 │   ├── cli.py                 ← typer: panorama, fii, carteira, calendario, radar, alertas
 │   ├── data/
-│   │   ├── database.py        ← SQLAlchemy 2.0: tickers, precos_diarios, dividendos,
-│   │   │                        relatorios_mensais, ativo_passivo, cdi_diario,
-│   │   │                        benchmark_diario, eventos_corporativos
-│   │   └── ingestion.py       ← CVM, yfinance, brapi, BCB SGS (CDI)
+│   │   ├── database.py        ← SQLAlchemy 2.0: ORM 15 tabelas (9 operacionais + 6 snapshot),
+│   │   │                        get_session_ctx, migrations
+│   │   ├── ingestion.py       ← CVM, yfinance, brapi, BCB SGS (CDI)
+│   │   ├── cdi.py             ← get_cdi_acumulado_12m(t, session)
+│   │   ├── focus_bcb.py       ← fetch_focus_selic() — expectativas Selic 3/6/12m
+│   │   └── migrations.py      ← SQLAlchemy migrations (Alembic)
 │   ├── features/
 │   │   ├── dividend_window.py ← janela ±10 dias úteis (event study)
 │   │   ├── indicators.py      ← P/VP, DY trailing (point-in-time)
 │   │   ├── valuation.py       ← percentil rolling, DY N-meses, DY Gap
 │   │   ├── portfolio.py       ← panorama, alocação, retorno vs IFIX, Herfindahl
 │   │   ├── saude.py           ← tendência PL, flag destruição capital, emissões
+│   │   ├── fundamentos.py     ← rentabilidade efetiva/patrimonial, alavancagem
 │   │   ├── composicao.py      ← classificação Tijolo/Papel/Híbrido
-│   │   └── radar.py           ← matriz booleana (sem score numérico)
+│   │   ├── radar.py           ← matriz booleana
+│   │   ├── risk_metrics.py    ← volatilidade, VaR, drawdown históricos
+│   │   ├── score.py           ← score composto 0–100 (4 sub-scores: Valuation/Risco/Liquidez/Histórico)
+│   │   └── data_loader.py     ← agregadores de dados para CLI e UI
 │   ├── models/
-│   │   ├── statistical.py     ← event study CAR, t-test, Mann-Whitney
+│   │   ├── statistical.py     ← event study CAR/BHAR, t-test, Mann-Whitney
 │   │   ├── walk_forward.py    ← splits temporais com gap + validação leakage
-│   │   ├── walk_forward_rolling.py ← validação out-of-sample deslizante genuína
+│   │   ├── walk_forward_rolling.py ← validação out-of-sample deslizante (thinned)
 │   │   ├── episodes.py        ← episódios discretos de P/VP extremo (thinned)
-│   │   ├── critic.py          ← shuffle/placebo/estabilidade (CriticAgent)
-│   │   ├── strategy.py        ← simulação dividend capture, otimização, risco
-│   │   ├── trade_simulator.py ← motor de simulação (caixa/CDI, dividendos, preço bruto)
-│   │   ├── div_capture.py     ← estratégias de captura de dividendo (janela flexível,
-│   │   │                        compra fixa, vende-recompra, spread-recompra)
-│   │   ├── threshold_optimizer.py ← otimizador v1
-│   │   ├── threshold_optimizer_v2.py ← otimizador v2 com métricas de robustez
-│   │   └── event_study_cvm.py ← event study CVM: CAR, NW HAC, block bootstrap placebo
+│   │   ├── critic.py          ← CriticAgent: shuffle/placebo/estabilidade
+│   │   ├── strategy.py        ← simulação dividend capture, grid search
+│   │   ├── trade_simulator.py ← motor puro de backtest (caixa/CDI, dividendos, preço bruto)
+│   │   ├── div_capture.py     ← estratégias captura dividendo (janela flexível, etc)
+│   │   ├── threshold_optimizer_v2.py ← otimizador com métricas de robustez
+│   │   ├── event_study_cvm.py ← event study CVM: CAR, NW HAC, block bootstrap
+│   │   ├── cdi_sensitivity.py ← diagnóstico regressão P/VP ~ CDI 12m (V1 informativa)
+│   │   ├── cdi_comparison.py  ← [PESQUISA] Fase 2 V2 CDI: resíduo vs P/VP bruto
+│   │   └── cdi_oos_evaluation.py ← [PESQUISA] Teste OOS comparativo
+│   ├── decision/
+│   │   ├── recommender.py     ← motor de decisão: TickerDecision (Sinal/Ação/Risco separados)
+│   │   ├── portfolio_advisor.py ← HoldingAdvice, cruzamento decisões × carteira
+│   │   ├── abertos.py         ← detectores de oportunidades abertas (episódios/janelas)
+│   │   ├── cdi_focus_explainer.py ← camada explicação CDI + Focus (informativa)
+│   │   └── daily_report.py    ← geração relatório diário acionável Markdown/CSV
 │   ├── evaluation/
 │   │   ├── reporter.py        ← relatório técnico (somente dados de teste)
-│   │   ├── panorama.py        ← rich.Table, render carteira/calendário
-│   │   ├── alertas.py         ← Markdown diário + terminal
+│   │   ├── panorama.py        ← rich.Table: render carteira/calendário
+│   │   ├── alertas.py         ← geração alertas diários legados (4 flags)
+│   │   ├── daily_snapshots.py ← geração/leitura snapshots diários (6 tabelas)
 │   │   └── radar.py           ← render matriz booleana
-│   └── mcp_server/server.py   ← MCP: validate_split, detect_leakage, etc
+│   └── mcp_server/server.py   ← MCP: validate_split, detect_leakage, check_window_overlap
 ├── app/
+│   ├── streamlit_app.py       ← entry point Streamlit com st.navigation e agrupamento sidebar
+│   ├── state.py               ← error boundary global (@safe_page decorator)
 │   ├── components/
-│   │   ├── carteira_ui.py     ← cache Streamlit + CRUD carteira (load/save/delete)
+│   │   ├── page_content/      ← módulos reutilizáveis por Dossie/Laboratório + wrappers
+│   │   │   ├── analise_fii.py ← render(ticker) — análise por FII
+│   │   │   ├── fundamentos.py ← render(ticker) — DY, P/VP, PL, distribuição
+│   │   │   ├── fund_eventstudy.py ← render() — eventos discretos CVM
+│   │   │   ├── otimizador_v2.py ← render() — backtest com thresholds
+│   │   │   ├── episodios.py   ← render() — episódios thinned
+│   │   │   └── walkforward.py ← render() — validação deslizante
+│   │   ├── carteira_ui.py     ← cache Streamlit + CRUD carteira
 │   │   ├── charts.py          ← gráficos Plotly reutilizáveis
-│   │   └── tables.py          ← tabelas Rich/Streamlit reutilizáveis
-│   └── pages/                 ← 13 páginas Streamlit (só UI, importam de src/)
+│   │   ├── tables.py          ← formatadores tabelas Rich/Streamlit
+│   │   ├── snapshot_ui.py     ← leitura snapshots diários com cache
+│   │   └── ui_shell.py        ← helpers de UI (headers, notes, sidebar)
+│   └── pages/                 ← 14 páginas Streamlit (8 na sidebar + 6 legacy)
+│       ├── 1_Panorama.py      ← métricas gerais (Diário)
+│       ├── 3_Carteira.py      ← CRUD, sugestões operacionais, alertas estruturais (Diário)
+│       ├── 4_Radar.py         ← heatmap booleano (Diário)
+│       ├── 5_Event_Study.py   ← event study agregado (Investigação)
+│       ├── 6_Alertas.py       ← geração alertas sob demanda (Investigação)
+│       ├── 13_Hoje.py         ← cockpit operacional com snapshots (Diário)
+│       ├── 14_Dossie_FII.py   ← consolidado: Análise/Fundamentos/Eventos por ticker (Investigação)
+│       ├── 15_Laboratorio.py  ← auditoria: Otimizador/Episódios/WalkForward (Técnico)
+│       ├── 2_Analise_FII.py   ← wrapper standalone → page_content/analise_fii.render(ticker)
+│       ├── 7_Fundamentos.py   ← wrapper standalone → page_content/fundamentos.render(ticker)
+│       ├── 8_Fund_EventStudy.py ← wrapper standalone → page_content/fund_eventstudy.render()
+│       ├── 10_Otimizador_V2.py ← wrapper standalone → page_content/otimizador_v2.render()
+│       ├── 11_Episodios.py    ← wrapper standalone → page_content/episodios.render()
+│       └── 12_WalkForward.py  ← wrapper standalone → page_content/walkforward.render()
 ├── scripts/                   ← wrappers CLI finos: main() + impressão, sem lógica
-│                                download_cvm, load_database, update_prices,
-│                                run_strategy, plot_car, validate_knip11,
-│                                analise_janela_flexivel, analise_janela_v2,
-│                                analise_spread_recompra
+│   ├── load_database.py       ← download ZIPs CVM + carga yfinance
+│   ├── run_strategy.py        ← pipeline completo
+│   ├── run_event_study.py     ← event study universo + CriticAgent
+│   ├── run_event_study_car_ajustado.py ← CAR com ajuste mecânico
+│   ├── plot_car.py, plot_car_adjusted.py ← gráficos CAR (PNG)
+│   ├── validate_knip11.py     ← validação cruzada vs FundsExplorer
+│   ├── check_prices.py        ← inspeção de preços (debug)
+│   ├── analise_janela_flexivel.py, analise_janela_v2.py, analise_spread_recompra.py ← wrappers
+│   ├── scrape_fundsexplorer.py ← scraping FundsExplorer
+│   ├── daily_report.py        ← CLI relatório diário (decisões)
+│   ├── generate_daily_snapshots.py ← CLI geração snapshots
+│   ├── test_recommender.py    ← sanity check motor decisão
+│   ├── compare_cvm_headers.py ← debug headers CVM
+│   ├── _patch_database.py     ← patch ad-hoc banco
+│   └── _aceite_v3_cdi.py      ← [PESQUISA] teste aceite V3 CDI
 ├── financial-advisor/         ← Multi-agent ADK (Vertex AI): data, trading, execution, risk
+├── .claude/agents/            ← 9 agentes Claude Code
+│   ├── data-scientist.md
+│   ├── python-pro.md
+│   ├── streamlit-developer.md
+│   ├── documentation-engineer.md
+│   ├── ux-researcher.md
+│   ├── beta-tester-trader.md
+│   ├── release-manager.md
+│   ├── qa-operator.md
+│   └── onboarding-writer.md
 └── docs/
     ├── PROJETO.md
-    ├── PLANO_EXPANSAO.md
-    ├── PLANO_EXPANSAO_V2.md   ← especificação corrente
-    └── STATUS_ATUAL.md        ← estado factual (regenerar quando mudar)
+    ├── STATUS_ATUAL.md        ← estado factual (regenerar quando mudar)
+    ├── UX_AUDIT.md            ← auditoria UX: 43 problemas (P0-P4)
+    └── BETA_TESTER_REPORT.md  ← relatório beta trader
 ```
 
 **Dois pontos de configuração** (dívida técnica conhecida):
@@ -271,12 +332,28 @@ Reconciliar em algum momento. Por enquanto: parâmetros de **decisão** vão no 
 
 ## MCPs e agentes disponíveis
 
-| Componente | Status | Uso |
+### MCP Server
+| Componente | Status | Ferramentas |
 |---|---|---|
-| Gemini CLI | Ativo | Revisão de código, pesquisa, segunda opinião |
-| Kilocode (servidor headless `:3001`) | Ativo | Implementação delegada — Claude planeja, Kilo executa |
 | MCP Estatístico (`mcp_server/server.py`) | Implementado | `validate_split`, `detect_leakage`, `check_window_overlap`, `summary_report` |
-| CriticAgent (`models/critic.py`) | Implementado | Falsificação: shuffle/placebo/estabilidade |
+
+### Agentes Claude Code (`.claude/agents/`)
+| Agente | Especialização | Modelo |
+|---|---|---|
+| `data-scientist.md` | Regras estatísticas: split temporal, leakage, testes | haiku |
+| `python-pro.md` | Implementação Python: SQLAlchemy, pandas, lógica pura | haiku |
+| `streamlit-developer.md` | Páginas Streamlit e componentes de visualização | haiku |
+| `documentation-engineer.md` | Atualização CLAUDE.md, STATUS_ATUAL.md, docs | haiku |
+| `ux-researcher.md` | Pesquisa UX: síntese de feedback em ações | sonnet |
+| `beta-tester-trader.md` | Teste beta: perspectiva de trader B&H real | sonnet |
+| `release-manager.md` | Coordenação de releases e versionamento | haiku |
+| `qa-operator.md` | Testes de aceite e auditoria | haiku |
+| `onboarding-writer.md` | Documentação para novos usuários | haiku |
+
+### Componentes Internos
+| Componente | Status | Função |
+|---|---|---|
+| CriticAgent (`models/critic.py`) | Implementado | Falsificação estatística: shuffle/placebo/estabilidade |
 
 ---
 
@@ -311,45 +388,44 @@ Determina o perfil de risco e comportamento do fundo:
 
 Campos relevantes: `Direitos_Bens_Imoveis`, `CRI`, `LCI`, `LCI_LCA`, `Disponibilidades`
 
-**Estas análises devem ser implementadas na Fase 1 junto com os indicadores básicos.**
+**Status**: Saúde financeira e Composição foram implementadas (Fases 1–5).
+Disponíveis em `src/fii_analysis/features/saude.py` e `composicao.py`, renderizadas em páginas de análise.
 
 ---
 
 ## Estado atual e próximos passos
 
-**Concluído**:
-- **Refatoração Arquitetural (Fases 0, 1 e 2)**: Singleton engine e context manager (`get_session_ctx`), remoção de duplicatas de lógica, criação de `features/data_loader.py`, migração das páginas Streamlit para context manager e centralização de thresholds no `config.yaml`.
-- Fases 1–5 do `docs/PLANO_EXPANSAO_V2.md`: Schema SQLite + ingestão CVM/yfinance/brapi/BCB CDI, indicadores point-in-time, Event Study, Saúde financeira e Composição.
-- MCP server estatístico e CriticAgent.
-- **Otimizador de Thresholds** (`models/threshold_optimizer.py` + `10_Otimizador_V2.py`): sinais diários P/VP + DY Gap + meses_alerta, NW HAC com df efetivos (n/h), block bootstrap bicaudal para BUY, placebo SELL unicaudal esquerda vs mercado, Bonferroni ×36, grid 3×3×2×2. (`9_Otimizador.py` v1 foi removido; substituído por V2.)
-- **Consolidação de páginas**: `8_Sinais.py` e `features/sinais.py` deletados; `6_Fund_EventStudy.py` refatorado para eventos discretos CVM e renomeado `8_Fund_EventStudy.py`; bugs críticos corrigidos (preço médio ponderado em Carteira, Herfindahl a mercado, guard Wilcoxon, filtro tickers ativos).
-- **Agente data-scientist** em `.claude/agents/data-scientist.md` (modelo haiku).
-- **Reorganização arquitetural**: lógica de negócio extraída dos scripts para `src/fii_analysis/models/div_capture.py`; `app/components/data_loader.py` (nome ambíguo) renomeado para `app/components/carteira_ui.py`; scripts reduzidos a wrappers CLI finos.
-- **Agentes Claude Code**: 6 agentes em `.claude/agents/` — `data-scientist`, `python-pro`, `streamlit-developer`, `documentation-engineer`, `ux-researcher`, `beta-tester-trader`.
-- **Auditoria UX**: 43 problemas identificados em `docs/UX_AUDIT.md` (8 críticos, 11 altos). Ranking P0→P4 com estimativa de 12h total.
-- **Fixes P0 aplicados**: `carteira_ui.py` migrado para `get_session_ctx()` (zero leaks); `2_Analise_FII.py` consolidado de 19→2 sessões por render.
-- **Fixes P1 concluídos**: gráficos `carteira_alocacao_pie` e `carteira_segmento_pie` corrigidos para usar `valor_mercado`; lógica estatística (CAR, NW HAC, block bootstrap placebo) extraída de `8_Fund_EventStudy.py` → `src/fii_analysis/models/event_study_cvm.py` com `info_callback` para desacoplar de `st.info`.
-- **Fixes P1/P2 UX concluídos**: error boundary global via `app/state.py` (`@safe_page` decorator com `functools.wraps` + `logging`) aplicado a todas as 9 páginas; `st.tabs()` em páginas 2, 5, 7, 8; `st.radio(horizontal=True)` substituiu 7 botões em `2_Analise_FII.py`; resultados de event study persistidos em `st.session_state` (páginas 5 e 8); gráficos de séries temporais em `charts.py` migrados para eixos de data nativos Plotly (`type="date"`, `tickformat`) em vez de strings `strftime`; `7_Fundamentos.py` dividido em 4 sessões por tab; dead imports e emojis removidos; `render_footer()` garantido antes de `st.stop()`.
-- **Novos Modelos Robustos (Episódios e Walk-Forward Rolling)**: implementados `episodes.py` (detecção de episódios thinned), `walk_forward_rolling.py` (validação deslizante real) e `threshold_optimizer_v2.py` (métricas de risco e robustez).
-- **Refatoração Trade Simulator**: Criação de `trade_simulator.py` como motor puro de simulação (caixa/CDI, dividendos, preço bruto). Desacoplamento total entre a inferência estatística (sinais) e o resultado operacional (backtest).
-- **Auditoria Estatística e Fixes Críticos**: aplicação de **Thinning** para garantir independência estatística em janelas sobrepostas; correção da anualização do Sharpe para `sqrt(252/n)`; classificação de overfitting como `SUSPEITO` se OOS for artificialmente superior ao treino; validação de bootstrap com detecção de degenerescência.
-- **Expansão UI**: Adicionadas páginas `10_Otimizador_V2.py`, `11_Episodios.py` e `12_WalkForward.py` (total 12 páginas), incluindo a aba "Simulação Operacional" para visualização de backtests realistas.
+**Concluído** (até 2026-05-03):
+- **Fases 0–5 Estatísticas + Camada de Decisão (Fases 1–4) + Score (Fase 2)**: Schema SQLite 15 tabelas (9 operacionais + 6 snapshot), ingestão CVM/yfinance/brapi/BCB CDI/Focus Selic, indicadores point-in-time, Event Study, Saúde financeira, Composição, Risk metrics, Score 0–100.
+- **Refatoração Arquitetural**: Singleton engine + context manager (`get_session_ctx`), separação `src/` (lógica pura) / `scripts/` (wrappers CLI) / `app/` (UI Streamlit). Remoção de duplicatas, centralização thresholds em `config.yaml`.
+- **MCP Server Estatístico** e **CriticAgent** (falsificação shuffle/placebo/estabilidade).
+- **Otimizador V2** (`models/threshold_optimizer_v2.py`): sinais diários P/VP + DY Gap + meses_alerta, NW HAC df-efetivos (n/h), block bootstrap bicaudal BUY, placebo SELL, Bonferroni ×36, grid 3×3×2×2, métricas robustez (Sharpe/Sortino, diagnóstico overfitting).
+- **Novos Modelos Robustos**: `episodes.py` (episódios discretos thinned), `walk_forward_rolling.py` (validação deslizante genuína OOS), `trade_simulator.py` (motor backtest puro: caixa/CDI/dividendos/preço bruto).
+- **Camada de Decisão** (`src/fii_analysis/decision/`): `recommender.py` (TickerDecision separada: Sinal/Ação/Risco), `portfolio_advisor.py` (HoldingAdvice: HOLD/AUMENTAR/REDUZIR/SAIR/EVITAR), `abertos.py` (episódios/janelas abertas), `daily_report.py` (relatório Markdown/CSV acionável), `cdi_focus_explainer.py` (contexto informativo CDI+Focus, não altera decisão).
+- **Snapshots Diários** (`evaluation/daily_snapshots.py`): 6 tabelas desnormalizadas (runs, metrics, radar, decisions, advices, alerts) com versionamento motor e hashing universo.
+- **UI Nova**: Páginas 13_Hoje.py (cockpit operacional), 14_Dossie_FII.py (consolidado por ticker), 15_Laboratorio.py (auditoria: Otimizador/Episódios/WalkForward). Extração de conteúdo em `app/components/page_content/*.py` reutilizável.
+- **Agentes Claude Code**: 9 agentes em `.claude/agents/` (data-scientist, python-pro, streamlit-developer, documentation-engineer, ux-researcher, beta-tester-trader, release-manager, qa-operator, onboarding-writer).
+- **Auditoria UX**: 43 problemas identificados em `docs/UX_AUDIT.md` (P0→P4). Fixes P0 aplicados (error boundary global, consolidação sessões). Fixes P1 concluídos (gráficos valor_mercado, CAR extraído, event study desacoplado). Fixes P2/P3 parciais (st.tabs, radio horizontal, charts eixo data nativo, tabs 7_Fundamentos, footer, dead imports).
+- **Auditoria Estatística**: Thinning obrigatório para independência. Anualização Sharpe corrigida `sqrt(252/n)`. Overfitting detectado como SUSPEITO. Block bootstrap validado contra degenerescência.
+- **Experimento V2 CDI encerrado**: Teste OOS rejeitou hipótese de substituir sinal por resíduo CDI-ajustado. V1 CDI (informativa) permanece; V2 mantida como pesquisa interna (`cdi_comparison.py`, `cdi_oos_evaluation.py`, `_aceite_v2_cdi.py`).
+- **Fase 2 — Score 0–100**: Implementado `src/fii_analysis/features/score.py` com 4 sub-scores (Valuation 35%, Risco 30%, Liquidez 20%, Histórico 15%). Campos adicionados em `SnapshotTickerMetrics` e `SnapshotDecisions`. Integração em `daily_snapshots.py` via `calcular_score_batch()`. Renderizado em UI (pages 13_Hoje, analise_fii, snapshot_ui).
+- **Anomalias de Ingestão Investigadas e Corrigidas** (documentadas em `INVESTIGACAO_LOG.md`): (1) Dupla leitura `ativo_passivo` — implementado `keys_to_extract` em `load_cvm_zip()`, usado em `load_cvm_to_db()` e `load_ativo_passivo_to_db()`; (2) Duplicação logger — adicionado `logger.remove()` em `load_database.py` antes de `logger.add()`; (3) CDI 404 abortava backfill — tratamento específico de `HTTPError 404` com `continue` em `load_cdi_to_db()` (linha 380–383).
 
 **Pendente** (em ordem de prioridade):
-1. **UX P2**: extrair charts inline de `7_Fundamentos.py`
-2. **UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`
-3. Snapshots reprodutíveis do `fii_data.db` (§5.2 do V2)
-4. Fase 6: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
-5. Reconciliar `config.py` ↔ `config.yaml`
-6. Criar `tests/` (pyproject já configura pytest)
+1. **Cache de `optimizer_params`**: salvar `best_params` por ticker em `dados/optimizer_cache/{ticker}.json` com timestamp; reotimizar semanalmente (melhora utilidade `daily_report.py` sem `--com-otimizador`).
+2. **UX P2**: extrair charts inline de `7_Fundamentos.py` → componente reutilizável.
+3. **UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`.
+4. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
+5. **Fase 6**: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões.
+6. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
+7. Criar `tests/` com cobertura de integração para splits temporais e leakage.
 
 **Bugs menores conhecidos**:
-- `1_Panorama.py`: métrica IFIX YTD hardcoded como `"n/d"` (P3)
-- Paridade CLI/web no Panorama incompleta (faltam Rent. Acum, DY 24m, Tipo)
+- `1_Panorama.py`: métrica IFIX YTD hardcoded como `"n/d"` — `get_benchmark_ifix()` existe mas não é chamado (P3).
+- Paridade CLI/web no Panorama incompleta — faltam Rent. Acum., DY 24m, Tipo na web.
 
 **Fora do escopo até decisão explícita:**
 - LightGBM ou qualquer ML enquanto event study não confirmar padrão
-- Score numérico ponderado no radar (substituído por matriz booleana)
 - Multi-usuário, autenticação, notificações push
 - Adicionar novos FIIs ao universo (lista curada, não automatizar)
 

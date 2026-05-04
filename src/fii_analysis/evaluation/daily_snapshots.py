@@ -740,6 +740,70 @@ def _sync_score_to_decisions(session: Session, run_id: int) -> None:
         logger.warning(f"Flush falhou em _sync_score_to_decisions: {e}")
 
 
+def backfill_scores_for_run(session: Session, run_id: int) -> int:
+    """Calcula e preenche score_* para um run existente cujos scores são NULL.
+
+    Útil quando a migração das colunas de score foi aplicada depois que o
+    snapshot foi gerado. Lê as métricas já armazenadas nas colunas e
+    recalcula sem precisar re-executar o snapshot completo.
+
+    Retorna o número de tickers atualizados.
+    """
+    from sqlalchemy import update as sa_update
+
+    rows = session.execute(
+        select(SnapshotTickerMetrics)
+        .where(SnapshotTickerMetrics.run_id == run_id)
+    ).scalars().all()
+
+    if not rows:
+        logger.warning(f"Nenhuma métrica encontrada para run_id={run_id}")
+        return 0
+
+    tickers = [r.ticker for r in rows]
+    metricas: dict[str, dict] = {
+        r.ticker: {
+            "pvp_percentil": float(r.pvp_percentil) if r.pvp_percentil is not None else None,
+            "dy_gap_percentil": float(r.dy_gap_percentil) if r.dy_gap_percentil is not None else None,
+            "volatilidade": float(r.volatilidade_anual) if r.volatilidade_anual is not None else None,
+            "beta": float(r.beta_ifix) if r.beta_ifix is not None else None,
+            "mdd": float(r.max_drawdown) if r.max_drawdown is not None else None,
+            "liquidez_21d_brl": float(r.liquidez_21d_brl) if r.liquidez_21d_brl is not None else None,
+        }
+        for r in rows
+    }
+
+    try:
+        scores = calcular_score_batch(tickers, metricas, session)
+    except Exception as e:
+        logger.error(f"calcular_score_batch falhou no backfill run_id={run_id}: {e}")
+        return 0
+
+    updated = 0
+    for ticker, sc in scores.items():
+        try:
+            session.execute(
+                sa_update(SnapshotTickerMetrics)
+                .where(SnapshotTickerMetrics.run_id == run_id, SnapshotTickerMetrics.ticker == ticker)
+                .values(
+                    score_total=sc.score_total,
+                    score_valuation=sc.score_valuation,
+                    score_risco=sc.score_risco,
+                    score_liquidez=sc.score_liquidez,
+                    score_historico=sc.score_historico,
+                )
+            )
+            updated += 1
+        except Exception as e:
+            logger.warning(f"Falha ao atualizar score para {ticker} run_id={run_id}: {e}")
+
+    session.flush()
+    _sync_score_to_decisions(session, run_id)
+    session.commit()
+    logger.info(f"Backfill scores: {updated}/{len(tickers)} tickers atualizados (run_id={run_id})")
+    return updated
+
+
 # =============================================================================
 # Orquestrador principal
 # =============================================================================

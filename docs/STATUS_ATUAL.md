@@ -1,6 +1,6 @@
 # STATUS_ATUAL.md — Estado Factual do Projeto FII
 
-> Gerado em: 2026-04-29. Regenerar sempre que houver mudança estrutural.
+> Gerado em: 2026-05-03. Regenerar sempre que houver mudança estrutural.
 > Não editar manualmente — descreve o que **existe agora**, não o que está planejado.
 
 ---
@@ -26,7 +26,7 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 
 | Arquivo | Conteúdo |
 |---|---|
-| `database.py` | SQLAlchemy 2.0: ORM declarativo (15 tabelas: 9 operacionais + 6 snapshot), `get_session_ctx`, `get_session`, `get_cnpj_by_ticker`, `get_ultima_coleta`, `get_ultimo_preco_date`, `get_latest_ready_snapshot_run`. **Migração 002**: 8 colunas novas (6 Focus em `snapshot_runs` + 2 CDI em `snapshot_decisions`). |
+| `database.py` | SQLAlchemy 2.0: ORM declarativo (15 tabelas: 9 operacionais + 6 snapshot), `get_session_ctx`, `get_session`, `get_cnpj_by_ticker`, `get_ultima_coleta`, `get_ultimo_preco_date`, `get_latest_ready_snapshot_run`. **Migração 002**: 8 colunas novas (6 Focus em `snapshot_runs` + 2 CDI em `snapshot_decisions`). **Migração 004**: 5 colunas de score (0–100) em `SnapshotTickerMetrics` e `score_total` em `SnapshotDecisions`. |
 | `ingestion.py` | CVM (ZIP → complemento/geral/ativo_passivo), yfinance (preços + dividendos), brapi (atualização diária), BCB SGS série 12 (CDI), conversão ex-date → data-com via calendário B3 |
 | `cdi.py` | `get_cdi_acumulado_12m(t, session)` — lê apenas `cdi_diario`, desacoplado de `ingestion.py` |
 | `focus_bcb.py` | `fetch_focus_selic()` — busca expectativas Focus BCB (Selic 3m/6m/12m), cache diário em `dados/cache/focus_selic.json`. Retorna `FocusSelicResult` com status `OK`/`SEM_DADOS`/`ERRO_API`. |
@@ -42,7 +42,8 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | `saude.py` | Tendência PL, flag destruição de capital, análise de emissões |
 | `fundamentos.py` | Rentabilidade efetiva/patrimonial, alavancagem (Ativo/PL), classificação por alerta |
 | `composicao.py` | Classificação Tijolo/Papel/Híbrido via `ativo_passivo` CVM |
-| `radar.py` | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) — sem score numérico |
+| `radar.py` | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) |
+| `score.py` | Score composto 0–100 com 4 sub-scores: `ScoreFII` dataclass, `calcular_score()` e `calcular_score_batch()` (Valuation 35% + Risco 30% + Liquidez 20% + Histórico 15%) |
 | `data_loader.py` | Agregadores de dados para CLI e páginas Streamlit (consultas compostas) |
 
 ### `src/fii_analysis/models/`
@@ -287,7 +288,7 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
 
 **Decisões já tomadas (não reabrir):**
 
-- Sem score numérico (ex: "82/100") — concordância heurística (ALTA/MEDIA/BAIXA/VETADA) já é a "nota"
+- Score numérico 0–100 implementado (Fase 2) — ponderação 4 sub-scores (Valuation/Risco/Liquidez/Histórico). Score é comunicativo, não substitui concordância heurística (ALTA/MEDIA/BAIXA/VETADA)
 - Sem aparência de automação total — toda recomendação tem disclaimer e caminho para auditoria
 - Vocabulário de carteira: HOLD / AUMENTAR / REDUZIR / SAIR / EVITAR_NOVOS_APORTES (não "BUY/SELL")
 - Selo do dia **descritivo** (ex: `2 COMPRAR · 1 SAIR · 1 WATCHLIST · 1 VETADO`), nunca narrativo
