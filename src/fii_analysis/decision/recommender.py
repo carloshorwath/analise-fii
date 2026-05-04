@@ -436,7 +436,7 @@ def decidir_ticker(
     try:
         dy_mom = get_dy_momentum(ticker, data_ref, session)
         meses_dy_cdi = get_meses_dy_acima_cdi(ticker, data_ref, session)
-        pvp_z = get_pvp_zscore(ticker, data_ref, session)
+        pvp_z = get_pvp_zscore(ticker, data_ref, session=session)
     except Exception as exc:
         rationale.append(f'Sinais fundamentalistas erro: {exc}')
 
