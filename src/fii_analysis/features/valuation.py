@@ -219,3 +219,39 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
     sorted_gaps = sorted(gaps)
     rank = sum(1 for g in sorted_gaps if g <= gap_atual)
     return rank / len(sorted_gaps) * 100
+
+
+def get_pvp_zscore(
+    ticker: str,
+    t: date,
+    janela: int = 756,
+    session: Session | None = None,
+) -> float | None:
+    serie_df = get_pvp_serie(ticker, session)
+    if serie_df.empty:
+        return None
+
+    tuples = _extract_pvp_tuples(serie_df)
+
+    # Filter records with date <= t
+    filtered_tuples = [t_tuple for t_tuple in tuples if t_tuple[0] <= t]
+
+    if len(filtered_tuples) < 252:
+        return None
+
+    pvps = [t_tuple[3] for t_tuple in filtered_tuples]
+    pvp_atual = pvps[-1]
+
+    start_idx = max(0, len(pvps) - janela)
+    janela_pvps = pvps[start_idx : len(pvps) - 1]
+
+    if len(janela_pvps) < 63:
+        return None
+
+    media = float(np.mean(janela_pvps))
+    std = float(np.std(janela_pvps))
+
+    if std == 0:
+        return 0.0
+
+    return round((pvp_atual - media) / std, 3)
