@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from src.fii_analysis.data.database import (
     BenchmarkDiario,
@@ -21,7 +22,7 @@ from src.fii_analysis.features.indicators import get_pvp
 from src.fii_analysis.features.valuation import get_dy_gap
 
 
-def get_info_ticker(ticker: str, session) -> dict | None:
+def get_info_ticker(ticker: str, session: Session) -> dict | None:
     row = session.execute(
         select(Ticker).where(Ticker.ticker == ticker)
     ).scalar_one_or_none()
@@ -39,7 +40,7 @@ def get_info_ticker(ticker: str, session) -> dict | None:
     }
 
 
-def get_proximas_datas_com(ticker: str, session, limite: int = 5) -> list[dict]:
+def get_proximas_datas_com(ticker: str, session: Session, limite: int = 5) -> list[dict]:
     hoje = date.today()
     rows = session.execute(
         select(Dividendo.data_com, Dividendo.valor_cota)
@@ -50,7 +51,7 @@ def get_proximas_datas_com(ticker: str, session, limite: int = 5) -> list[dict]:
     return [{"data_com": str(r[0]), "valor_cota": float(r[1]) if r[1] else None} for r in rows]
 
 
-def get_historico_pl(ticker: str, session, meses: int = 24) -> pd.DataFrame:
+def get_historico_pl(ticker: str, session: Session, meses: int = 24) -> pd.DataFrame:
     cnpj = get_cnpj_by_ticker(ticker, session)
     if not cnpj:
         return pd.DataFrame()
@@ -77,7 +78,7 @@ def get_historico_pl(ticker: str, session, meses: int = 24) -> pd.DataFrame:
     return df
 
 
-def get_ultimo_preco(ticker: str, session) -> dict | None:
+def get_ultimo_preco(ticker: str, session: Session) -> dict | None:
     row = session.execute(
         select(PrecoDiario.data, PrecoDiario.fechamento, PrecoDiario.volume, PrecoDiario.coletado_em)
         .where(PrecoDiario.ticker == ticker)
@@ -94,7 +95,7 @@ def get_ultimo_preco(ticker: str, session) -> dict | None:
     }
 
 
-def get_serie_preco_volume(ticker: str, session) -> pd.DataFrame:
+def get_serie_preco_volume(ticker: str, session: Session) -> pd.DataFrame:
     rows = session.execute(
         select(PrecoDiario.data, PrecoDiario.fechamento, PrecoDiario.volume)
         .where(PrecoDiario.ticker == ticker, PrecoDiario.fechamento.isnot(None))
@@ -108,7 +109,7 @@ def get_serie_preco_volume(ticker: str, session) -> pd.DataFrame:
     return df
 
 
-def get_benchmark_ifix(session) -> pd.DataFrame:
+def get_benchmark_ifix(session: Session) -> pd.DataFrame:
     rows = session.execute(
         select(BenchmarkDiario.data, BenchmarkDiario.fechamento)
         .where(BenchmarkDiario.ticker == "IFIX.SA")
@@ -119,7 +120,7 @@ def get_benchmark_ifix(session) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["data", "fechamento"])
 
 
-def get_ifix_ytd(session) -> float | None:
+def get_ifix_ytd(session: Session) -> float | None:
     df = get_benchmark_ifix(session)
     if df.empty:
         return None
@@ -135,7 +136,7 @@ def get_ifix_ytd(session) -> float | None:
     return None
 
 
-def get_dividendos_historico(ticker: str, session) -> pd.DataFrame:
+def get_dividendos_historico(ticker: str, session: Session) -> pd.DataFrame:
     rows = session.execute(
         select(Dividendo.data_com, Dividendo.valor_cota)
         .where(Dividendo.ticker == ticker, Dividendo.valor_cota.isnot(None))

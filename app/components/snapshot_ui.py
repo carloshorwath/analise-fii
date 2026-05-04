@@ -116,6 +116,19 @@ def load_panorama_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataF
                 "cvm_defasada": bool(r.cvm_defasada) if r.cvm_defasada is not None else False,
                 "segmento": r.segmento,
                 "dy_mes": None,  # not in snapshot — shim for render_panorama_table
+                # Fase 1.5 — risk_metrics
+                "volatilidade_anual": float(getattr(r, "volatilidade_anual", None) or 0) or None,
+                "beta_ifix": float(getattr(r, "beta_ifix", None) or 0) if getattr(r, "beta_ifix", None) is not None else None,
+                "max_drawdown": float(getattr(r, "max_drawdown", None) or 0) if getattr(r, "max_drawdown", None) is not None else None,
+                "liquidez_21d_brl": float(getattr(r, "liquidez_21d_brl", None) or 0) or None,
+                "retorno_total_12m": float(getattr(r, "retorno_total_12m", None) or 0) if getattr(r, "retorno_total_12m", None) is not None else None,
+                "dy_3m_anualizado": float(getattr(r, "dy_3m_anualizado", None) or 0) if getattr(r, "dy_3m_anualizado", None) is not None else None,
+                # Fase 2 — score
+                "score_total": int(getattr(r, "score_total", None) or 0) if getattr(r, "score_total", None) is not None else None,
+                "score_valuation": int(getattr(r, "score_valuation", None) or 0) if getattr(r, "score_valuation", None) is not None else None,
+                "score_risco": int(getattr(r, "score_risco", None) or 0) if getattr(r, "score_risco", None) is not None else None,
+                "score_liquidez": int(getattr(r, "score_liquidez", None) or 0) if getattr(r, "score_liquidez", None) is not None else None,
+                "score_historico": int(getattr(r, "score_historico", None) or 0) if getattr(r, "score_historico", None) is not None else None,
             }
             for r in rows
         ]

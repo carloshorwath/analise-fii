@@ -38,7 +38,11 @@ from src.fii_analysis.data.database import (
 )
 
 
-def load_cvm_zip(zip_path: Path, year: int) -> dict[str, pd.DataFrame]:
+def load_cvm_zip(
+    zip_path: Path,
+    year: int,
+    keys_to_extract: list[str] | None = None,
+) -> dict[str, pd.DataFrame]:
     logger.info("Abrindo ZIP {}", zip_path)
     prefixos = {
         "complemento": f"inf_mensal_fii_complemento_{year}",
@@ -49,6 +53,8 @@ def load_cvm_zip(zip_path: Path, year: int) -> dict[str, pd.DataFrame]:
     with ZipFile(zip_path) as zf:
         nomes_no_zip = zf.namelist()
         for chave, prefixo in prefixos.items():
+            if keys_to_extract is not None and chave not in keys_to_extract:
+                continue
             match = [n for n in nomes_no_zip if n.startswith(prefixo) and n.endswith(".csv")]
             if not match:
                 logger.warning("Arquivo {} nao encontrado em {}", prefixo, zip_path)
@@ -63,7 +69,7 @@ def load_cvm_zip(zip_path: Path, year: int) -> dict[str, pd.DataFrame]:
 
 
 def load_cvm_to_db(zip_path: Path, year: int, session) -> None:
-    dados = load_cvm_zip(zip_path, year)
+    dados = load_cvm_zip(zip_path, year, keys_to_extract=["complemento", "geral"])
     complemento = dados["complemento"]
     geral = dados["geral"]
     if complemento.empty:
@@ -224,7 +230,7 @@ def load_dividends_yfinance(ticker: str, session) -> None:
 
 
 def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
-    dados = load_cvm_zip(zip_path, year)
+    dados = load_cvm_zip(zip_path, year, keys_to_extract=["ativo_passivo", "geral"])
     ap = dados.get("ativo_passivo")
     if ap is None or ap.empty:
         logger.warning("ativo_passivo vazio para {}, ano {}", zip_path, year)
@@ -370,6 +376,13 @@ def load_cdi_to_db(session, data_inicio: date | None = None) -> None:
             resp = requests.get(url, timeout=30)
             resp.raise_for_status()
             dados = resp.json()
+        except requests.exceptions.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                logger.warning("Sem dados CDI (404) para chunk {}-{}. Pulando.", chunk_start, chunk_end)
+                chunk_start = chunk_end + timedelta(days=1)
+                continue
+            logger.warning("BCB falhou para chunk {}-{} ({}). Parando backfill.", chunk_start, chunk_end, exc)
+            break
         except Exception as exc:
             logger.warning("BCB falhou para chunk {}-{} ({}). Parando backfill.", chunk_start, chunk_end, exc)
             break

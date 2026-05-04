@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+import plotly.graph_objects as go
+
 from app.components.charts import (
     composicao_pie,
     dividend_heatmap,
@@ -33,7 +35,14 @@ from src.fii_analysis.features.data_loader import (
     resolve_periodo,
 )
 from src.fii_analysis.features.indicators import get_dy_trailing, get_pvp, get_pvp_serie
+from src.fii_analysis.features.risk_metrics import (
+    beta_vs_ifix,
+    liquidez_media_21d,
+    max_drawdown,
+    volatilidade_anualizada,
+)
 from src.fii_analysis.features.saude import emissoes_recentes, flag_destruicao_capital, tendencia_pl
+from src.fii_analysis.features.score import ScoreFII, calcular_score
 from src.fii_analysis.features.valuation import (
     get_dy_gap,
     get_dy_gap_percentil,
@@ -106,8 +115,8 @@ def render(ticker: str, *, key_prefix: str = "afii") -> None:
 
     st.markdown("---")
 
-    tab_val, tab_saude, tab_div, tab_comp, tab_price, tab_radar, tab_datas = st.tabs(
-        ["Valuation", "Saude", "Dividendos", "Composicao", "Preco & Volume", "Radar", "Datas-Com"]
+    tab_val, tab_saude, tab_div, tab_comp, tab_price, tab_radar, tab_datas, tab_score = st.tabs(
+        ["Valuation", "Saude", "Dividendos", "Composicao", "Preco & Volume", "Radar", "Datas-Com", "Score"]
     )
 
     with tab_price:
@@ -235,3 +244,100 @@ def render(ticker: str, *, key_prefix: str = "afii") -> None:
 
         if preco_info:
             st.caption(f"Ultimo preco: {preco_info['data']} | Coletado em: {preco_info.get('coletado_em', 'n/d')}")
+
+    with tab_score:
+        with get_session_ctx() as session:
+            sc: ScoreFII | None = None
+            try:
+                pvp_pct_s, _ = get_pvp_percentil(ticker, ultimo, 504, session) if ultimo else (None, 0)
+                dy_gap_pct_s = get_dy_gap_percentil(ticker, ultimo, 252, session) if ultimo else None
+                vol_s = volatilidade_anualizada(ticker, session=session)
+                beta_s = beta_vs_ifix(ticker, session=session)
+                mdd_s = max_drawdown(ticker, session=session)
+                liq_s = liquidez_media_21d(ticker, session=session)
+                sc = calcular_score(
+                    ticker,
+                    pvp_percentil=pvp_pct_s,
+                    dy_gap_percentil=dy_gap_pct_s,
+                    volatilidade=vol_s,
+                    beta=beta_s,
+                    mdd=mdd_s,
+                    liquidez_21d_brl=liq_s,
+                    session=session,
+                )
+            except Exception:
+                pass
+
+        if sc is None:
+            st.info("Nao foi possivel calcular o score. Verifique se ha dados suficientes no banco.")
+        else:
+            _render_score_breakdown(sc)
+
+
+def _render_score_breakdown(sc: ScoreFII) -> None:
+    """Renderiza o score 0-100 com decomposição visual em barras horizontais."""
+    total = sc.score_total
+
+    if total >= 80:
+        badge_color = "#1a7e3f"
+        badge_label = "EXCELENTE"
+    elif total >= 65:
+        badge_color = "#3a8a2e"
+        badge_label = "BOM"
+    elif total >= 50:
+        badge_color = "#b8960c"
+        badge_label = "NEUTRO"
+    else:
+        badge_color = "#c0392b"
+        badge_label = "FRACO"
+
+    st.markdown(
+        f"<h2 style='color:{badge_color}'>Score: {total}/100 — {badge_label}</h2>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "O score e uma camada de *comunicacao* — resume os indicadores para leitura rapida. "
+        "Nao substitui o sinal estatistico (motor P/VP + walk-forward + episodios)."
+    )
+
+    sub_scores = {
+        "Valuation (P/VP + DY Gap)": sc.score_valuation,
+        "Risco (Vol + Beta + Drawdown)": sc.score_risco,
+        "Liquidez (Volume 21d)": sc.score_liquidez,
+        "Historico (Consistencia DY 24m)": sc.score_historico,
+    }
+    pesos = [0.35, 0.30, 0.20, 0.15]
+
+    fig = go.Figure()
+    colors = ["#2ecc71" if v >= 65 else ("#f39c12" if v >= 50 else "#e74c3c") for v in sub_scores.values()]
+
+    for i, (label, value) in enumerate(sub_scores.items()):
+        fig.add_trace(go.Bar(
+            name=label,
+            x=[value],
+            y=[label],
+            orientation="h",
+            marker_color=colors[i],
+            text=f"{value}/100 (peso {pesos[i]:.0%})",
+            textposition="inside",
+        ))
+
+    fig.add_vline(x=total, line_dash="dash", line_color="white",
+                  annotation_text=f"Total: {total}", annotation_position="top right")
+
+    fig.update_layout(
+        title=f"{sc.ticker} — Decomposicao do Score",
+        xaxis=dict(range=[0, 100], title="Score 0-100"),
+        yaxis=dict(title=""),
+        template="plotly_dark",
+        height=280,
+        showlegend=False,
+        barmode="overlay",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Valuation", f"{sc.score_valuation}/100", help="P/VP percentil invertido (60%) + DY Gap percentil (40%)")
+    col2.metric("Risco", f"{sc.score_risco}/100", help="Volatilidade + Beta + Drawdown normalizados vs universo")
+    col3.metric("Liquidez", f"{sc.score_liquidez}/100", help="< R$200k=20 | 200k-1M=50 | 1M-5M=75 | >5M=90")
+    col4.metric("Historico", f"{sc.score_historico}/100", help="Consistencia do DY mensal (CV invertido, 24 meses)")
