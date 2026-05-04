@@ -418,6 +418,167 @@ def _load_cdi_yfinance_fallback(session, data_inicio: date) -> None:
 from src.fii_analysis.data.cdi import get_cdi_acumulado_12m  # noqa: F401 re-export
 
 
+def load_ifix_to_db(session, anos: int = 5) -> int:
+    """Carrega historico do IFIX (ou IFIX11 ETF) no banco.
+    Usa yfinance como fonte primaria (^IFIX ou IFIX11.SA).
+    Armazena com ticker='IFIX11' em PrecoDiario.
+    Respeita a regra do projeto: verifica ultimo registro antes de baixar
+    (nao sobrescreve historico existente, apenas appends novos dias).
+    Retorna numero de registros inseridos.
+    """
+    ticker_banco = "IFIX11"
+    
+    ultimo = session.execute(
+        select(PrecoDiario.data)
+        .where(PrecoDiario.ticker == ticker_banco)
+        .order_by(PrecoDiario.data.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    hoje = date.today()
+    if ultimo:
+        start_date = ultimo + timedelta(days=1)
+        logger.info("IFIX: buscando a partir de {}", start_date)
+    else:
+        start_date = hoje - timedelta(days=anos * 365)
+        logger.info("IFIX: buscando historico completo ({} anos) a partir de {}", anos, start_date)
+
+    if start_date > hoje:
+        logger.info("IFIX ja atualizado ate hoje")
+        return 0
+
+    # Tenta obter dados do yfinance (primeiro ^IFIX, depois IFIX11.SA)
+    df = yf.download('^IFIX', start=start_date, end=hoje, auto_adjust=True)
+    fonte_usada = "yfinance_ifix"
+    
+    if df.empty or len(df) < 5:
+        df = yf.download('IFIX11.SA', start=start_date, end=hoje, auto_adjust=True)
+        fonte_usada = "yfinance_ifix11"
+        
+    agora = datetime.utcnow()
+    inseridos = 0
+
+    if not df.empty and len(df) >= 5:
+        # Achou dados no yfinance
+        for dt_idx, row in df.iterrows():
+            d = dt_idx.date()
+            if ultimo and d <= ultimo:
+                continue
+                
+            exists = session.execute(
+                select(PrecoDiario).where(
+                    PrecoDiario.ticker == ticker_banco,
+                    PrecoDiario.data == d,
+                )
+            ).scalar_one_or_none()
+            
+            if exists:
+                continue
+                
+            # Extrai valores com segurança lidando com multi-index se existir
+            def _get_val(col):
+                if isinstance(row, pd.Series):
+                    # Pandas >= 2.0.0 com multiple tickers or single ticker
+                    if isinstance(row.index, pd.MultiIndex):
+                        for k in row.index:
+                            if k[0] == col:
+                                return row[k]
+                    else:
+                        if col in row:
+                            return row[col]
+                return None
+            
+            # yfinance auto_adjust=True removes Adj Close and modifies Close
+            fech_aj = _get_val('Close')
+            # fallback para caso a API retorne formato diferente
+            if pd.isna(fech_aj):
+                 fech_aj = None
+
+            registro = PrecoDiario(
+                ticker=ticker_banco,
+                data=d,
+                abertura=_get_val('Open'),
+                maxima=_get_val('High'),
+                minima=_get_val('Low'),
+                fechamento=_get_val('Close'),  # auto_adjust=True faz fechamento == fechamento_aj
+                fechamento_aj=fech_aj,
+                volume=_get_val('Volume'),
+                fonte=fonte_usada,
+                coletado_em=agora,
+            )
+            session.add(registro)
+            inseridos += 1
+            
+        session.commit()
+        logger.info("IFIX: {} precos inseridos via {}", inseridos, fonte_usada)
+        return inseridos
+
+    # Fallback: Brapi
+    logger.info("IFIX: yfinance falhou ou retornou poucos dados. Tentando Brapi.")
+    
+    load_dotenv(r"C:\Modelos-AI\Brapi\.env")
+    token = os.getenv("BRAPI_API_KEY")
+    if not token:
+        logger.warning("BRAPI_API_KEY nao encontrado e yfinance falhou para IFIX. Retornando 0.")
+        return 0
+
+    url = f"https://brapi.dev/api/quote/IFIX11?range={anos}y&interval=1d&token={token}"
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        dados = resp.json()
+        results = dados.get("results", [])
+        if not results:
+            logger.warning("Brapi IFIX11: sem resultados")
+            return 0
+        hist = results[0].get("historicalDataPrice", [])
+    except Exception as exc:
+        logger.warning("Brapi IFIX11 falhou: {}. Retornando 0.", exc)
+        return 0
+
+    for item in hist:
+        ts = item.get("date")
+        if ts is None:
+            continue
+        d = datetime.utcfromtimestamp(ts).date()
+        if start_date and d < start_date:
+            continue
+        if ultimo and d <= ultimo:
+            continue
+            
+        exists = session.execute(
+            select(PrecoDiario).where(
+                PrecoDiario.ticker == ticker_banco,
+                PrecoDiario.data == d,
+            )
+        ).scalar_one_or_none()
+        if exists:
+            continue
+            
+        fech = item.get("close") or item.get("adjustedClose")
+        if fech is None:
+            continue
+            
+        registro = PrecoDiario(
+            ticker=ticker_banco,
+            data=d,
+            abertura=item.get("open"),
+            maxima=item.get("high"),
+            minima=item.get("low"),
+            fechamento=fech,
+            fechamento_aj=item.get("adjustedClose") or fech,
+            volume=item.get("volume"),
+            fonte="brapi_ifix11",
+            coletado_em=agora,
+        )
+        session.add(registro)
+        inseridos += 1
+        
+    session.commit()
+    logger.info("IFIX: {} precos inseridos via Brapi", inseridos)
+    return inseridos
+
+
 # ---------------------------------------------------------------------------
 # Benchmark diário — IFIX via yfinance (carga inicial) + brapi (atualização)
 # ---------------------------------------------------------------------------
