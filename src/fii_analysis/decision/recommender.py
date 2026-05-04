@@ -31,8 +31,26 @@ import pandas as pd
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.decision.abertos import detectar_episodio_aberto, detectar_janela_captura
 from src.fii_analysis.features.composicao import classificar_fii
-from src.fii_analysis.features.saude import emissoes_recentes, flag_destruicao_capital
-from src.fii_analysis.features.valuation import get_dy_gap_percentil, get_pvp_percentil
+from src.fii_analysis.features.momentum_signals import (
+    get_dy_momentum,
+    get_meses_dy_acima_cdi,
+    get_pl_trend,
+    get_rentab_divergencia,
+)
+from src.fii_analysis.features.saude import (
+    emissoes_recentes,
+    flag_destruicao_capital,
+    get_ltv_flag,
+)
+from src.fii_analysis.features.valuation import (
+    get_dy_gap_percentil,
+    get_pvp_percentil,
+    get_pvp_zscore,
+)
+from src.fii_analysis.features.volume_signals import (
+    get_vol_ratio_21_63,
+    get_volume_drop_flag,
+)
 from src.fii_analysis.models.episodes import get_pvp_series, identify_episodes
 from src.fii_analysis.models.threshold_optimizer_v2 import ThresholdOptimizerV2
 from src.fii_analysis.models.walk_forward_rolling import walk_forward_roll
@@ -41,7 +59,7 @@ from src.fii_analysis.models.walk_forward_rolling import walk_forward_roll
 VALID_SIGNALS = ("BUY", "SELL", "NEUTRO")
 
 
-@dataclass
+@dataclass(kw_only=True)
 class TickerDecision:
     """Recomendacao consolidada por ticker para um dado dia.
 
@@ -65,6 +83,18 @@ class TickerDecision:
     flag_emissao_recente: bool
     flag_pvp_caro: bool       # P/VP > p95
     flag_dy_gap_baixo: bool   # DY Gap < p5
+
+    # === RISCO V2 (novos sinais Fase 1+2) ===
+    flag_volume_queda_forte: bool = False
+    vol_ratio_21_63: Optional[float] = None
+    flag_ltv_alto: bool = False
+    ltv_atual: Optional[float] = None
+    pl_trend: Optional[str] = None
+    flag_rentab_divergencia: bool = False
+    rentab_div_media: Optional[float] = None
+    dy_momentum: Optional[float] = None
+    meses_dy_acima_cdi: Optional[int] = None
+    pvp_zscore: Optional[float] = None
 
     # === ACAO (derivada Sinal + Risco) ===
     acao: str                 # COMPRAR / VENDER / AGUARDAR / EVITAR
@@ -350,6 +380,55 @@ def decidir_ticker(
     except Exception as exc:
         rationale.append(f"DY Gap erro: {exc}")
 
+    # --- Sinais V2: volume, LTV, momentum fundamentalista ---
+    flag_vol_drop = False
+    vol_ratio = None
+    try:
+        flag_vol_drop = get_volume_drop_flag(ticker, data_ref, session)
+        vol_ratio = get_vol_ratio_21_63(ticker, data_ref, session)
+        if flag_vol_drop:
+            rationale.append('Volume qualificado: queda com volume alto (pressao vendedora real)')
+        if vol_ratio is not None and vol_ratio < 0.70:
+            rationale.append(f'Liquidez caindo: vol_ratio_21_63={vol_ratio:.2f}')
+    except Exception as exc:
+        rationale.append(f'Volume signals erro: {exc}')
+
+    flag_ltv = False
+    ltv_val = None
+    try:
+        flag_ltv, ltv_val = get_ltv_flag(ticker, data_ref, session)
+        if flag_ltv:
+            rationale.append(f'LTV alto: {ltv_val:.1%} (alavancagem > 20%)')
+    except Exception as exc:
+        rationale.append(f'LTV erro: {exc}')
+
+    pl_trend_val = None
+    try:
+        pl_trend_val = get_pl_trend(ticker, data_ref, session)
+        if pl_trend_val == 'CAINDO':
+            rationale.append('PL em queda 3 meses consecutivos')
+    except Exception as exc:
+        rationale.append(f'PL trend erro: {exc}')
+
+    flag_rentab_div = False
+    rentab_div_val = None
+    try:
+        flag_rentab_div, rentab_div_val = get_rentab_divergencia(ticker, data_ref, session)
+        if flag_rentab_div:
+            rationale.append('Rentab efetiva sistematicamente acima da patrimonial (armadilha de dividendo)')
+    except Exception as exc:
+        rationale.append(f'Rentab divergencia erro: {exc}')
+
+    dy_mom = None
+    meses_dy_cdi = None
+    pvp_z = None
+    try:
+        dy_mom = get_dy_momentum(ticker, data_ref, session)
+        meses_dy_cdi = get_meses_dy_acima_cdi(ticker, data_ref, session)
+        pvp_z = get_pvp_zscore(ticker, data_ref, session)
+    except Exception as exc:
+        rationale.append(f'Sinais fundamentalistas erro: {exc}')
+
     # -------------------------------------------------------------------------
     # 6. Combinacao Sinal -> Acao (com veto)
     # -------------------------------------------------------------------------
@@ -358,11 +437,13 @@ def decidir_ticker(
     n_buy = sum(1 for s in sinais_validos if s == "BUY")
     n_sell = sum(1 for s in sinais_validos if s == "SELL")
 
-    has_critical = flag_destr  # veto absoluto
+    has_critical = flag_destr or (flag_vol_drop and n_buy > 0)  # veto absoluto
     acao, nivel = _derivar_acao(n_buy, n_sell, len(sinais_validos), has_critical)
 
-    if has_critical and n_buy > 0:
+    if flag_destr and n_buy > 0:
         rationale.append(f"VETO: BUY presente mas destruicao de capital ({motivo_destr})")
+    if flag_vol_drop and n_buy > 0:
+        rationale.append('VETO: BUY presente mas queda com volume alto detectada')
     if flag_dy_baixo and acao == "COMPRAR":
         rationale.append("Atencao: DY Gap < p5 (DY baixo vs CDI) na entrada COMPRAR")
     if flag_emiss:
@@ -489,6 +570,16 @@ def decidir_ticker(
         flag_emissao_recente=flag_emiss,
         flag_pvp_caro=flag_pvp_caro,
         flag_dy_gap_baixo=flag_dy_baixo,
+        flag_volume_queda_forte=flag_vol_drop,
+        vol_ratio_21_63=vol_ratio,
+        flag_ltv_alto=flag_ltv,
+        ltv_atual=ltv_val,
+        pl_trend=pl_trend_val,
+        flag_rentab_divergencia=flag_rentab_div,
+        rentab_div_media=rentab_div_val,
+        dy_momentum=dy_mom,
+        meses_dy_acima_cdi=meses_dy_cdi,
+        pvp_zscore=pvp_z,
         acao=acao,
         nivel_concordancia=nivel,
         n_concordam_buy=n_buy,
