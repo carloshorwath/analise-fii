@@ -40,6 +40,7 @@ class ScoreFII:
     # campos auxiliares para auditoria
     pvp_percentil: float | None = None
     dy_gap_percentil: float | None = None
+    pvp_zscore: float | None = None
     volatilidade: float | None = None
     beta: float | None = None
     max_drawdown: float | None = None
@@ -53,11 +54,15 @@ class ScoreFII:
 # ---------------------------------------------------------------------------
 
 
-def score_valuation(pvp_percentil: float | None, dy_gap_percentil: float | None) -> int:
-    """P/VP baixo = bom; DY Gap alto = bom. Pesos: 60/40."""
+def score_valuation(pvp_percentil: float | None, dy_gap_percentil: float | None, pvp_zscore: float | None = None) -> int:
+    """P/VP baixo = bom; DY Gap alto = bom. Pesos: 60/40 ou 50/30/20 com z-score."""
     pvp_score = (100.0 - pvp_percentil) if pvp_percentil is not None else 50.0
     gap_score = dy_gap_percentil if dy_gap_percentil is not None else 50.0
-    raw = 0.6 * pvp_score + 0.4 * gap_score
+    if pvp_zscore is not None:
+        zscore_score = max(0.0, min(100.0, 50.0 - pvp_zscore * 20.0))
+        raw = 0.50 * pvp_score + 0.30 * gap_score + 0.20 * zscore_score
+    else:
+        raw = 0.60 * pvp_score + 0.40 * gap_score
     return _clamp(round(raw))
 
 
@@ -160,6 +165,7 @@ def calcular_score(
     *,
     pvp_percentil: float | None = None,
     dy_gap_percentil: float | None = None,
+    pvp_zscore: float | None = None,
     volatilidade: float | None = None,
     beta: float | None = None,
     mdd: float | None = None,
@@ -186,7 +192,7 @@ def calcular_score(
     """
     data_ref = date.today()
 
-    sv = score_valuation(pvp_percentil, dy_gap_percentil)
+    sv = score_valuation(pvp_percentil, dy_gap_percentil, pvp_zscore)
     sl = score_liquidez(liquidez_21d_brl)
     sh = score_historico(ticker, session)
 
@@ -235,6 +241,7 @@ def calcular_score(
         score_historico=sh,
         pvp_percentil=pvp_percentil,
         dy_gap_percentil=dy_gap_percentil,
+        pvp_zscore=pvp_zscore,
         volatilidade=volatilidade,
         beta=beta,
         max_drawdown=mdd,
@@ -269,7 +276,7 @@ def calcular_score_batch(
     results: dict[str, ScoreFII] = {}
     for ticker in tickers:
         m = metricas.get(ticker, {})
-        sv = score_valuation(m.get("pvp_percentil"), m.get("dy_gap_percentil"))
+        sv = score_valuation(m.get("pvp_percentil"), m.get("dy_gap_percentil"), m.get("pvp_zscore"))
         sl = score_liquidez(m.get("liquidez_21d_brl"))
         sh = score_historico(ticker, session)
         sr = score_risco(
@@ -289,6 +296,7 @@ def calcular_score_batch(
             score_historico=sh,
             pvp_percentil=m.get("pvp_percentil"),
             dy_gap_percentil=m.get("dy_gap_percentil"),
+            pvp_zscore=m.get("pvp_zscore"),
             volatilidade=m.get("volatilidade"),
             beta=m.get("beta"),
             max_drawdown=m.get("mdd"),
