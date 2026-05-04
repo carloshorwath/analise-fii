@@ -32,8 +32,10 @@ from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.decision.abertos import detectar_episodio_aberto, detectar_janela_captura
 from src.fii_analysis.features.composicao import classificar_fii
 from src.fii_analysis.features.momentum_signals import (
+    get_dividend_safety,
     get_dy_momentum,
     get_meses_dy_acima_cdi,
+    get_momentum_relativo_ifix,
     get_pl_trend,
     get_rentab_divergencia,
 )
@@ -43,6 +45,7 @@ from src.fii_analysis.features.saude import (
     get_ltv_flag,
 )
 from src.fii_analysis.features.valuation import (
+    get_cap_rate_spread,
     get_dy_gap_percentil,
     get_pvp_percentil,
     get_pvp_zscore,
@@ -95,6 +98,14 @@ class TickerDecision:
     dy_momentum: Optional[float] = None
     meses_dy_acima_cdi: Optional[int] = None
     pvp_zscore: Optional[float] = None
+
+    # === RISCO F3 (sinais Fase 3) ===
+    momentum_ifix_21d: Optional[float] = None       # retorno_fii - retorno_ifix (pp, 21d)
+    cap_rate_anualizado: Optional[float] = None     # (1 + rentab_efetiva_6m)^12 - 1
+    cap_rate_spread_cdi: Optional[float] = None     # cap_rate - CDI 12m
+    dividend_safety_flag: bool = False              # payout > 110% do que ganha
+    payout_vs_caixa: Optional[float] = None        # dy_mes / rentab_efetiva medio
+    cortes_24m: int = 0                            # quedas consecutivas de DY nos 24m
 
     # === ACAO (derivada Sinal + Risco) ===
     acao: str                 # COMPRAR / VENDER / AGUARDAR / EVITAR
@@ -429,6 +440,35 @@ def decidir_ticker(
     except Exception as exc:
         rationale.append(f'Sinais fundamentalistas erro: {exc}')
 
+    # --- F3: momentum relativo IFIX, Cap Rate spread, Dividend Safety ---
+    mom_ifix: Optional[float] = None
+    cap_rate_anual: Optional[float] = None
+    cap_rate_spread: Optional[float] = None
+    div_safety_flag = False
+    payout_caixa: Optional[float] = None
+    cortes_dy = 0
+    try:
+        mom_ifix = get_momentum_relativo_ifix(ticker, data_ref, session)
+    except Exception as exc:
+        rationale.append(f'Momentum IFIX erro: {exc}')
+    try:
+        cap_rate_anual, cap_rate_spread = get_cap_rate_spread(ticker, data_ref, session)
+        if cap_rate_spread is not None and cap_rate_spread < 0:
+            rationale.append(f'Alerta: Cap Rate spread negativo ({cap_rate_spread:.2%}) — fundo rende menos que CDI')
+    except Exception as exc:
+        rationale.append(f'Cap Rate spread erro: {exc}')
+    try:
+        safety = get_dividend_safety(ticker, data_ref, session)
+        div_safety_flag = safety.get('flag_insustentavel', False)
+        payout_caixa = safety.get('payout_vs_caixa')
+        cortes_dy = safety.get('cortes_24m', 0)
+        if div_safety_flag:
+            rationale.append(f'Alerta: Dividendo insustentavel — payout {payout_caixa:.0%} do resultado' if payout_caixa else 'Alerta: Dividendo possivelmente insustentavel')
+        if cortes_dy >= 4:
+            rationale.append(f'Atencao: {cortes_dy} cortes de DY nos ultimos 24 meses')
+    except Exception as exc:
+        rationale.append(f'Dividend Safety erro: {exc}')
+
     # -------------------------------------------------------------------------
     # 6. Combinacao Sinal -> Acao (com veto)
     # -------------------------------------------------------------------------
@@ -580,6 +620,12 @@ def decidir_ticker(
         dy_momentum=dy_mom,
         meses_dy_acima_cdi=meses_dy_cdi,
         pvp_zscore=pvp_z,
+        momentum_ifix_21d=mom_ifix,
+        cap_rate_anualizado=cap_rate_anual,
+        cap_rate_spread_cdi=cap_rate_spread,
+        dividend_safety_flag=div_safety_flag,
+        payout_vs_caixa=payout_caixa,
+        cortes_24m=cortes_dy,
         acao=acao,
         nivel_concordancia=nivel,
         n_concordam_buy=n_buy,
