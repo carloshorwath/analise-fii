@@ -115,6 +115,17 @@ class ThresholdOptimizerV2:
 
         df["fwd_ret"] = (df["fechamento_aj"].shift(-self.forward_days) / df["fechamento_aj"]) - 1.0
 
+        # Filtro de sell-off qualificado: queda >= 2% com volume >= 1.5x media 21d
+        if "volume" in df.columns and df["volume"].notna().any():
+            vol_ma21 = df["volume"].rolling(21, min_periods=5).mean().shift(1)
+            ret_dia = df["fechamento_aj"].pct_change()
+            df["volume_drop_flag"] = (
+                (ret_dia <= -0.02) &
+                (df["volume"] >= 1.5 * vol_ma21)
+            ).fillna(False)
+        else:
+            df["volume_drop_flag"] = False
+
         return df.dropna(subset=["pvp_pct", "meses_alerta", "fwd_ret"])
 
     def _add_dy_gap_pct(self, df, ticker, session):
@@ -252,7 +263,9 @@ class ThresholdOptimizerV2:
     def _build_signal_masks(self, df, params):
         """Constroi mascaras BUY/SELL de forma centralizada."""
         has_dy_gap = "dy_gap_pct" in df.columns
-        buy_mask = df["pvp_pct"] <= params["pvp_percentil_buy"]
+
+        vol_drop_col = df.get("volume_drop_flag", pd.Series(False, index=df.index))
+        buy_mask = (df["pvp_pct"] <= params["pvp_percentil_buy"]) & (~vol_drop_col)
 
         if has_dy_gap:
             dg = df["dy_gap_pct"].fillna(999.0)
