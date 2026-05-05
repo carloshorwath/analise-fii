@@ -1,5 +1,7 @@
 # Variáveis para Análise Quantitativa de FIIs no Brasil
 
+> **NOTA DE REFERÊNCIA:** Este documento contém análise teórica e de domínio sobre variáveis quantitativas para FIIs. Muitas destas variáveis já foram implementadas no código (consulte `src/fii_analysis/features/` como a fonte de verdade para a implementação atual). As informações aqui presentes servem como base teórica e pesquisa exploratória, especialmente para as variáveis ainda não codificadas.
+
 Este documento apresenta um levantamento fundamentado das variáveis essenciais para a modelagem quantitativa de Fundos de Investimento Imobiliário (FIIs) no mercado brasileiro. A estrutura foi construída com base em literatura acadêmica, regulamentação da CVM, metodologias de gestoras locais e plataformas de análise de mercado.
 
 ## 1. Variáveis de Valuation

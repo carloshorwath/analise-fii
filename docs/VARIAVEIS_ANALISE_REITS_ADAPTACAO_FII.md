@@ -1,5 +1,7 @@
 # Variaveis de Analise de REITs e Adaptacao para FIIs Brasileiros
 
+> **NOTA DE REFERÊNCIA:** Este documento reflete uma pesquisa exploratória sobre a adaptação de métricas de REITs americanos para a realidade dos FIIs brasileiros. As decisões de design derivadas desta análise que foram aprovadas encontram-se implementadas no código (consulte `src/fii_analysis/features/`). Este arquivo é mantido como histórico de decisões e referência de domínio.
+
 ## 1. Metricas Fundamentais de REITs (padrao da industria global)
 
 ### 1.1 Metricas de Resultado Operacional
