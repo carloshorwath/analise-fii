@@ -28,7 +28,7 @@ A segunda frustração é a ausência da próxima data-com de KNIP11 no banco. O
 
 ## Dores Identificadas (ordenadas por severidade)
 
-### [FATAL] Event Study bloqueado por LEAKAGE em todos os tickers
+### ~~[FATAL] Event Study bloqueado por LEAKAGE em todos os tickers~~ (RESOLVIDO)
 
 **Onde:** `scripts/run_event_study.py` — saída final do veredicto
 **O que tentei fazer:** Rodar o event study para ver se KNIP11 tem padrão estatístico de comportamento perto da data-com — que é exatamente o que o programa promete fazer.
@@ -47,7 +47,7 @@ VEREDICTO FINAL:
 
 ---
 
-### [FATAL] Próxima data-com de KNIP11 não existe no banco
+### ~~[FATAL] Próxima data-com de KNIP11 não existe no banco~~ (RESOLVIDO EM V2)
 
 **Onde:** `dados/fii_data.db` — tabela `dividendos`
 **O que tentei fazer:** Ver quando é a próxima data-com de KNIP11 para calcular se estou na janela de compra.
@@ -57,7 +57,7 @@ VEREDICTO FINAL:
 
 ---
 
-### [CRITICAL] CriticAgent reprova todos os sinais de KNIP11, mas o programa não diz o que fazer com isso
+### ~~[CRITICAL] CriticAgent reprova todos os sinais de KNIP11, mas o programa não diz o que fazer com isso~~ (RESOLVIDO EM CAMADA DECISAO)
 
 **Onde:** `scripts/run_strategy.py` — seção CRITIC AGENT para KNIP11
 **O que tentei fazer:** Verificar se o sinal de dividend capture tem validade estatística.
@@ -71,7 +71,7 @@ O Permutation Shuffle tem p-value = 0.0520 (borderline) e o Placebo tem p-value 
 
 ---
 
-### [CRITICAL] Sinal de SELL do Otimizador V2 tem Bonferroni p=0.48 mas não diz isso ao usuário de forma clara
+### ~~[CRITICAL] Sinal de SELL do Otimizador V2 tem Bonferroni p=0.48 mas não diz isso ao usuário de forma clara~~ (RESOLVIDO)
 
 **Onde:** `src/fii_analysis/models/threshold_optimizer_v2.py` → `optimize()` + `get_signal_hoje()`
 **O que tentei fazer:** Obter o sinal atual para KNIP11.
@@ -81,7 +81,7 @@ O Permutation Shuffle tem p-value = 0.0520 (borderline) e o Placebo tem p-value 
 
 ---
 
-### [HIGH] Ausência de ponto de entrada único: onde começo?
+### ~~[HIGH] Ausência de ponto de entrada único: onde começo?~~ (RESOLVIDO UI SHELL)
 
 **Onde:** Estrutura geral do projeto
 **O que tentei fazer:** Abrir o projeto pela primeira vez e descobrir qual script/página rodar para responder "devo comprar KNIP11?".
@@ -126,7 +126,7 @@ Quatro saídas contraditórias sem nenhum módulo explicando qual tem precedênc
 
 ---
 
-### [MEDIUM] "Episódios thinned" — terminologia incompreensível sem contexto
+### ~~[MEDIUM] "Episódios thinned" — terminologia incompreensível sem contexto~~ (RESOLVIDO EM PAGES/11 E 15)
 
 **Onde:** `app/pages/11_Episodios.py`, `src/fii_analysis/models/episodes.py`
 **O que tentei fazer:** Entender o que essa página faz e se ela me ajuda.
@@ -146,7 +146,7 @@ Quatro saídas contraditórias sem nenhum módulo explicando qual tem precedênc
 
 ---
 
-### [LOW] Página 9_Otimizador.py referenciada na documentação não existe
+### ~~[LOW] Página 9_Otimizador.py referenciada na documentação não existe~~ (RESOLVIDO)
 
 **Onde:** `docs/PROJETO.md`, `docs/STATUS_ATUAL.md` — ambos mencionam `9_Otimizador.py`
 **O que aconteceu:** O arquivo `D:/analise-de-acoes/app/pages/9_Otimizador.py` não existe no disco. A numeração pula de `8_Fund_EventStudy.py` para `10_Otimizador_V2.py`.

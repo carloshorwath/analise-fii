@@ -8,17 +8,17 @@
 
 ## Resumo — 3 Maiores Problemas
 
-### 1. 🔴 Explosão de sessões em `2_Analise_FII.py` (~15 `get_session_ctx()` por render)
+### ~~1. 🔴 Explosão de sessões em `2_Analise_FII.py` (~15 `get_session_ctx()` por render)~~ (RESOLVIDO)
 **Impacto:** Performance — cada interação (trocar ticker, mudar período) abre ~15 sessões SQLite sequenciais.  
 **Arquivo:** `2_Analise_FII.py:60,82,85,95,110,115,119,127,131,141,153,164,195,203,226,239,250,255`  
 **Esforço:** Médio — consolidar chamadas em 1-2 sessões e usar `@st.cache_data` nos loaders.
 
-### 2. 🔴 Lógica de negócio em páginas da UI (violação arquitetural)
+### ~~2. 🔴 Lógica de negócio em páginas da UI (violação arquitetural)~~ (RESOLVIDO)
 **Impacto:** Manutenibilidade, testabilidade e DRY — 4 funções estatísticas (~200 linhas) em `8_Fund_EventStudy.py` deveriam estar em `src/`.  
 **Arquivo:** `8_Fund_EventStudy.py:60-292` (`get_events`, `calculate_car`, `_nw_pvalue`, `_block_placebo`)  
 **Esforço:** Médio — extrair para `src/fii_analysis/models/event_study_cvm.py`.
 
-### 3. 🔴 Gerenciamento de sessão inconsistente → risco de leak
+### ~~3. 🔴 Gerenciamento de sessão inconsistente → risco de leak~~ (RESOLVIDO)
 **Impacto:** Conexões SQLite não-fechadas em caso de exceção.  
 **Arquivo:** `carteira_ui.py:22-25,29-45,48-58,61-67` (usa `get_session()` manual) vs. restante do app (`get_session_ctx()`)  
 **Esforço:** Baixo — trocar `get_session()`/`close()` por `get_session_ctx()`.
@@ -168,17 +168,17 @@
 
 | Prioridade | Problema | Impacto | Esforço | Refs |
 |---|---|---|---|---|
-| **P0** | Consolidar sessões em `2_Analise_FII.py` (15→2 sessões) | Performance crítica | Médio (2h) | `2_Analise_FII.py:60-255` |
-| **P0** | Migrar `carteira_ui.py` para `get_session_ctx()` | Conexões vazando | Baixo (30min) | `carteira_ui.py:22-67` |
-| **P1** | Extrair lógica de `8_Fund_EventStudy.py` para `src/` | Manutenibilidade | Médio (3h) | `8_Fund_EventStudy.py:60-292` |
-| **P1** | Fix gráfico alocação: custo→mercado | Informação errada | Baixo (15min) | `3_Carteira.py:139`, `charts.py:164-171` |
-| **P1** | Fix gráfico segmento: contagem→peso | Informação errada | Baixo (15min) | `charts.py:175-182` |
+| ~~**P0**~~ | ~~Consolidar sessões em `2_Analise_FII.py` (15→2 sessões)~~ | Performance crítica | Médio (2h) | `2_Analise_FII.py:60-255` |
+| ~~**P0**~~ | ~~Migrar `carteira_ui.py` para `get_session_ctx()`~~ | Conexões vazando | Baixo (30min) | `carteira_ui.py:22-67` |
+| ~~**P1**~~ | ~~Extrair lógica de `8_Fund_EventStudy.py` para `src/`~~ | Manutenibilidade | Médio (3h) | `8_Fund_EventStudy.py:60-292` |
+| ~~**P1**~~ | ~~Fix gráfico alocação: custo→mercado~~ | Informação errada | Baixo (15min) | `3_Carteira.py:139`, `charts.py:164-171` |
+| ~~**P1**~~ | ~~Fix gráfico segmento: contagem→peso~~ | Informação errada | Baixo (15min) | `charts.py:175-182` |
 | **P2** | Extrair charts inline de `7_Fundamentos.py` para components | DRY | Médio (2h) | `7_Fundamentos.py:56-208` |
-| **P2** | Trocar 7 botões de período por `st.radio` em `2_Analise_FII` | UX + performance | Baixo (30min) | `2_Analise_FII.py:72-79` |
-| **P2** | Adicionar `st.tabs()` em páginas longas (2, 5, 7) | Navegação | Baixo (1h) | `2_Analise_FII`, `5_Event_Study`, `7_Fundamentos` |
+| ~~**P2**~~ | ~~Trocar 7 botões de período por `st.radio` em `2_Analise_FII`~~ | UX + performance | Baixo (30min) | `2_Analise_FII.py:72-79` |
+| ~~**P2**~~ | ~~Adicionar `st.tabs()` em páginas longas (2, 5, 7)~~ | Navegação | Baixo (1h) | `2_Analise_FII`, `5_Event_Study`, `7_Fundamentos` |
 | **P3** | Adicionar `@st.cache_data` em queries pesadas | Performance | Baixo (1h) | Componentes + páginas |
 | **P3** | IFIX YTD: conectar `get_benchmark_ifix()` ou remover métrica | Funcionalidade | Baixo (30min) | `1_Panorama.py:44` |
-| **P3** | Erro boundary global | Robustez | Baixo (30min) | App-wide |
+| ~~**P3**~~ | ~~Erro boundary global~~ | Robustez | Baixo (30min) | App-wide |
 | **P4** | CSV export do Radar usar dados formatados | Usabilidade | Baixo (15min) | `4_Radar.py:70` |
 | **P4** | Corrigir typos "pregOes" | Polish | Baixo (5min) | `4_Radar.py:52,65` |
 | **P4** | Corrigir `tables.py:43` truthiness de P/VP=0 | Edge case | Baixo (5min) | `tables.py:43` |
