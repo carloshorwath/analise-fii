@@ -66,8 +66,9 @@ def main():
     st.markdown("---")
 
     # — Carregamento centralizado: uma única sessão para todos os dados de analise_fii —
-    with get_session_ctx() as session:
-        dados = analise_fii.load_dados_analise(ticker, session, periodo=periodo)
+    with st.spinner(f"Carregando dados para {ticker}..."):
+        with get_session_ctx() as session:
+            dados = analise_fii.load_dados_analise(ticker, session, periodo=periodo)
 
     # Exibir info do fundo logo abaixo do seletor
     info = dados["info"]

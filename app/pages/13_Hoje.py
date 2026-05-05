@@ -85,10 +85,11 @@ def main():
         load_latest_snapshot_meta.clear()
         st.rerun()
 
-    report = load_command_center_snapshot(snapshot_scope, holdings_key)
-    if report is None and has_holdings:
-        report = load_command_center_snapshot("curado", ())
-        snapshot_scope = "curado"
+    with st.spinner("Carregando snapshot do dia..."):
+        report = load_command_center_snapshot(snapshot_scope, holdings_key)
+        if report is None and has_holdings:
+            report = load_command_center_snapshot("curado", ())
+            snapshot_scope = "curado"
 
     if report is None:
         st.info(

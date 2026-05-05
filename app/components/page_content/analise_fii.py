@@ -30,7 +30,6 @@ from app.components.charts import (
 )
 from app.components.tables import format_currency, format_number
 from src.fii_analysis.config_yaml import get_piso_liquidez, get_threshold
-from src.fii_analysis.evaluation.daily_snapshots import load_risk_metrics_snapshot
 from src.fii_analysis.data.database import get_session_ctx, get_ultimo_preco_date
 from src.fii_analysis.features.composicao import classificar_fii, composicao_ativo
 from src.fii_analysis.features.data_loader import (
@@ -137,16 +136,17 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
         "Preco Atual",
         f"R$ {preco_info['fechamento']:.2f}"
         if preco_info and preco_info.get("fechamento") is not None else "n/d",
+        help="Ultimo preco de fechamento disponivel"
     )
-    c2.metric("P/VP", f"{pvp:.2f}" if pvp is not None else "n/d")
-    c3.metric(f"P/VP Percentil ({jan_val}d)", f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d")
-    c4.metric("DY 12m", f"{dy:.2%}" if dy is not None else "n/d")
-    c5.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap is not None else "n/d")
+    c2.metric("P/VP", f"{pvp:.2f}" if pvp is not None else "n/d", help="Preco sobre Valor Patrimonial")
+    c3.metric(f"P/VP Percentil ({jan_val}d)", f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d", help=f"Percentil do P/VP nos ultimos {jan_val} dias")
+    c4.metric("DY 12m", f"{dy:.2%}" if dy is not None else "n/d", help="Dividend Yield trailing 12 meses")
+    c5.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap is not None else "n/d", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
 
     st.markdown("---")
 
     # — Radar 4 critérios —
-    st.markdown("#### Critérios de Radar")
+    st.subheader("Critérios de Radar")
     pvp_thr = get_threshold("pvp_percentil_barato", 30)
     dy_gap_thr = get_threshold("dy_gap_percentil_caro", 70)
     piso = get_piso_liquidez()
@@ -203,16 +203,16 @@ def render_valuation(ticker: str, dados: dict, *, key_prefix: str = "afii") -> N
         st.metric(f"P/VP Percentil ({jan_val}d)", f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d")
 
         if pvp is not None and pvp_ant is not None:
-            st.metric("P/VP (atual)", f"{pvp:.4f}", delta=f"{pvp - pvp_ant:+.4f}")
+            st.metric("P/VP (atual)", f"{pvp:.4f}", delta=f"{pvp - pvp_ant:+.4f}", help="Preco sobre Valor Patrimonial")
         else:
-            st.metric("P/VP (atual)", f"{pvp:.4f}" if pvp else "n/d")
+            st.metric("P/VP (atual)", f"{pvp:.4f}" if pvp else "n/d", help="Preco sobre Valor Patrimonial")
 
-        st.metric("DY 12m (trailing)", f"{dy:.2%}" if dy else "n/d")
+        st.metric("DY 12m (trailing)", f"{dy:.2%}" if dy else "n/d", help="Dividend Yield trailing 12 meses")
 
         if dy_gap is not None and dy_gap_ant is not None:
-            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}", delta=f"{dy_gap - dy_gap_ant:+.2%}")
+            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}", delta=f"{dy_gap - dy_gap_ant:+.2%}", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
         else:
-            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap else "n/d")
+            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap else "n/d", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
 
     with col_v2:
         pvp_df_plot = pvp_df[pvp_df["data"] >= inicio] if inicio is not None and not pvp_df.empty else pvp_df

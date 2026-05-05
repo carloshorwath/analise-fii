@@ -321,21 +321,21 @@ def render(ticker: str, *, key_prefix: str = "fund") -> None:
     )
 
     with tab_dist:
-        st.header("1. Distribuicao vs Geracao")
+        st.subheader("Distribuicao vs Geracao")
         render_distribuicao_vs_geracao(ticker, key_prefix=f"{key_prefix}_dist")
 
     with tab_dy:
-        st.header("2. DY Historico")
+        st.subheader("DY Historico")
         render_dy_historico(ticker, key_prefix=f"{key_prefix}_dy")
 
     with tab_pvp:
-        st.header("3. P/VP Historico")
+        st.subheader("P/VP Historico")
         render_pvp_historico(ticker, key_prefix=f"{key_prefix}_pvp")
 
     with tab_pl:
-        st.header("4. PL e Cotas")
+        st.subheader("PL e Cotas")
         render_pl_cotas(ticker, key_prefix=f"{key_prefix}_pl")
 
     with tab_risco:
-        st.header("5. Risco e Retorno")
+        st.subheader("Risco e Retorno")
         render_risco_retorno(ticker, key_prefix=f"{key_prefix}_risco")

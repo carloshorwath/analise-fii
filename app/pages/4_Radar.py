@@ -200,13 +200,16 @@ def main():
         universo_alvo = sorted(set(curado + carteira_tickers))
 
         if meta is None or df.empty:
-            df = radar_matriz(tickers=universo_alvo, session=session)
+            with st.spinner("Calculando dados em tempo real (snapshot nao disponivel)..."):
+                df = radar_matriz(tickers=universo_alvo, session=session)
             if df.empty:
                 st.warning(
                     "Nenhum dado disponível. Execute os scripts de ingestaão e gere o snapshot."
                 )
                 st.stop()
             st.caption("⚡ Calculado em tempo real (snapshot não disponível).")
+            # Ordenar para garantir radar default sorting
+            df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
         else:
             # Enriquecer df do radar (só flags) com dados numéricos do panorama snapshot
             _, df_pan = load_panorama_snapshot("curado")
@@ -223,10 +226,10 @@ def main():
             tickers_no_snap = set(df["ticker"].tolist())
             faltantes = [t for t in universo_alvo if t not in tickers_no_snap]
             if faltantes:
-                df_falt = radar_matriz(tickers=faltantes, session=session)
+                with st.spinner("Calculando dados para tickers faltantes..."):
+                    df_falt = radar_matriz(tickers=faltantes, session=session)
                 if not df_falt.empty:
                     df = pd.concat([df, df_falt], ignore_index=True)
-                    df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
                 st.caption(
                     f"📦 Snapshot curado carregado. "
                     f"{len(faltantes)} FII(s) da carteira calculados em tempo real."
@@ -239,6 +242,9 @@ def main():
                     st.warning(f"⚠️ Snapshot desatualizado (gerado em {ts_str}).")
                 else:
                     st.caption(f"📦 Dados do snapshot de {ts_str}.")
+            
+            # Ordenar em todos os cenários (loaded ou partially loaded)
+            df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
 
 
     if df.empty:

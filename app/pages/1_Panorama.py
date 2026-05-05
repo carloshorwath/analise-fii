@@ -13,7 +13,6 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from app.components.snapshot_ui import (
     load_panorama_snapshot,
     load_radar_snapshot,
-    render_snapshot_info,
 )
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
@@ -160,11 +159,12 @@ def main():
     with get_session_ctx() as session:
         ifix_ytd = get_ifix_ytd(session)
         if meta is None or df.empty:
-            ativos_set = set(tickers_ativos(session))
-            curado = [t for t in TICKERS if t in ativos_set]
-            df = carteira_panorama(curado, session)
-            radar_df = radar_matriz(tickers=curado, session=session)
-            n_tickers = len(curado)
+            with st.spinner("Calculando dados em tempo real (snapshot nao disponivel)..."):
+                ativos_set = set(tickers_ativos(session))
+                curado = [t for t in TICKERS if t in ativos_set]
+                df = carteira_panorama(curado, session)
+                radar_df = radar_matriz(tickers=curado, session=session)
+                n_tickers = len(curado)
         else:
             n_tickers = len(df)
 
