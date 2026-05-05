@@ -413,16 +413,13 @@ Disponíveis em `src/fii_analysis/features/saude.py` e `composicao.py`, renderiz
 
 **Pendente** (em ordem de prioridade):
 1. **Cache de `optimizer_params`**: salvar `best_params` por ticker em `dados/optimizer_cache/{ticker}.json` com timestamp; reotimizar semanalmente (melhora utilidade `daily_report.py` sem `--com-otimizador`).
-2. **UX P2**: extrair charts inline de `7_Fundamentos.py` → componente reutilizável.
-3. **UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`.
-4. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
-5. **Fase 6**: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões.
-6. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
-7. Criar `tests/` com cobertura de integração para splits temporais e leakage.
+2. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
+3. **Fase 6**: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões.
+4. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
+5. Criar `tests/` com cobertura de integração para splits temporais e leakage.
 
 **Bugs menores conhecidos**:
-- `1_Panorama.py`: métrica IFIX YTD hardcoded como `"n/d"` — `get_benchmark_ifix()` existe mas não é chamado (P3).
-- Paridade CLI/web no Panorama incompleta — faltam Rent. Acum., DY 24m, Tipo na web.
+- N/A
 
 **Fora do escopo até decisão explícita:**
 - LightGBM ou qualquer ML enquanto event study não confirmar padrão

@@ -184,23 +184,33 @@ D:/analise-de-acoes/
 │   ├── streamlit_app.py               # Entry point Streamlit
 │   ├── state.py                       # Session state initializer + @safe_page error boundary
 │   ├── pages/
-│   │   ├── 1_Panorama.py
-│   │   ├── 2_Analise_FII.py
-│   │   ├── 3_Carteira.py
-│   │   ├── 4_Radar.py
-│   │   ├── 5_Event_Study.py
-│   │   ├── 6_Alertas.py
-│   │   ├── 7_Fundamentos.py
-│   │   ├── 8_Fund_EventStudy.py       # Event study por fundo (eventos discretos CVM)
-│   │   ├── 10_Otimizador_V2.py        # Otimizador avançado (substituiu 9_Otimizador.py removido)
-│   │   ├── 11_Episodios.py            # Análise de episódios de P/VP extremo
-│   │   ├── 12_WalkForward.py          # Validação out-of-sample deslizante
-│   │   └── 13_Hoje.py                 # Cockpit operacional diário
+│   │   ├── 1_Panorama.py              # Métricas gerais (Diário)
+│   │   ├── 2_Analise_FII.py           # Wrapper standalone
+│   │   ├── 3_Carteira.py              # CRUD, sugestões operacionais, alertas estruturais
+│   │   ├── 4_Radar.py                 # Heatmap booleano
+│   │   ├── 5_Event_Study.py           # Event study agregado (Investigação)
+│   │   ├── 6_Alertas.py               # Geração alertas sob demanda (Investigação)
+│   │   ├── 7_Fundamentos.py           # Wrapper standalone
+│   │   ├── 8_Fund_EventStudy.py       # Wrapper standalone
+│   │   ├── 10_Otimizador_V2.py        # Wrapper standalone
+│   │   ├── 11_Episodios.py            # Wrapper standalone
+│   │   ├── 12_WalkForward.py          # Wrapper standalone
+│   │   ├── 13_Hoje.py                 # Cockpit operacional diário
+│   │   ├── 14_Dossie_FII.py           # Consolidado: Análise/Fundamentos/Eventos por ticker (Investigação)
+│   │   └── 15_Laboratorio.py          # Auditoria: Otimizador/Episódios/WalkForward (Técnico)
 │   └── components/
+│       ├── page_content/              # Módulos reutilizáveis por Dossie/Laboratório + wrappers
+│       │   ├── analise_fii.py         # render(ticker) — análise por FII
+│       │   ├── episodios.py           # render() — episódios thinned
+│       │   ├── fund_eventstudy.py     # render() — eventos discretos CVM
+│       │   ├── fundamentos.py         # render(ticker) — DY, P/VP, PL, distribuição
+│       │   ├── otimizador_v2.py       # render() — backtest com thresholds
+│       │   └── walkforward.py         # render() — validação deslizante
 │       ├── carteira_ui.py             # Cache Streamlit + CRUD carteira (load/save/delete)
 │       ├── charts.py                  # Plotly: gauge, bandas, heatmap, pizza
 │       ├── tables.py                  # Formatação de dataframes para exibição
-│       └── snapshot_ui.py             # Helpers de UI para leitura de snapshots diários
+│       ├── snapshot_ui.py             # Helpers de UI para leitura de snapshots diários
+│       └── ui_shell.py                # Helpers de UI (headers, notes, sidebar)
 ├── scripts/                               # Wrappers CLI finos: main() + impressão, sem lógica
 │   ├── load_database.py               # Orquestra download CVM + carga yfinance
 │   ├── run_strategy.py                # Pipeline completo de estratégia
@@ -214,14 +224,26 @@ D:/analise-de-acoes/
 │   ├── analise_janela_flexivel.py     # Wrapper: varredura de targets (lógica em div_capture)
 │   ├── analise_spread_recompra.py     # Wrapper: simulação spread recompra (lógica em div_capture)
 │   ├── scrape_fundsexplorer.py        # Scraping FundsExplorer
-│   ├── daily_report.py               # CLI do relatório diário (MD+CSV)
+│   ├── daily_report.py                # CLI do relatório diário (MD+CSV)
 │   ├── generate_daily_snapshots.py    # CLI para gerar snapshot diário
 │   ├── test_recommender.py            # Sanity check do motor de decisão
-│   └── compare_cvm_headers.py         # Utilidade de debug: compara headers CVM entre anos
+│   ├── compare_cvm_headers.py         # Utilidade de debug: compara headers CVM entre anos
+│   ├── _patch_database.py             # Patch ad-hoc banco
+│   └── _aceite_v3_cdi.py              # [PESQUISA] Teste aceite V3 CDI
 ├── financial-advisor/                     # Multi-agent ADK (Vertex AI) financeiro experimental
 │   ├── financial_advisor/             # Agentes (data, trading, execution, risk)
 │   ├── deployment/                    # Deploy no Agent Engine
 │   └── eval/                          # Testes e avaliação ADK
+├── .claude/agents/                        # 9 agentes Claude Code
+│   ├── data-scientist.md
+│   ├── python-pro.md
+│   ├── streamlit-developer.md
+│   ├── documentation-engineer.md
+│   ├── ux-researcher.md
+│   ├── beta-tester-trader.md
+│   ├── release-manager.md
+│   ├── qa-operator.md
+│   └── onboarding-writer.md
 └── docs/
     ├── PROJETO.md                     # Documentação técnica unificada
     ├── STATUS_ATUAL.md                # Estado factual (regenerar quando mudar)
@@ -592,6 +614,8 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 | `generate_daily_snapshots.py` | Operacional | CLI para gerar snapshot diário (`--scope {curado,carteira,db_ativos}`) |
 | `test_recommender.py` | Debug | Sanity check do motor de decisão |
 | `compare_cvm_headers.py` | Debug | Comparação de headers CVM entre anos |
+| `_patch_database.py` | Debug | Patch ad-hoc banco |
+| `_aceite_v3_cdi.py` | Debug | [PESQUISA] Teste aceite V3 CDI |
 
 ### Volume de dados
 
