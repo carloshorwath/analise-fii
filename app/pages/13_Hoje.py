@@ -148,7 +148,7 @@ def main():
             scores[row["ticker"]] = row.get("score_total")
 
     tab_actions, tab_holdings, tab_watchlist, tab_risks, tab_cdi = st.tabs(
-        ["Acoes do Dia", "Carteira Cruzada", "Watchlist", "Riscos e Vetos", "Contexto de Juros"]
+        ["🎯 Ações do Dia", "💼 Carteira Cruzada", "👁️ Watchlist", "⚠️ Riscos e Vetos", "📉 Contexto de Juros"]
     )
     with tab_actions:
         _render_actions_today(report, scores)
@@ -236,8 +236,7 @@ def _render_action_card(d, scores: dict | None) -> None:
 
 
 def _render_actions_today(report, scores: dict | None = None):
-    st.markdown("---")
-    st.subheader("Acoes Hoje")
+    st.subheader("Ações do Dia")
     if not report.action_today:
         st.info("Nenhuma acao tatica prioritaria hoje.")
         return
@@ -285,7 +284,6 @@ def _render_actions_today(report, scores: dict | None = None):
 
 
 def _render_watchlist(report, scores: dict | None = None):
-    st.markdown("---")
     st.subheader("Watchlist")
     if not report.watchlist:
         st.info("Nenhum ticker em observacao especial hoje.")
@@ -316,7 +314,6 @@ def _pri_prefix(p: str) -> str:
 
 
 def _render_holdings(report):
-    st.markdown("---")
     st.subheader("Carteira Cruzada com Sinais")
     if not report.holding_advices:
         st.info("Sem posicoes cadastradas na carteira ou snapshot sem dados de carteira.")
@@ -352,7 +349,6 @@ def _render_holdings(report):
 
 
 def _render_risks(report):
-    st.markdown("---")
     st.subheader("Riscos e Vetos")
     if not report.risks:
         st.info("Sem vetos ou flags de risco destacados hoje.")
@@ -393,7 +389,6 @@ def _episode_text(decision) -> str:
 
 def _render_cdi_context(report, snapshot_scope, meta_hash):
     """Tab de Contexto de Juros — diagnostico CDI + Focus BCB, NAO altera acao."""
-    st.markdown("---")
     st.subheader("Contexto de Juros (CDI + Focus BCB)")
     st.caption(
         "Diagnostico de sensibilidade ao CDI e expectativas de mercado (Focus BCB). "
@@ -416,7 +411,7 @@ def _render_cdi_context(report, snapshot_scope, meta_hash):
     focus_status = meta.get("focus_status") if meta else None
 
     if focus_status and focus_status != "SEM_DADOS":
-        st.markdown("#### Expectativas Focus BCB (Selic)")
+        st.subheader("Expectativas Focus BCB (Selic)")
         fc1, fc2, fc3, fc4 = st.columns(4)
         fc1.metric("Focus 3m", f"{focus_3m:.2%}" if focus_3m is not None else "n/d")
         fc2.metric("Focus 6m", f"{focus_6m:.2%}" if focus_6m is not None else "n/d")
@@ -473,7 +468,7 @@ def _render_cdi_context(report, snapshot_scope, meta_hash):
     )
 
     # --- Leitura macro por ticker ---
-    st.markdown("#### Leitura Macro por Ticker")
+    st.subheader("Leitura Macro por Ticker")
     st.caption(
         "Interpretacao contextual gerada pelo sistema a partir de beta, Focus, residuo e R2. "
         "NAO altera a decisao de compra/venda."
