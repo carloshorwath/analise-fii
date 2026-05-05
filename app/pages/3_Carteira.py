@@ -39,8 +39,12 @@ from src.fii_analysis.features.portfolio import carteira_panorama, herfindahl
 
 safe_set_page_config(page_title="Carteira", page_icon="briefcase", layout="wide")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CSS
+# ─────────────────────────────────────────────────────────────────────────────
 _CSS = """
 <style>
+/* ── KPI cards ── */
 .kpi-row { display: flex; gap: 16px; margin-bottom: 24px; }
 .kpi-card {
     flex: 1;
@@ -59,18 +63,7 @@ _CSS = """
 .kpi-value { font-size: 1.55rem; font-weight: 700; color: #1a1a1a; line-height: 1.2; }
 .kpi-sub   { font-size: 0.78rem; color: #aaa; margin-top: 4px; }
 
-.advice-row {
-    display: flex; align-items: center; gap: 14px;
-    background: #fff; border-radius: 10px;
-    padding: 14px 18px; margin-bottom: 8px;
-    border: 1px solid #e8eaed;
-    transition: box-shadow .15s;
-}
-.advice-row:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); }
-.advice-ticker { font-size: 1.05rem; font-weight: 700; min-width: 70px; color: #1a1a1a; }
-.advice-flags  { font-size: 0.78rem; color: #888; flex: 1; }
-.advice-pri    { font-size: 0.78rem; color: #555; min-width: 60px; text-align: right; }
-
+/* ── Badge ── */
 .badge {
     display: inline-block;
     padding: 4px 12px; border-radius: 20px;
@@ -83,6 +76,58 @@ _CSS = """
 .badge-SAIR              { background:#ffebee; color:#c62828; border:1px solid #ef9a9a; }
 .badge-EVITAR_NOVOS_APORTES { background:#fffde7; color:#f57f17; border:1px solid #fff176; }
 
+/* ── Advice card ── */
+.advice-card {
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid #e8eaed;
+    border-left: 5px solid #546e7a;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    transition: box-shadow .15s;
+}
+.advice-card:hover { box-shadow: 0 3px 14px rgba(0,0,0,.10); }
+.advice-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+.advice-card-ticker {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: #1a1a1a;
+    min-width: 76px;
+}
+.advice-card-pri {
+    margin-left: auto;
+    font-size: 0.80rem;
+    color: #555;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.advice-card-ctx {
+    font-size: 0.82rem;
+    color: #666;
+    margin-bottom: 10px;
+}
+.advice-card-rational {
+    font-size: 0.93rem;
+    color: #222;
+    line-height: 1.6;
+    margin-bottom: 10px;
+    padding: 10px 14px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+.advice-card-footer {
+    font-size: 0.78rem;
+    color: #777;
+}
+.advice-card-footer strong { color: #444; }
+
+/* ── Alertas estruturais ── */
 .alert-banner {
     display: flex; align-items: flex-start; gap: 12px;
     border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
@@ -91,12 +136,50 @@ _CSS = """
 .alert-info    { background:#e3f2fd; border-left: 4px solid #1565c0; }
 .alert-icon    { font-size: 1.2rem; margin-top: 1px; }
 .alert-text    { font-size: 0.88rem; color: #333; }
+
+/* ── Priority dividers ── */
+.priority-header {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin: 20px 0 10px 0;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #e8eaed;
+}
 </style>
 """
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de renderização
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BADGE_BORDER = {
+    "AUMENTAR": "#2e7d32",
+    "HOLD": "#90a4ae",
+    "REDUZIR": "#e65100",
+    "SAIR": "#c62828",
+    "EVITAR_NOVOS_APORTES": "#f57f17",
+}
+
+_PRI_LABEL = {
+    "ALTA":  "⚡ ALTA",
+    "MEDIA": "👀 MÉDIA",
+    "BAIXA": "💤 BAIXA",
+}
+
+_PRI_SECTION = {
+    "ALTA":  "⚡ Ação Imediata",
+    "MEDIA": "👀 Observar",
+    "BAIXA": "💤 Manter",
+}
+
 
 def _badge(acao: str) -> str:
-    cls = f"badge-{acao}" if acao in ("AUMENTAR", "HOLD", "REDUZIR", "SAIR", "EVITAR_NOVOS_APORTES") else "badge-HOLD"
+    cls = f"badge-{acao}" if acao in (
+        "AUMENTAR", "HOLD", "REDUZIR", "SAIR", "EVITAR_NOVOS_APORTES"
+    ) else "badge-HOLD"
     return f'<span class="badge {cls}">{acao}</span>'
 
 
@@ -110,24 +193,100 @@ def _kpi(label: str, value: str, sub: str = "", cls: str = "") -> str:
     )
 
 
+def _render_advice_card(a) -> None:
+    """Renderiza um card rico e legível para um HoldingAdvice."""
+    # P&L da posição (preço atual vs preço médio de entrada)
+    pl_str = "n/d"
+    pl_color = "#888"
+    if a.preco_atual is not None and a.preco_medio and a.preco_medio > 0:
+        pl_pct = (a.preco_atual - a.preco_medio) / a.preco_medio * 100
+        sign = "+" if pl_pct >= 0 else ""
+        pl_str = f"{sign}{pl_pct:.1f}%"
+        pl_color = "#2e7d32" if pl_pct >= 0 else "#c62828"
+
+    # Linha de contexto: preço atual · peso · PM · P&L
+    ctx_parts = []
+    if a.preco_atual is not None:
+        ctx_parts.append(f"R$ {a.preco_atual:.2f} atual")
+    if a.peso_carteira is not None:
+        ctx_parts.append(f"Peso {a.peso_carteira * 100:.1f}%")
+    if a.preco_medio:
+        ctx_parts.append(f"PM R$ {a.preco_medio:.2f}")
+    if pl_str != "n/d":
+        ctx_parts.append(
+            f"P&L <span style='color:{pl_color};font-weight:600'>{pl_str}</span>"
+        )
+    ctx_html = " &nbsp;·&nbsp; ".join(ctx_parts) if ctx_parts else "—"
+
+    # Flags (destaque vermelho se há alguma)
+    has_flags = a.flags_resumo and a.flags_resumo != "—"
+    flags_html = (
+        f"<span style='color:#c62828;font-weight:600'>{a.flags_resumo}</span>"
+        if has_flags
+        else "<span style='color:#999'>nenhuma</span>"
+    )
+
+    border_color = _BADGE_BORDER.get(a.acao_recomendada, "#90a4ae")
+    pri_label = _PRI_LABEL.get(a.prioridade, a.prioridade)
+
+    card_html = f"""
+<div class="advice-card" style="border-left-color:{border_color}">
+  <div class="advice-card-header">
+    <span class="advice-card-ticker">{a.ticker}</span>
+    {_badge(a.acao_recomendada)}
+    <span class="advice-card-pri">{pri_label}</span>
+  </div>
+  <div class="advice-card-ctx">{ctx_html}</div>
+  <div class="advice-card-rational">{a.racional}</div>
+  <div class="advice-card-footer">
+    Concordância: <strong>{a.nivel_concordancia}</strong>
+    &nbsp;·&nbsp;
+    Flags: {flags_html}
+    &nbsp;·&nbsp;
+    Válido até: <strong>{a.valida_ate.isoformat()}</strong>
+  </div>
+</div>
+"""
+    st.markdown(card_html, unsafe_allow_html=True)
+
+
+def _render_advices_grouped(advices: list) -> None:
+    """Renderiza os cards agrupados por prioridade com separadores visuais."""
+    current_priority = None
+    for a in advices:
+        if a.prioridade != current_priority:
+            current_priority = a.prioridade
+            section_label = _PRI_SECTION.get(current_priority, current_priority)
+            st.markdown(
+                f'<div class="priority-header">{section_label}</div>',
+                unsafe_allow_html=True,
+            )
+        _render_advice_card(a)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Página principal
+# ─────────────────────────────────────────────────────────────────────────────
+
 @safe_page
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
     render_sidebar_guide("Carteira", "Operar")
     render_page_header(
         "Carteira",
-        "Central de posicoes do usuario, com consolidado patrimonial, sugestoes operacionais e alertas estruturais.",
+        "Central de posicoes com consolidado patrimonial, sugestoes operacionais e alertas estruturais.",
         "Operar",
     )
     render_inline_note(
-        "A leitura principal desta tela e Sugestoes Operacionais. A visao patrimonial completa continua disponivel na aba seguinte."
+        "Comece pela aba Visão Geral para entender o patrimônio consolidado. "
+        "Depois acesse Sugestões para as orientações táticas por posição."
     )
 
     create_tables()
     tickers = load_tickers_ativos()
     posicoes = load_carteira_db()
 
-    # ── Pre-compute shared data ──────────────────────────────────────────────
+    # ── Pré-computação compartilhada ─────────────────────────────────────────
     consol = None
     advices = []
     alertas = []
@@ -157,7 +316,7 @@ def main():
             if pd.notna(r.get("preco_atual"))
         }
 
-        # Sugestões/Alertas: ler do snapshot de carteira (evita decidir_universo())
+        # Sugestões/Alertas: preferir snapshot (evita decidir_universo() que é lento)
         c_hash = compute_carteira_hash(posicoes)
         adv_meta, advices, alertas = load_carteira_advices_snapshot(c_hash)
         snap_used = adv_meta is not None and bool(advices)
@@ -170,7 +329,7 @@ def main():
                 advices = aconselhar_carteira(decisoes, posicoes, precos_atuais=precos_map)
                 alertas = alertas_estruturais(advices)
 
-        # segmento para pie
+        # Segmento para pie chart
         with get_session_ctx() as session:
             pan_all = carteira_panorama(tickers_ativos(session), session)
         seg_map = (
@@ -180,8 +339,8 @@ def main():
         consol["segmento"] = consol["ticker"].map(seg_map).fillna("n/d")
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab_sugestoes, tab_visao, tab_alertas, tab_gerenciar = st.tabs([
-        "Sugestões Operacionais", "Visão da Carteira", "Alertas", "Gerenciar",
+    tab_visao, tab_sugestoes, tab_alertas, tab_gerenciar = st.tabs([
+        "📊 Visão Geral", "💡 Sugestões", "⚠️ Alertas", "⚙️ Gerenciar",
     ])
 
     # ── TAB 1: Visão Geral ────────────────────────────────────────────────────
@@ -193,6 +352,12 @@ def main():
             total_investido = consol["valor_total"].sum()
             pl_total = total_mercado - total_investido
             pl_pct   = pl_total / total_investido * 100 if total_investido else 0
+            # % de cada posição sobre o total a mercado
+            consol["pct_carteira"] = (
+                consol["valor_mercado"] / total_mercado * 100
+                if total_mercado > 0 else 0.0
+            )
+
             hh_result = herfindahl(consol["valor_mercado"].fillna(0).tolist())
             hh_val = f"{hh_result['hh']:.3f}" if hh_result and hh_result.get("hh") else "n/d"
 
@@ -217,11 +382,11 @@ def main():
 
             df_display = consol[[
                 "ticker", "qty", "preco_medio", "preco_atual",
-                "valor_mercado", "pl_reais", "pl_pct",
+                "valor_mercado", "pct_carteira", "pl_reais", "pl_pct",
             ]].copy()
             df_display.columns = [
                 "Ticker", "Qtd", "PM (R$)", "Preço Atual",
-                "Valor Mercado", "P&L (R$)", "P&L (%)",
+                "Valor Mercado", "% Carteira", "P&L (R$)", "P&L (%)",
             ]
             styled = (
                 df_display.style
@@ -230,11 +395,15 @@ def main():
                     "PM (R$)": "R$ {:.2f}",
                     "Preço Atual": "R$ {:.2f}",
                     "Valor Mercado": "R$ {:.2f}",
+                    "% Carteira": "{:.1f}%",
                     "P&L (R$)": "R$ {:.2f}",
                     "P&L (%)": "{:.1f}%",
                 })
             )
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+            # Altura calculada para exibir todas as linhas sem scroll interno
+            # ~35px por linha + ~38px de header
+            tbl_height = 38 + 35 * len(df_display)
+            st.dataframe(styled, use_container_width=True, hide_index=True, height=tbl_height)
 
             col1, col2 = st.columns(2)
             with col1:
@@ -251,47 +420,35 @@ def main():
     # ── TAB 2: Sugestões ──────────────────────────────────────────────────────
     with tab_sugestoes:
         if consol is None:
-            st.info("Nenhuma posição na carteira.")
+            st.info("Nenhuma posição na carteira. Adicione posições na aba Gerenciar.")
         elif not advices:
-            st.info("Nenhuma sugestão gerada.")
+            st.info("Nenhuma sugestão gerada. Execute o snapshot diário ou aguarde o cálculo automático.")
         else:
             if snap_used:
-                st.caption("Sinais carregados do snapshot do dia. Acesse a pagina 'Hoje' para detalhes completos.")
+                st.caption(
+                    "✅ Sinais carregados do snapshot do dia. "
+                    "Acesse a página 'Hoje' para detalhes técnicos completos."
+                )
             st.caption(
                 "Sugestões baseadas em regras estatísticas. "
-                "**Não são ordens executáveis** — validar antes de operar."
+                "**Não são ordens executáveis** — validar com julgamento próprio antes de operar."
             )
 
-            for a in advices:
-                st.markdown(
-                    f'<div class="advice-row">'
-                    f'<span class="advice-ticker">{a.ticker}</span>'
-                    f'{_badge(a.acao_recomendada)}'
-                    f'<span class="advice-flags">{a.flags_resumo or ""}</span>'
-                    f'<span class="advice-pri">{a.prioridade}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                with st.expander(f"Racional — {a.ticker}"):
-                    c_r1, c_r2 = st.columns([1, 3])
-                    c_r1.metric("Concordância", a.nivel_concordancia)
-                    c_r1.metric("Peso carteira", f"{a.peso_carteira * 100:.1f}%" if a.peso_carteira else "n/d")
-                    c_r1.metric("Válida até", a.valida_ate.isoformat())
-                    c_r2.write(a.racional)
+            _render_advices_grouped(advices)
 
             st.divider()
             data_ref = _date_today.today()
             c1, c2 = st.columns(2)
             with c1:
                 st.download_button(
-                    "Baixar sugestões (MD)",
+                    "⬇️ Baixar sugestões (MD)",
                     data=exportar_sugestoes_md(advices, data_ref),
                     file_name=f"{data_ref.isoformat()}_sugestoes_carteira.md",
                     mime="text/markdown",
                 )
             with c2:
                 st.download_button(
-                    "Baixar sugestões (CSV)",
+                    "⬇️ Baixar sugestões (CSV)",
                     data=exportar_sugestoes_csv(advices),
                     file_name=f"{data_ref.isoformat()}_sugestoes_carteira.csv",
                     mime="text/csv",
@@ -307,7 +464,7 @@ def main():
                 "**Descritivos** — indicam o que está acontecendo, não prescrevem rebalanceamento."
             )
             if not alertas:
-                st.success("Sem alertas estruturais — carteira dentro dos parâmetros.")
+                st.success("✅ Sem alertas estruturais — carteira dentro dos parâmetros.")
             else:
                 for al in alertas:
                     icon = "⚠️" if al.severidade == "atencao" else "ℹ️"

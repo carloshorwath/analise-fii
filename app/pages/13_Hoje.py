@@ -27,9 +27,41 @@ from src.fii_analysis.decision import (
 
 safe_set_page_config(page_title="Hoje", page_icon="compass", layout="wide")
 
+_CSS = """
+<style>
+.hoje-card {
+    background:#fff; border-radius:12px; border:1px solid #e8eaed;
+    border-left:5px solid #546e7a; padding:14px 18px; margin-bottom:10px;
+    box-shadow:0 1px 4px rgba(0,0,0,.05); transition:box-shadow .15s;
+}
+.hoje-card:hover{box-shadow:0 3px 12px rgba(0,0,0,.09);}
+.hoje-card-COMPRAR{border-left-color:#2e7d32;}
+.hoje-card-VENDER {border-left-color:#c62828;}
+.hoje-card-AGUARDAR{border-left-color:#f57f17;}
+.hoje-card-EVITAR {border-left-color:#6a1a8a;}
+.hoje-card-header{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.hoje-ticker{font-size:1.1rem;font-weight:800;color:#1a1a1a;min-width:72px;}
+.hoje-conc{margin-left:auto;font-size:.8rem;font-weight:600;color:#555;}
+.hoje-signals{font-size:.83rem;color:#444;margin-bottom:7px;}
+.hoje-metrics{font-size:.8rem;color:#666;margin-bottom:6px;}
+.hoje-rationale{font-size:.88rem;color:#333;background:#f8f9fa;border-radius:6px;padding:7px 10px;margin-bottom:6px;line-height:1.5;}
+.hoje-flags{font-size:.76rem;color:#c62828;font-weight:600;}
+.badge{display:inline-block;padding:3px 10px;border-radius:16px;font-size:.76rem;font-weight:700;}
+.badge-COMPRAR,.badge-BUY{background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;}
+.badge-VENDER,.badge-SELL{background:#ffebee;color:#c62828;border:1px solid #ef9a9a;}
+.badge-AGUARDAR{background:#fff3e0;color:#e65100;border:1px solid #ffcc80;}
+.badge-EVITAR{background:#f3e5f5;color:#6a1a8a;border:1px solid #ce93d8;}
+.badge-HOLD{background:#eceff1;color:#546e7a;border:1px solid #b0bec5;}
+.badge-AUMENTAR{background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7;}
+.badge-REDUZIR{background:#fff3e0;color:#e65100;border:1px solid #ffcc80;}
+.badge-SAIR{background:#ffebee;color:#c62828;border:1px solid #ef9a9a;}
+</style>
+"""
+
 
 @safe_page
 def main():
+    st.markdown(_CSS, unsafe_allow_html=True)
     render_sidebar_guide("Hoje", "Operar")
     render_page_header(
         "Hoje",
@@ -131,6 +163,77 @@ def main():
     render_footer()
 
 
+def _sig_icon(sinal: str, acao: str) -> str:
+    """Ícone do sinal de cada motor vs ação do dia."""
+    s = (sinal or "").upper()
+    if s == "INDISPONIVEL" or not s:
+        return "❓"
+    if s == "NEUTRO":
+        return "⚪"
+    # Congruente com ação?
+    a = (acao or "").upper()
+    if (s == "BUY" and a in ("COMPRAR",)) or (s == "SELL" and a in ("VENDER",)):
+        return "✅"
+    if (s == "BUY" and a in ("VENDER",)) or (s == "SELL" and a in ("COMPRAR",)):
+        return "❌"
+    return "🔵"
+
+
+def _score_color(s) -> str:
+    if s is None:
+        return "#888"
+    if s >= 80: return "#2e7d32"
+    if s >= 65: return "#558b2f"
+    if s >= 50: return "#f57f17"
+    return "#c62828"
+
+
+def _score_label(s) -> str:
+    if s is None: return "n/d"
+    if s >= 80: return f"{s} Excelente"
+    if s >= 65: return f"{s} Bom"
+    if s >= 50: return f"{s} Neutro"
+    return f"{s} Fraco"
+
+
+def _render_action_card(d, scores: dict | None) -> None:
+    score_val = (scores or {}).get(d.ticker)
+    sc = _score_color(score_val)
+    sl = _score_label(score_val)
+    conc_icon = {"ALTA": "⚡", "MEDIA": "👀", "BAIXA": "💤", "VETADA": "🚫"}.get(d.nivel_concordancia, "")
+    pvp_str = f"P/VP p{d.pvp_percentil:.0f}%" if d.pvp_percentil is not None else ""
+    dy_str  = f"DY Gap p{d.dy_gap_percentil:.0f}%" if d.dy_gap_percentil is not None else ""
+    metrics_parts = [x for x in [pvp_str, dy_str] if x]
+    metrics_html = " &nbsp;·&nbsp; ".join(metrics_parts) if metrics_parts else ""
+    flags = _flags_text(d)
+    flags_html = f'<div class="hoje-flags">⚠️ {flags}</div>' if flags != "-" else ""
+    rationale_line = d.rationale[0] if d.rationale else ""
+    rat_html = f'<div class="hoje-rationale">{rationale_line}</div>' if rationale_line else ""
+    badge_cls = f"badge-{d.acao}"
+    card_cls  = f"hoje-card-{d.acao}"
+    sig_html = (
+        f'{_sig_icon(d.sinal_otimizador, d.acao)} Otim <strong>{d.sinal_otimizador or "n/d"}</strong>'
+        f' &nbsp;·&nbsp; '
+        f'{_sig_icon(d.sinal_episodio, d.acao)} Epi <strong>{d.sinal_episodio or "n/d"}</strong>'
+        f' &nbsp;·&nbsp; '
+        f'{_sig_icon(d.sinal_walkforward, d.acao)} WF <strong>{d.sinal_walkforward or "n/d"}</strong>'
+    )
+    html = f"""
+<div class="hoje-card {card_cls}">
+  <div class="hoje-card-header">
+    <span class="hoje-ticker">{d.ticker}</span>
+    <span class="badge {badge_cls}">{d.acao}</span>
+    <span style="font-size:.83rem;color:{sc};font-weight:700">{sl}/100</span>
+    <span class="hoje-conc">{conc_icon} {d.nivel_concordancia}</span>
+  </div>
+  <div class="hoje-signals">{sig_html}</div>
+  {f'<div class="hoje-metrics">{metrics_html}</div>' if metrics_html else ''}
+  {rat_html}
+  {flags_html}
+</div>"""
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def _render_actions_today(report, scores: dict | None = None):
     st.markdown("---")
     st.subheader("Acoes Hoje")
@@ -138,43 +241,46 @@ def _render_actions_today(report, scores: dict | None = None):
         st.info("Nenhuma acao tatica prioritaria hoje.")
         return
 
-    def _score_badge(ticker: str) -> str:
-        if scores is None:
-            return "n/d"
-        s = scores.get(ticker)
-        if s is None:
-            return "n/d"
-        if s >= 80:
-            return f"{s} (Excelente)"
-        if s >= 65:
-            return f"{s} (Bom)"
-        if s >= 50:
-            return f"{s} (Neutro)"
-        return f"{s} (Fraco)"
-
+    # ── Tabela completa — sempre visível ───────────────────────────────────
+    def _score_badge(ticker):
+        s = (scores or {}).get(ticker)
+        if s is None: return "n/d"
+        return _score_label(s)
     df = pd.DataFrame([{
-        "Ticker": d.ticker,
-        "Acao": d.acao,
-        "Score": _score_badge(d.ticker),
-        "Confianca": d.nivel_concordancia,
-        "Otimizador": d.sinal_otimizador,
-        "Episodios": d.sinal_episodio,
+        "Ticker": d.ticker, "Acao": d.acao,
+        "Score": _score_badge(d.ticker), "Confianca": d.nivel_concordancia,
+        "Otimizador": d.sinal_otimizador, "Episodios": d.sinal_episodio,
         "WalkForward": d.sinal_walkforward,
         "P/VP pct": f"{d.pvp_percentil:.1f}%" if d.pvp_percentil is not None else "n/d",
         "DY Gap pct": f"{d.dy_gap_percentil:.1f}%" if d.dy_gap_percentil is not None else "n/d",
         "Preco Ref": f"{d.preco_referencia:.2f}" if d.preco_referencia is not None else "n/d",
         "Flags": _flags_text(d),
     } for d in report.action_today])
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 height=38 + 35 * len(df))
+
+    # ── Cards detalhados — ALTA concordância + top 3 MÉDIA ─────────────────
+    alta  = [d for d in report.action_today if d.nivel_concordancia == "ALTA"]
+    media = sorted(
+        [d for d in report.action_today if d.nivel_concordancia == "MEDIA"],
+        key=lambda d: (scores or {}).get(d.ticker) or 0, reverse=True
+    )[:3]
+    cards_to_show = alta + media
+
+    if cards_to_show:
+        with st.expander(f"Ver detalhes ({len(cards_to_show)} prioritários — ALTA + top 3 MÉDIA)"):
+            for d in cards_to_show:
+                _render_action_card(d, scores)
 
     with st.expander("Ver racional das acoes do dia"):
         for d in report.action_today:
-            score_val = scores.get(d.ticker) if scores else None
+            score_val = (scores or {}).get(d.ticker)
             score_txt = f" | Score: {score_val}/100" if score_val is not None else ""
             st.markdown(f"**{d.ticker}** - {d.acao} ({d.nivel_concordancia}){score_txt}")
             for item in d.rationale:
                 st.write(f"- {item}")
             st.markdown("---")
+
 
 
 def _render_watchlist(report, scores: dict | None = None):
@@ -199,6 +305,15 @@ def _render_watchlist(report, scores: dict | None = None):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def _badge_html(acao: str) -> str:
+    cls = f"badge-{acao}" if acao in ("AUMENTAR","HOLD","REDUZIR","SAIR","EVITAR_NOVOS_APORTES","COMPRAR","VENDER") else "badge-HOLD"
+    return f'<span class="badge {cls}">{acao}</span>'
+
+
+def _pri_prefix(p: str) -> str:
+    return {"ALTA": "⚡ ALTA", "MEDIA": "👀 MÉDIA", "BAIXA": "💤 BAIXA"}.get(p, p)
+
+
 def _render_holdings(report):
     st.markdown("---")
     st.subheader("Carteira Cruzada com Sinais")
@@ -206,26 +321,25 @@ def _render_holdings(report):
         st.info("Sem posicoes cadastradas na carteira ou snapshot sem dados de carteira.")
         return
 
-    df = pd.DataFrame([{
-        "Ticker": a.ticker,
-        "Badge": a.badge,
-        "Prioridade": a.prioridade,
-        "Qtd": a.quantidade,
-        "Preco Medio": f"{a.preco_medio:.2f}",
-        "Preco Atual": f"{a.preco_atual:.2f}" if a.preco_atual is not None else "n/d",
-        "Peso": f"{a.peso_carteira * 100:.1f}%" if a.peso_carteira is not None else "n/d",
-        "Acao Sistema": a.acao_recomendada,
-        "Confianca": a.nivel_concordancia,
-        "Flags": a.flags_resumo,
-        "Valida ate": a.valida_ate.isoformat(),
-    } for a in report.holding_advices])
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    with st.expander("Ver racional da carteira"):
-        for a in report.holding_advices:
-            st.markdown(f"**{a.ticker}** - {a.badge} ({a.prioridade})")
-            st.write(a.racional)
-            st.markdown("---")
+    for a in report.holding_advices:
+        pl_pct = None
+        if a.preco_atual and a.preco_medio and a.preco_medio > 0:
+            pl_pct = (a.preco_atual - a.preco_medio) / a.preco_medio * 100
+        pl_str = (f"<span style='color:{'#2e7d32' if pl_pct>=0 else '#c62828'};font-weight:600'>"
+                  f"{'+'if pl_pct>=0 else ''}{pl_pct:.1f}%</span>") if pl_pct is not None else "n/d"
+        peso_str = f"{a.peso_carteira*100:.1f}%" if a.peso_carteira else "n/d"
+        flags_ok = a.flags_resumo and a.flags_resumo != "—"
+        flags_html = f"<span style='color:#c62828;font-size:.78rem'>⚠️ {a.flags_resumo}</span>" if flags_ok else ""
+        st.markdown(
+            f"{_badge_html(a.acao_recomendada)} &nbsp;"
+            f"<strong>{a.ticker}</strong> &nbsp;"
+            f"{_pri_prefix(a.prioridade)} &nbsp;·&nbsp;"
+            f"Peso {peso_str} &nbsp;·&nbsp; PM R$ {a.preco_medio:.2f} &nbsp;·&nbsp; P&L {pl_str}"
+            f"{'&nbsp;·&nbsp;'+flags_html if flags_ok else ''}",
+            unsafe_allow_html=True
+        )
+        st.caption(a.racional)
+        st.divider()
 
     if report.structural_alerts:
         st.caption("Alertas estruturais da carteira")
@@ -349,7 +463,13 @@ def _render_cdi_context(report, snapshot_scope, meta_hash):
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, use_container_width=True, hide_index=True,
+                 height=38 + 35 * len(df))
+    st.caption(
+        "**R² > 0.3**: CDI explica bem o P/VP &nbsp;·&nbsp; "
+        "**p-valor < 0.05**: relação estatisticamente significante &nbsp;·&nbsp; "
+        "**Resíduo pct alto**: P/VP acima do que o CDI justificaria"
+    )
 
     # --- Leitura macro por ticker ---
     st.markdown("#### Leitura Macro por Ticker")

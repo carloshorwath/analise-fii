@@ -427,8 +427,6 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             if not agg:
                 st.warning('Sem dados suficientes para o heatmap.')
             else:
-                import pandas as pd
-                import plotly.graph_objects as go
                 rows_list = []
                 for (buy_pct, sell_pct), vals in agg.items():
                     media = float(sum(vals) / len(vals))

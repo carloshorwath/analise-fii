@@ -186,18 +186,29 @@ def radar_heatmap(df: pd.DataFrame) -> go.Figure:
         return go.Figure()
 
     cols = ["pvp_baixo", "dy_gap_alto", "saude_ok", "liquidez_ok"]
-    labels = ["P/VP Baixo", "DY Gap Alto", "Saude OK", "Liquidez OK"]
+    labels = ["P/VP ↓", "DY Gap ↑", "Saúde", "Liquidez"]
+
+    # Texto ✓/✗ legível em vez de 0/1
+    z_vals = df[cols].astype(int).values.tolist()
+    text_vals = [["✓" if v else "✗" for v in row] for row in z_vals]
 
     fig = go.Figure(data=go.Heatmap(
-        z=df[cols].astype(int).values.tolist(),
+        z=z_vals,
         x=labels,
         y=df["ticker"].tolist(),
-        colorscale=[[0, "#ffcccc"], [1, "#ccffcc"]],
+        colorscale=[[0, "#fce4e4"], [1, "#e4f5e4"]],
         showscale=False,
-        text=df[cols].astype(int).values.tolist(),
+        text=text_vals,
         texttemplate="%{text}",
+        textfont={"size": 18},
     ))
-    fig.update_layout(title="Radar — Matriz Booleana", height=max(300, len(df) * 50 + 100), xaxis_side="top")
+    fig.update_layout(
+        title="Radar — Visão Macro",
+        height=max(260, len(df) * 48 + 80),
+        xaxis_side="top",
+        margin=dict(t=60, b=20, l=80, r=20),
+        template="plotly_white",
+    )
     fig.update_yaxes(autorange="reversed")
     return fig
 
