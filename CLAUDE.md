@@ -7,9 +7,22 @@ Este arquivo é lido automaticamente por qualquer IA que trabalhe neste projeto.
 
 ## O que é este projeto
 
-Análise estatística de FIIs (Fundos de Investimento Imobiliário brasileiros) para identificar
-padrões de comportamento de preço ao redor da data-com de dividendos.
-Objetivo: apoiar decisões de investimento pessoal.
+Sistema de apoio à decisão de investimento em FIIs (Fundos de Investimento Imobiliário
+brasileiros), focado em um universo curado de 6 fundos monitorados diariamente.
+
+**O que o sistema faz hoje:**
+- Coleta e mantém dados históricos de preços, dividendos e relatórios CVM com rigor point-in-time
+- Calcula indicadores fundamentalistas (P/VP, DY, saúde financeira, composição de ativo, score 0–100)
+- Gera recomendações diárias acionáveis combinando 3 motores estatísticos independentes:
+  Otimizador V2 (thresholds P/VP + DY Gap), Episódios discretos de P/VP extremo e Walk-Forward rolling OOS
+- Expõe tudo em um dashboard Streamlit com 3 fluxos: **Diário** (cockpit + carteira + radar),
+  **Investigação** (dossiê por FII + event study), **Técnico** (auditoria de backtest)
+
+**O que o sistema NÃO é:**
+- Não é robô de trading — toda recomendação tem disclaimer explícito e exige validação humana
+- A hipótese original (padrão de preço ao redor da data-com) nunca foi confirmada pelo event study
+  e não é mais o foco central do projeto
+- Não gerencia capital real nem executa ordens
 
 Documentação completa: `docs/PROJETO.md`
 
@@ -357,10 +370,10 @@ Reconciliar em algum momento. Por enquanto: parâmetros de **decisão** vão no 
 
 ---
 
-## Análises adicionais identificadas nos dados CVM
+## Análises fundamentalistas (dados CVM)
 
 ### Saúde financeira do fundo (arquivo complemento)
-Além da janela de data-com, o arquivo `complemento` permite análises críticas:
+O arquivo `complemento` da CVM alimenta análises críticas que são parte core do sistema:
 
 **Destruição de capital:**
 ```
@@ -388,8 +401,8 @@ Determina o perfil de risco e comportamento do fundo:
 
 Campos relevantes: `Direitos_Bens_Imoveis`, `CRI`, `LCI`, `LCI_LCA`, `Disponibilidades`
 
-**Status**: Saúde financeira e Composição foram implementadas (Fases 1–5).
-Disponíveis em `src/fii_analysis/features/saude.py` e `composicao.py`, renderizadas em páginas de análise.
+**Status**: implementadas e operacionais em `src/fii_analysis/features/saude.py` e `composicao.py`.
+Renderizadas no Dossiê FII e nas páginas de análise. São features core, não experimentais.
 
 ---
 
@@ -419,7 +432,8 @@ Disponíveis em `src/fii_analysis/features/saude.py` e `composicao.py`, renderiz
 5. Criar `tests/` com cobertura de integração para splits temporais e leakage.
 
 **Bugs menores conhecidos**:
-- N/A
+- `1_Panorama.py`: IFIX YTD hardcoded como `"n/d"` — `get_benchmark_ifix()` existe mas não é chamado (P3)
+- Paridade CLI/web no Panorama incompleta — faltam Rent. Acum., DY 24m, Tipo na web
 
 **Fora do escopo até decisão explícita:**
 - LightGBM ou qualquer ML enquanto event study não confirmar padrão
