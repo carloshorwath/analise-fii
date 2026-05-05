@@ -200,8 +200,8 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 
 | Local | Descrição |
 |---|---|
-| `1_Panorama.py` | IFIX YTD hardcoded como `"n/d"` (`get_benchmark_ifix` existe mas não é chamado) |
-| Panorama CLI/web | Paridade incompleta — faltam Rent. Acum., DY 24m, Tipo na web |
+| ~~`1_Panorama.py`~~ | ~~IFIX YTD hardcoded como `"n/d"`~~ (**Corrigido** — conectado a `get_ifix_ytd`) |
+| ~~Panorama CLI/web~~ | ~~Paridade incompleta — faltam Rent. Acum., DY 24m, Tipo na web~~ (**Corrigido**) |
 | ~~`recommender.py`: get_pvp_zscore chamada errada~~ | **Corrigido (Maio 2026)** — agora `session=session` como keyword arg |
 
 ---
@@ -227,6 +227,7 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 | `app/pages/6_Fund_EventStudy.py` | Renomeado para `8_Fund_EventStudy.py` + refatorado para eventos discretos CVM |
 | `scripts/analise_janela_flexivel.py`, `analise_janela_v2.py`, `analise_spread_recompra.py` | Convertidos em wrappers finos — lógica extraída para `models/div_capture.py` |
 | `agents/data-scientist.toml` | Deletado — substituído por `data-scientist.md` em `.claude/agents/` |
+| `test_import.py` | Removido — script solto não utilizado |
 
 ---
 
@@ -329,16 +330,14 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
    `--com-otimizador` (lento) ou aceitar `sinal_otimizador = INDISPONIVEL`. Plano: salvar
    `best_params` por ticker em `dados/optimizer_cache/{ticker}.json` com timestamp; reotimizar
    semanalmente. Não bloqueia F5 mas melhora utilidade do relatório.
-2. **Tabela de sinais na UI**: integrar tabela Sinal/Valor/Interpretação (todos os campos F1+F2+F3
-   de `TickerDecision`) no `14_Dossie_FII.py` (aba Análise FII) e/ou `13_Hoje.py`. O formato já
-   foi validado no CLI; o usuário pediu explicitamente essa integração.
+2. ~~**Tabela de sinais na UI**~~ (**Concluído** — integrado com melhorias no Dossie FII em `app/pages/14_Dossie_FII.py` e `analise_fii.py`).
 3. **Falso positivo em eventos de capital**: `flag_destruicao_capital` e `dividend_safety_flag`
    disparam incorretamente quando FII vende ativo e distribui ganho pontual (ex: GARE11 2026-05).
    Três opções discutidas (janela de exclusão, flag evento pontual, tabela manual); **decisão
    pendente com o usuário**. Não implementar sem escolha explícita.
-4. **UX P2**: extrair charts inline de `7_Fundamentos.py`
-5. **UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`
-4. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
-5. Fase 6: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
-6. Reconciliar `config.py` ↔ `config.yaml`
-7. Criar `tests/` (pyproject já configura pytest)
+4. ~~**UX P2**: extrair charts inline de `7_Fundamentos.py`~~ (**Concluído**)
+5. ~~**UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`~~ (**Concluído**)
+6. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
+7. Fase 6: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
+8. Reconciliar `config.py` ↔ `config.yaml`
+9. Criar `tests/` (pyproject já configura pytest)
