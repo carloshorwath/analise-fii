@@ -328,6 +328,27 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
 
 ---
 
+## Motor V2 Fase 7 — CLI Daily Workflow + Performance (Maio 2026) — ✅ Concluído
+
+**CLI: `src/fii_analysis/cli.py`:**
+- Nova sub-comando `fii diario`: tabela Rich no terminal com cockpit do dia (sinais dos 3 motores, score 0–100, percentis P/VP e DY Gap) lendo do snapshot mais recente
+- Nova sub-comando `fii update-prices`: pipeline diário completo via CLI (preços yfinance + dividendos + CDI 12m + IFIX + renovação cache otimizador + geração snapshot) — substitui chamadas manuais a `scripts/daily_update.py`
+
+**Performance (app/components/):**
+- `carteira_ui.py::load_carteira_db()`: adicionado `@st.cache_data(ttl=300)` — função era chamada em 3 páginas diárias (13_Hoje, 3_Carteira) sem cache, agora reutiliza resultado por 5 minutos
+- `analise_fii.py::load_dados_analise()`: pré-computa `dy_gap_pct` na sessão única; `render_visao_geral` não abre mais sessão extra (eliminada redundância engine+session)
+
+**UX: `app/components/page_content/analise_fii.py`:**
+- Banner "Sinal do dia" no Dossiê FII agora exibe nota explicativa quando `nivel_concordancia == "VETADA"` com link para aba "Saúde" (diagnóstico da destruição de capital ou score baixo)
+
+**Consistência de mensagens:**
+- Todas as referências ao script legado `generate_daily_snapshots.py` substituídas por `daily_update.py` em:
+  - `app/components/snapshot_ui.py` (comentários)
+  - `app/pages/1_Panorama.py` (instrução ao usuário)
+  - `app/state.py` (docstring error boundary)
+
+---
+
 ## Próximos passos decididos
 
 ### Motor V2 Fases 1–3 (Maio 2026) — ✅ Concluído
