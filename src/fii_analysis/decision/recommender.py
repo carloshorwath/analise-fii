@@ -337,7 +337,7 @@ def decidir_ticker(
         rationale.append(f"Episodios estatistica erro: {exc}")
 
     # -------------------------------------------------------------------------
-    # 4. Sinal Walk-Forward — ultimo step
+    # 4. Sinal Walk-Forward — sinal_hoje (extrapolado) com fallback ao ultimo OOS
     # -------------------------------------------------------------------------
     sinal_wf = "INDISPONIVEL"
     p_value_wf_buy: Optional[float] = None
@@ -347,13 +347,23 @@ def decidir_ticker(
         if "error" in wf:
             rationale.append(f"WalkForward: {wf['error']}")
         else:
-            sigs: pd.DataFrame = wf["signals"]
-            if not sigs.empty:
-                ultimo = sigs.iloc[-1]
-                sig_raw = str(ultimo.get("signal", "NEUTRO")).upper()
-                sinal_wf = sig_raw if sig_raw in VALID_SIGNALS else "NEUTRO"
-                n_steps_wf = int(wf.get("n_steps", 0) or 0)
+            n_steps_wf = int(wf.get("n_steps", 0) or 0)
             p_value_wf_buy = wf.get("summary", {}).get("BUY", {}).get("p_value")
+            # Preferir sinal_hoje (extrapolado do threshold mais recente) sobre ultimo OOS
+            sh = wf.get("sinal_hoje", {})
+            sh_sinal = sh.get("sinal", "INDISPONIVEL")
+            if sh_sinal in VALID_SIGNALS:
+                sinal_wf = sh_sinal
+                data_ult = sh.get("data_ultimo_sinal_oos")
+                if data_ult:
+                    rationale.append(f"WalkForward extrapolado (ultimo OOS: {data_ult}): {sinal_wf}")
+            else:
+                # Fallback: último sinal OOS da série
+                sigs: pd.DataFrame = wf["signals"]
+                if not sigs.empty:
+                    ultimo_oos = sigs.iloc[-1]
+                    sig_raw = str(ultimo_oos.get("signal", "NEUTRO")).upper()
+                    sinal_wf = sig_raw if sig_raw in VALID_SIGNALS else "NEUTRO"
     except Exception as exc:
         rationale.append(f"WalkForward erro: {exc}")
 

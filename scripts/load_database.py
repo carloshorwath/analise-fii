@@ -102,12 +102,6 @@ def main():
     except Exception as e:
         logger.error("Erro IFIX: {}", e)
 
-    logger.info("--- Etapa 4.1: Carga IFIX (Benchmark) ---")
-    try:
-        load_ifix_to_db(session)
-    except Exception as e:
-        logger.error("Erro IFIX: {}", e)
-
     logger.info("--- Etapa 5: Focus Selic (BCB ExpectativasMercadoSelic) ---")
     try:
         focus = fetch_focus_selic(force=True)

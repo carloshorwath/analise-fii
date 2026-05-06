@@ -130,6 +130,30 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
             "Execute `fii update-prices` para atualizar."
         )
 
+    # — Sinal do dia (snapshot) —
+    try:
+        from app.components.snapshot_ui import load_decisions_snapshot
+        _, dec_df = load_decisions_snapshot("curado")
+        if not dec_df.empty and "ticker" in dec_df.columns:
+            row = dec_df[dec_df["ticker"] == ticker]
+            if not row.empty:
+                acao = row.iloc[0].get("acao", "")
+                conc = row.iloc[0].get("nivel_concordancia", "")
+                _ACAO_COLORS = {
+                    "COMPRAR": "#2e7d32", "VENDER": "#c62828",
+                    "AGUARDAR": "#e65100", "EVITAR": "#6a1a8a",
+                }
+                cor = _ACAO_COLORS.get(acao, "#546e7a")
+                conc_icon = {"ALTA": "⚡", "MEDIA": "👀", "BAIXA": "💤", "VETADA": "🚫"}.get(conc, "")
+                st.markdown(
+                    f"**Sinal do dia:** "
+                    f"<span style='color:{cor};font-weight:800;font-size:1.05em'>{acao}</span>"
+                    f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}",
+                    unsafe_allow_html=True,
+                )
+    except Exception:
+        pass
+
     # — 5 KPIs principais —
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric(

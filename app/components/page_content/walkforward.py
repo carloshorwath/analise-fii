@@ -73,6 +73,27 @@ def render(*, key_prefix: str = "wf") -> None:
         f"Forward: {params['forward_days']}d | Steps: {result['n_steps']}"
     )
 
+    # ── Sinal Atual (extrapolado) ─────────────────────────────────────────────
+    sinal_hoje = result.get("sinal_hoje", {})
+    if sinal_hoje and sinal_hoje.get("sinal") != "INDISPONIVEL":
+        sinal = sinal_hoje["sinal"]
+        pvp_v = sinal_hoje.get("pvp_atual")
+        pvp_p = sinal_hoje.get("pvp_pct_atual")
+        thr_b = sinal_hoje.get("threshold_buy")
+        thr_s = sinal_hoje.get("threshold_sell")
+        ult_oos = sinal_hoje.get("data_ultimo_sinal_oos", "?")
+        cores = {"BUY": "#2e7d32", "SELL": "#c62828", "NEUTRO": "#e65100"}
+        cor = cores.get(sinal, "#555")
+        st.markdown(
+            f"**Sinal atual (extrapolado):** "
+            f"<span style='color:{cor};font-weight:800;font-size:1.1em'>{sinal}</span> &nbsp;·&nbsp; "
+            f"P/VP = {pvp_v:.4f}" + (f" (p{pvp_p:.0f}%)" if pvp_p is not None else "") +
+            (f" &nbsp;·&nbsp; Limiar BUY < {thr_b:.4f} · SELL > {thr_s:.4f}" if thr_b is not None else "") +
+            f"<br><small style='color:#888'>Último sinal OOS: {ult_oos} · Extrapolado, sem retorno futuro validado</small>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("---")
+
     tab_sim, tab_oos = st.tabs(["Simulação Operacional", "Validade Estatística"])
 
     with tab_oos:

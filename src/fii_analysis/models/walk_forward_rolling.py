@@ -210,6 +210,50 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
         div_df=div_df,
     )
 
+    # Gerar sinal atual extrapolando o threshold da última janela de treino
+    sinal_hoje = {"sinal": "INDISPONIVEL", "pvp_atual": None, "threshold_buy": None,
+                  "threshold_sell": None, "data_ultimo_sinal": None}
+
+    if not df.empty and pct_col in df.columns and value_col in df.columns:
+        df_sorted = df.sort_values("data").reset_index(drop=True)
+
+        # Pegar última observação disponível (hoje)
+        ultimo = df_sorted.iloc[-1]
+        pvp_atual = float(ultimo[value_col]) if value_col in df_sorted.columns else None
+        pvp_pct_atual = float(ultimo[pct_col]) if pct_col in df_sorted.columns else None
+
+        # Calcular threshold da janela de treino mais recente disponível
+        # (todos os dados - forward_days)
+        train_cutoff = max(0, len(df_sorted) - train_days - forward_days)
+        df_train_latest = df_sorted.iloc[train_cutoff:len(df_sorted)-forward_days]
+
+        if len(df_train_latest) >= 30 and pct_col in df_train_latest.columns:
+            thr_buy = float(np.percentile(df_train_latest[value_col].dropna(), pvp_pct_buy))
+            thr_sell = float(np.percentile(df_train_latest[value_col].dropna(), pvp_pct_sell))
+
+            if pvp_pct_atual is not None:
+                if pvp_atual <= thr_buy:
+                    sinal = "BUY"
+                elif pvp_atual >= thr_sell:
+                    sinal = "SELL"
+                else:
+                    sinal = "NEUTRO"
+            else:
+                sinal = "INDISPONIVEL"
+
+            data_ultimo = str(signals_df["data"].iloc[-1].date()) if len(signals_df) > 0 else None
+
+            sinal_hoje = {
+                "sinal": sinal,
+                "pvp_atual": pvp_atual,
+                "pvp_pct_atual": pvp_pct_atual,
+                "threshold_buy": thr_buy,
+                "threshold_sell": thr_sell,
+                "data_ultimo_sinal_oos": data_ultimo,
+                "data_hoje": str(ultimo["data"].date()) if "data" in ultimo else None,
+                "nota": "Extrapolado da última janela de treino disponível (sem retorno futuro validado)",
+            }
+
     return {
         "signals": signals_df,
         "summary": summary,
@@ -226,6 +270,7 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
             "forward_days": forward_days,
         },
         "n_steps": len(signals_df["data"].dt.to_period("M").unique()),
+        "sinal_hoje": sinal_hoje,
     }
 
 

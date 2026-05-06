@@ -535,7 +535,7 @@ def load_benchmark_yfinance(ticker: str, session) -> None:
         hist = yf_ticker.history(start=start, auto_adjust=False)
     else:
         logger.info("Benchmark {}: buscando historico completo", ticker)
-        hist = yf_ticker.history(period="max", auto_adjust=False)
+        hist = yf_ticker.history(period="1d", auto_adjust=False)
 
     if hist.empty:
         logger.info("Benchmark {}: nenhum dado novo", ticker)

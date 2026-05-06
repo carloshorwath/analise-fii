@@ -14,6 +14,10 @@ NAO e recomendacao de investimento — modelo experimental com poucos eventos.
 """
 
 import itertools
+import json
+from datetime import datetime
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -25,6 +29,45 @@ from src.fii_analysis.data.database import (
 )
 from src.fii_analysis.models.trade_simulator import simulate_trades, simulate_buy_and_hold
 from src.fii_analysis.models.walk_forward_rolling import _load_cdi_series, _load_dividend_series
+
+
+_OPTIMIZER_CACHE_DIR = Path(__file__).resolve().parents[3] / "dados" / "optimizer_cache"
+
+
+def save_optimizer_cache(ticker: str, best_params: dict, cache_dir: Path | None = None) -> None:
+    """Persiste best_params do otimizador em JSON. Cria diretório se não existir."""
+    d = cache_dir or _OPTIMIZER_CACHE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "ticker": ticker,
+        "best_params": best_params,
+        "saved_at": datetime.now().isoformat(),
+    }
+    (d / f"{ticker}.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_optimizer_cache(
+    ticker: str, max_age_days: int = 7, cache_dir: Path | None = None
+) -> dict | None:
+    """Carrega best_params do cache se existir e for mais recente que max_age_days.
+
+    Retorna None se cache não existe, está corrompido ou é mais velho que max_age_days.
+    """
+    d = cache_dir or _OPTIMIZER_CACHE_DIR
+    path = d / f"{ticker}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        saved_at = datetime.fromisoformat(payload["saved_at"])
+        age_days = (datetime.now() - saved_at).total_seconds() / 86400
+        if age_days > max_age_days:
+            return None
+        return payload.get("best_params")
+    except Exception:
+        return None
 
 
 class ThresholdOptimizerV2:

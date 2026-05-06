@@ -425,7 +425,7 @@ Renderizadas no Dossiê FII e nas páginas de análise. São features core, não
 - **Anomalias de Ingestão Corrigidas**: (1) Dupla leitura `ativo_passivo` — `keys_to_extract` em `load_cvm_zip()`; (2) Logger duplicado — `logger.remove()` em `load_database.py` antes de `logger.add()`; (3) CDI 404 abortava backfill — `HTTPError 404` com `continue` em `load_cdi_to_db()` (linha 380–383).
 
 **Pendente** (em ordem de prioridade):
-1. **Cache de `optimizer_params`**: salvar `best_params` por ticker em `dados/optimizer_cache/{ticker}.json` com timestamp; reotimizar semanalmente (melhora utilidade `daily_report.py` sem `--com-otimizador`).
+1. ~~**Cache de `optimizer_params`**~~ (**Concluído — Maio 2026**) — `save_optimizer_cache()`/`load_optimizer_cache()` em `threshold_optimizer_v2.py`, renovação via `scripts/refresh_optimizer_cache.py`.
 2. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
 3. **Fase 6**: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões.
 4. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).

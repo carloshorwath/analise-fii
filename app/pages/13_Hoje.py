@@ -199,8 +199,13 @@ def _score_label(s) -> str:
 
 def _render_action_card(d, scores: dict | None) -> None:
     score_val = (scores or {}).get(d.ticker)
-    sc = _score_color(score_val)
-    sl = _score_label(score_val)
+    # VETADA override: score color turns gray + warning prefix to avoid false-positive green
+    if d.nivel_concordancia == "VETADA" and score_val is not None:
+        sc = "#888"
+        sl = f"⚠️ {score_val} (VETADA)"
+    else:
+        sc = _score_color(score_val)
+        sl = _score_label(score_val)
     conc_icon = {"ALTA": "⚡", "MEDIA": "👀", "BAIXA": "💤", "VETADA": "🚫"}.get(d.nivel_concordancia, "")
     pvp_str = f"P/VP p{d.pvp_percentil:.0f}%" if d.pvp_percentil is not None else ""
     dy_str  = f"DY Gap p{d.dy_gap_percentil:.0f}%" if d.dy_gap_percentil is not None else ""

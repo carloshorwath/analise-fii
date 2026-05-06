@@ -293,7 +293,26 @@ def main():
         "**Liquidez**: volume médio 21d ≥ R$ 500k"
     )
 
-    csv = df.to_csv(index=False).encode("utf-8")
+    # Export com colunas legíveis
+    _export_cols = {
+        "ticker": "Ticker",
+        "vistos": "Criterios (0-4)",
+        "pvp_baixo": "P/VP Baixo",
+        "dy_gap_alto": "DY Gap Alto",
+        "saude_ok": "Saude OK",
+        "liquidez_ok": "Liquidez OK",
+        "pvp_atual": "P/VP Atual",
+        "pvp_percentil": "P/VP %ile",
+        "dy_gap_valor": "DY Gap",
+        "dy_gap_percentil": "DY Gap %ile",
+        "volume_21d": "Volume 21d",
+        "saude_motivo": "Motivo Saude",
+    }
+    df_exp = df[[c for c in _export_cols if c in df.columns]].rename(columns=_export_cols)
+    for col in ["P/VP Baixo", "DY Gap Alto", "Saude OK", "Liquidez OK"]:
+        if col in df_exp.columns:
+            df_exp[col] = df_exp[col].map({True: "Sim", False: "Nao"}).fillna("n/d")
+    csv = df_exp.to_csv(index=False).encode("utf-8")
     st.download_button(
         "⬇️ Exportar CSV", csv, "radar_fii.csv", "text/csv", key="download_csv_radar"
     )

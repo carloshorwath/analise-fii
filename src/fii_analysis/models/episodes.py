@@ -74,7 +74,7 @@ def get_pvp_series(ticker, session, rolling_window=504):
 
 
 def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
-                      min_hold_days=None, rolling_window=504,
+                      min_gap=None, rolling_window=504,
                       value_col="pvp", pct_col="pvp_pct"):
     """Identifica episodios de P/VP extremo com thinning para independencia.
 
@@ -84,7 +84,7 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
     pvp_pct_low : percentil abaixo do qual = BUY
     pvp_pct_high : percentil acima do qual = SELL
     forward_days : janela de retorno forward
-    min_hold_days : intervalo minimo entre episodios em DIAS UTEIS.
+    min_gap : intervalo minimo entre episodios em DIAS UTEIS.
         Deve ser >= forward_days para garantir que retornos nao se sobreponham
         e o bootstrap i.i.d. seja valido. Default = forward_days (sincronizado
         automaticamente).
@@ -96,15 +96,15 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
     -------
     dict com episodes_buy, episodes_sell, summary
     """
-    if min_hold_days is None:
-        min_hold_days = forward_days
+    if min_gap is None:
+        min_gap = forward_days
 
-    if min_hold_days < forward_days:
+    if min_gap < forward_days:
         raise ValueError(
-            f"min_hold_days={min_hold_days} < forward_days={forward_days}. "
+            f"min_gap={min_gap} < forward_days={forward_days}. "
             "Episodios com retornos forward sobrepostos violam a hipotese de "
             "independencia do bootstrap i.i.d. e do t-test. "
-            "Use min_hold_days >= forward_days."
+            "Use min_gap >= forward_days."
         )
 
     df = df.copy()
@@ -140,7 +140,7 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
 
         # BUY episode: percentil <= pvp_pct_low
         if pct_val <= pvp_pct_low:
-            if current_idx - last_buy_idx >= min_hold_days:
+            if current_idx - last_buy_idx >= min_gap:
                 episodes_buy.append({
                     "data": row["data"],
                     "pvp": row[value_col],
@@ -152,7 +152,7 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
 
         # SELL episode: percentil >= pvp_pct_high
         if pct_val >= pvp_pct_high:
-            if current_idx - last_sell_idx >= min_hold_days:
+            if current_idx - last_sell_idx >= min_gap:
                 episodes_sell.append({
                     "data": row["data"],
                     "pvp": row[value_col],
@@ -175,7 +175,7 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
             "pvp_pct_low": pvp_pct_low,
             "pvp_pct_high": pvp_pct_high,
             "forward_days": forward_days,
-            "min_hold_days": min_hold_days,
+            "min_gap": min_gap,
             "rolling_window": rolling_window,
         },
     }

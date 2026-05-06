@@ -25,6 +25,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from src.fii_analysis.data.database import (
+    SnapshotDecisions,
     SnapshotPortfolioAdvices,
     SnapshotRadar,
     SnapshotRun,
@@ -311,6 +312,40 @@ def load_carteira_advices_snapshot(
             session, run.id, carteira_hash=carteira_hash
         )
         return meta, advices, alerts
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_decisions_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataFrame]:
+    """Retorna (meta, df) com decisões do último snapshot ready.
+
+    Colunas: ticker, acao, nivel_concordancia, sinal_otimizador,
+             sinal_episodio, sinal_walkforward, flag_destruicao_capital.
+    """
+    with get_session_ctx() as session:
+        run = get_latest_ready_snapshot_run(session, scope=scope)
+        if run is None:
+            return None, pd.DataFrame()
+        meta = _run_to_meta(run)
+        rows = session.execute(
+            select(SnapshotDecisions)
+            .where(SnapshotDecisions.run_id == run.id)
+            .order_by(SnapshotDecisions.ticker)
+        ).scalars().all()
+        if not rows:
+            return meta, pd.DataFrame()
+        records = [
+            {
+                "ticker": r.ticker,
+                "acao": r.acao,
+                "nivel_concordancia": r.nivel_concordancia,
+                "sinal_otimizador": r.sinal_otimizador,
+                "sinal_episodio": r.sinal_episodio,
+                "sinal_walkforward": r.sinal_walkforward,
+                "flag_destruicao_capital": bool(r.flag_destruicao_capital) if r.flag_destruicao_capital is not None else False,
+            }
+            for r in rows
+        ]
+        return meta, pd.DataFrame(records)
 
 
 # ---------------------------------------------------------------------------

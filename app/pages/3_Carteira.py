@@ -323,9 +323,18 @@ def main():
 
         if not snap_used:
             with st.spinner("Calculando sinais (snapshot de carteira nao disponivel)..."):
+                from src.fii_analysis.models.threshold_optimizer_v2 import load_optimizer_cache
                 with get_session_ctx() as session:
                     tickers_dec = list(set(consol["ticker"].tolist() + tickers_ativos(session)))
-                    decisoes = decidir_universo(session, tickers=tickers_dec)
+                    opt_params = {
+                        t: load_optimizer_cache(t)
+                        for t in tickers_dec
+                        if load_optimizer_cache(t) is not None
+                    }
+                    decisoes = decidir_universo(
+                        session, tickers=tickers_dec,
+                        optimizer_params_por_ticker=opt_params or None,
+                    )
                 advices = aconselhar_carteira(decisoes, posicoes, precos_atuais=precos_map)
                 alertas = alertas_estruturais(advices)
 

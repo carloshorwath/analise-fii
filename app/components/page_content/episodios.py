@@ -76,6 +76,35 @@ def render(*, key_prefix: str = "ep") -> None:
     sell_df = result["sell"]
     summary = result["summary"]
 
+    # ── Estado atual e distância até o próximo sinal ──────────────────────────
+    if not df.empty and "pvp_pct" in df.columns:
+        ult = df.iloc[-1]
+        pct_atual = float(ult["pvp_pct"]) if not pd.isna(ult["pvp_pct"]) else None
+        pvp_atual = float(ult["pvp"]) if not pd.isna(ult["pvp"]) else None
+        if pct_atual is not None:
+            if pct_atual <= pvp_low:
+                cor, label = "#2e7d32", "BUY ativo"
+                dist_msg = f"P/VP percentil {pct_atual:.0f}% — sinal de COMPRA ATIVO (≤ {pvp_low}%)."
+            elif pct_atual >= pvp_high:
+                cor, label = "#c62828", "SELL ativo"
+                dist_msg = f"P/VP percentil {pct_atual:.0f}% — sinal de VENDA ATIVO (≥ {pvp_high}%)."
+            else:
+                cor, label = "#e65100", "NEUTRO"
+                dist_buy = pct_atual - pvp_low
+                dist_sell = pvp_high - pct_atual
+                dist_msg = (
+                    f"P/VP percentil {pct_atual:.0f}% — neutro. "
+                    f"Faltam {dist_buy:.0f} pp para BUY (≤{pvp_low}%) "
+                    f"ou {dist_sell:.0f} pp para SELL (≥{pvp_high}%)."
+                )
+            pvp_str = f"P/VP={pvp_atual:.4f}" if pvp_atual else ""
+            st.markdown(
+                f"**Estado atual:** <span style='color:{cor};font-weight:700'>{label}</span> &nbsp;·&nbsp; "
+                f"{pvp_str} &nbsp;·&nbsp; {dist_msg}",
+                unsafe_allow_html=True,
+            )
+            st.markdown("---")
+
     tab_sim, tab_res = st.tabs(["Simulação Operacional", "Resultados Estatísticos"])
 
     with tab_res:

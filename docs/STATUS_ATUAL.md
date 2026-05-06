@@ -1,6 +1,6 @@
 # STATUS_ATUAL.md — Estado Factual do Projeto FII
 
-> Gerado em: 2026-05-04. Regenerar sempre que houver mudança estrutural.
+> Gerado em: 2026-05-05. Regenerar sempre que houver mudança estrutural.
 > Não editar manualmente — descreve o que **existe agora**, não o que está planejado.
 
 ---
@@ -151,6 +151,7 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `scrape_fundsexplorer.py` | Scraping FundsExplorer |
 | `daily_report.py` | CLI do relatório diário (Fase 2): roda `decidir_universo()` e salva MD+CSV em `dados/alertas/{data}_recomendacoes.{md,csv}`. Flags: `--tickers X,Y,Z`, `--com-otimizador` (lento — roda `optimize()` por ticker), `--output-dir`. Sem `--com-otimizador`, sinal do otimizador fica como INDISPONIVEL e a concordância usa apenas Episódios + WalkForward. |
 | `generate_daily_snapshots.py` | CLI para gerar snapshot diário: `--scope {curado,carteira,db_ativos}`, `--force`. Lógica em `evaluation/daily_snapshots.py`. |
+| `refresh_optimizer_cache.py` | Renova cache de params do otimizador para todos os tickers ativos. Executar semanalmente. |
 | `test_recommender.py` | Sanity check ad-hoc do motor de decisão (KNIP11). Útil para validar mudanças no `recommender.py`. |
 | `compare_cvm_headers.py` | Utilidade de debug: compara headers de colunas CVM entre anos. |
 | `_aceite_v2_cdi.py` | **[PESQUISA]** Teste de aceite V2 CDI: diagnóstico + OOS + veredito. Resultado: RESIDUO_PIORA. |
@@ -202,7 +203,8 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 |---|---|
 | ~~`1_Panorama.py`~~ | ~~IFIX YTD hardcoded como `"n/d"`~~ (**Corrigido** — conectado a `get_ifix_ytd`) |
 | ~~Panorama CLI/web~~ | ~~Paridade incompleta — faltam Rent. Acum., DY 24m, Tipo na web~~ (**Corrigido**) |
-| ~~`recommender.py`: get_pvp_zscore chamada errada~~ | **Corrigido (Maio 2026)** — agora `session=session` como keyword arg |
+| ~~`recommender.py`: get_pvp_zscore chamada errada~~ | ~~**Corrigido (Maio 2026)** — agora `session=session` como keyword arg~~ |
+| ~~`episodes.py`: parâmetro `min_hold_days`~~ | ~~**Corrigido (Maio 2026)** — renomeado para `min_gap` na função `identify_episodes()`~~ |
 
 ---
 
@@ -285,6 +287,47 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
 
 ---
 
+## Motor V2 Fase 6 — Daily Workflow Fast-Path (Maio 2026) — ✅ Concluído
+
+**Script Daily Update (`scripts/daily_update.py`):**
+- Novo script de atualização rápida diária que orquestra ingestão incremental:
+  - Preços: yfinance incremental para todos os tickers ativos (a partir do último dia coletado)
+  - CDI: BCB SGS série 12 (completo, sem gaps)
+  - IFIX: benchmark via brapi com `history=true` (yfinance ^IFIX inválido)
+  - Cache otimizador: renova params para tickers com cache desatualizado (max_age=7 dias)
+  - Snapshot diário: geração idempotente (sem `--force`, pula se já feito hoje)
+- Uso: `python scripts/daily_update.py` (sem argumentos obrigatórios)
+- Idempotência: snapshots não são sobrescrito se já existem para a data do dia
+
+**Fix: `src/fii_analysis/data/ingestion.py`:**
+- `load_benchmark_yfinance()` corrigido: `period='1d'` em vez de `period='max'`
+- Motivo: `period='max'` para ^IFIX.SA retorna warning e falha; `period='1d'` busca preço de hoje com sucesso
+
+**Fix: `scripts/load_database.py`:**
+- Removida duplicação: etapa 4.1 (IFIX loading) escrita duas vezes no código; agora apenas uma
+
+**UI: `app/pages/1_Panorama.py`:**
+- Nova coluna `acao` ("Ação Hoje"): carrega decisões de snapshot, exibe COMPRAR/VENDER/AGUARDAR/EVITAR por ticker
+- Nova coluna `score_total`: score composto 0–100 com `ProgressColumn` visual (cor adaptativa conforme quintil)
+- Função `_build_display_df()` agora aceita parâmetro `decisions_df` (carregado via `load_decisions_snapshot`)
+- Integração com `app/components/snapshot_ui.py::load_decisions_snapshot()`
+
+**UI: `app/pages/13_Hoje.py`:**
+- Fix visual de cores para tickers VETADOS (destruição de capital ou safe score <30): agora exibem gray + "⚠️ {score} (VETADA)"
+- Antes: verde (visualmente enganoso para um veto), agora claro que é um sinal negativo
+
+**UI Helper: `app/components/snapshot_ui.py`:**
+- Nova função `load_decisions_snapshot(scope='curado')` com caching `@st.cache_data(ttl=300)`
+- Retorna `(meta, df)` com colunas: `ticker`, `acao`, `nivel_concordancia`, `sinal_otimizador`, `sinal_episodio`, `sinal_walkforward`, `flag_destruicao_capital`
+- Alimenta as novas colunas em `1_Panorama.py` e sugestões operacionais em `3_Carteira.py`
+
+**Status de dados (2026-05-05):**
+- Todos 6 tickers ativos com cache otimizador atualizado (arquivo JSON em `dados/optimizer_cache/`)
+- Snapshot run_id=28 gerado para 2026-05-05, scope=curado
+- Workflow recomendado: `python scripts/daily_update.py` → aguarde ±30s → abra Streamlit app
+
+---
+
 ## Próximos passos decididos
 
 ### Motor V2 Fases 1–3 (Maio 2026) — ✅ Concluído
@@ -324,20 +367,34 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
 - Bloco "Carteira cruzada" **condicional**: oculta se carteira vazia
 - Riscos em seção **separada** (não embutidos) — esconder gera otimismo viesado
 
+### Motor V2 Fase 5 — Cache + Walk-Forward + UX (Maio 2026) — ✅ Concluído
+
+**Cache do Otimizador:**
+- `save_optimizer_cache()` e `load_optimizer_cache()` em `threshold_optimizer_v2.py`
+- `_build_optimizer_params_map()` em `evaluation/daily_snapshots.py` usa cache (7d válido), só roda `optimize()` em cache miss
+- Script `scripts/refresh_optimizer_cache.py` para renovação semanal (todos os tickers ativos)
+- Cache populado: 6 tickers com params salvos em `dados/optimizer_cache/{ticker}.json`
+
+**Walk-Forward "Sinal Hoje":**
+- `walk_forward_roll()` em `walk_forward_rolling.py` retorna `sinal_hoje`: extrapolação do threshold da última janela de treino OOS para P/VP atual
+- `recommender.py` (seção 4) usa `sinal_hoje` como sinal primário WalkForward (com fallback ao último OOS quando indisponível)
+- `app/components/page_content/walkforward.py` renderiza sinal_hoje com cor (verde=BUY, vermelho=SELL, laranja=NEUTRO) + threshold + data do último OOS
+
+**Fix Episodes `min_gap`:**
+- Parâmetro renomeado de `min_hold_days` → `min_gap` em `identify_episodes()` (`models/episodes.py`)
+- `app/components/page_content/episodios.py` exibe "Estado atual e distância ao próximo sinal" (pontos percentuais)
+
+**UX Polish:**
+- `app/pages/4_Radar.py`: exportação CSV usa colunas formatadas ("Sim/Não" em vez de booleanos raw)
+- `app/pages/3_Carteira.py`: fallback carrega optimizer_params do cache quando snapshot indisponível
+
 ### Outros pendentes
 
-1. **Cache de `optimizer_params`**: PRIORITÁRIO — sem isso, `daily_report.py` precisa rodar com
-   `--com-otimizador` (lento) ou aceitar `sinal_otimizador = INDISPONIVEL`. Plano: salvar
-   `best_params` por ticker em `dados/optimizer_cache/{ticker}.json` com timestamp; reotimizar
-   semanalmente. Não bloqueia F5 mas melhora utilidade do relatório.
-2. ~~**Tabela de sinais na UI**~~ (**Concluído** — integrado com melhorias no Dossie FII em `app/pages/14_Dossie_FII.py` e `analise_fii.py`).
-3. **Falso positivo em eventos de capital**: `flag_destruicao_capital` e `dividend_safety_flag`
+1. **Falso positivo em eventos de capital**: `flag_destruicao_capital` e `dividend_safety_flag`
    disparam incorretamente quando FII vende ativo e distribui ganho pontual (ex: GARE11 2026-05).
    Três opções discutidas (janela de exclusão, flag evento pontual, tabela manual); **decisão
    pendente com o usuário**. Não implementar sem escolha explícita.
-4. ~~**UX P2**: extrair charts inline de `7_Fundamentos.py`~~ (**Concluído**)
-5. ~~**UX P3**: `@st.cache_data` em queries pesadas; IFIX YTD conectar `get_benchmark_ifix()`~~ (**Concluído**)
-6. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
-7. Fase 6: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
-8. Reconciliar `config.py` ↔ `config.yaml`
-9. Criar `tests/` (pyproject já configura pytest)
+2. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
+3. Fase 7: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões
+4. Reconciliar `config.py` ↔ `config.yaml`
+5. Criar `tests/` (pyproject já configura pytest)

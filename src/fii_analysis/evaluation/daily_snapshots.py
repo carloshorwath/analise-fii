@@ -127,16 +127,31 @@ def _base_cdi_ate(session: Session) -> date | None:
 
 
 def _build_optimizer_params_map(session: Session, tickers: list[str]) -> dict[str, dict]:
+    from src.fii_analysis.models.threshold_optimizer_v2 import (
+        load_optimizer_cache,
+        save_optimizer_cache,
+    )
     optimizer = ThresholdOptimizerV2()
     params_map: dict[str, dict] = {}
     for ticker in tickers:
+        cached = load_optimizer_cache(ticker)
+        if cached is not None:
+            params_map[ticker] = cached
+            logger.debug(f"Optimizer cache hit para {ticker}")
+            continue
         try:
             result = optimizer.optimize(ticker, session)
         except Exception as e:
             logger.warning(f"Optimizer falhou para {ticker}: {e}")
             continue
         if "error" not in result and result.get("best_params"):
-            params_map[ticker] = result["best_params"]
+            best = result["best_params"]
+            params_map[ticker] = best
+            try:
+                save_optimizer_cache(ticker, best)
+                logger.info(f"Optimizer cache salvo para {ticker}")
+            except Exception as e:
+                logger.warning(f"Falha ao salvar optimizer cache para {ticker}: {e}")
     return params_map
 
 

@@ -11,6 +11,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from app.components.snapshot_ui import (
+    load_decisions_snapshot,
     load_panorama_snapshot,
     load_radar_snapshot,
 )
@@ -26,10 +27,11 @@ safe_set_page_config(page_title="Panorama", page_icon="bar_chart", layout="wide"
 
 # Colunas a exibir na tabela (ordem visual definitiva)
 _COLS_DISPLAY = [
-    "ticker", "segmento",
+    "ticker", "segmento", "acao",
     "preco", "pvp", "pvp_percentil",
     "dy_12m", "dy_gap", "dy_gap_percentil",
     "volume_medio_21d",
+    "score_total",
     "vistos", "pvp_baixo", "dy_gap_alto", "saude_ok", "liquidez_ok",
     "cvm_defasada",
 ]
@@ -42,6 +44,7 @@ _PCT_DECIMAL_COLS = ["dy_12m", "dy_gap"]
 def _build_display_df(
     df: pd.DataFrame,
     radar_df: pd.DataFrame,
+    decisions_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Monta DataFrame pronto para st.dataframe com valores numéricos."""
     display = df.copy()
@@ -65,6 +68,11 @@ def _build_display_df(
         if "vistos" in display.columns:
             display["vistos"] = display["vistos"].fillna(0).astype(int)
 
+    # Merge decisions inline (acao do dia)
+    if decisions_df is not None and not decisions_df.empty and "ticker" in decisions_df.columns:
+        dec_cols = [c for c in ["ticker", "acao"] if c in decisions_df.columns]
+        display = display.merge(decisions_df[dec_cols], on="ticker", how="left")
+
     # Ordenação padrão: DY Gap %ile descendente (maiores oportunidades no topo)
     if "dy_gap_percentil" in display.columns:
         display = display.sort_values(
@@ -83,6 +91,11 @@ def _column_config() -> dict:
         ),
         "segmento": st.column_config.TextColumn(
             "Segmento", width="medium"
+        ),
+        "acao": st.column_config.TextColumn(
+            "Ação Hoje",
+            help="Decisão do sistema para hoje (COMPRAR/VENDER/AGUARDAR/EVITAR). Baseada nos 3 motores estatísticos.",
+            width="small",
         ),
         "preco": st.column_config.NumberColumn(
             "Preço", format="R$ %.2f",
@@ -111,6 +124,10 @@ def _column_config() -> dict:
         "volume_medio_21d": st.column_config.NumberColumn(
             "Vol 21d", format="R$ %.0f",
             help="Volume financeiro médio dos últimos 21 pregões"
+        ),
+        "score_total": st.column_config.ProgressColumn(
+            "Score", min_value=0, max_value=100, format="%d",
+            help="Score composto 0–100 (Valuation 35% + Risco 30% + Liquidez 20% + Histórico 15%)"
         ),
         "vistos": st.column_config.ProgressColumn(
             "Radar", min_value=0, max_value=4, format="%d/4",
@@ -155,6 +172,7 @@ def main():
     # ── Carga de dados ───────────────────────────────────────────────────────
     meta, df = load_panorama_snapshot("curado")
     _, radar_df = load_radar_snapshot("curado")
+    _, decisions_df = load_decisions_snapshot("curado")
 
     with get_session_ctx() as session:
         ifix_ytd = get_ifix_ytd(session)
@@ -225,7 +243,7 @@ def main():
     if df.empty:
         st.info("Nenhum dado disponível. Execute `fii update-prices` e gere o snapshot.")
     else:
-        display = _build_display_df(df, radar_df)
+        display = _build_display_df(df, radar_df, decisions_df)
 
         st.dataframe(
             display,
