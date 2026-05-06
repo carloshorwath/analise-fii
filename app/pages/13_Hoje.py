@@ -94,8 +94,7 @@ def main():
     if report is None:
         st.info(
             "Nenhum snapshot disponivel para hoje. "
-            "Execute `python scripts/generate_daily_snapshots.py` para "
-            "pre-calcular os sinais do dia."
+            "Execute `python scripts/daily_update.py` para atualizar precos e gerar o snapshot do dia."
         )
         render_footer()
         return
