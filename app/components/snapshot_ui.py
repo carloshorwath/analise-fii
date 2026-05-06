@@ -358,7 +358,7 @@ def render_snapshot_info(meta: dict | None, *, stale_carteira: bool = False) -> 
     if meta is None:
         st.warning(
             "Nenhum snapshot disponivel. "
-            "Execute: `python scripts/generate_daily_snapshots.py` para gerar os dados do dia."
+            "Execute: `python scripts/daily_update.py` para gerar os dados do dia."
         )
         return
     ts = meta.get("finalizado_em")
@@ -367,12 +367,12 @@ def render_snapshot_info(meta: dict | None, *, stale_carteira: bool = False) -> 
     if meta.get("is_stale"):
         st.warning(
             f"Snapshot desatualizado — gerado em {ts_str} (scope: {scope}). "
-            "Execute `python scripts/generate_daily_snapshots.py` para atualizar."
+            "Execute `python scripts/daily_update.py` para atualizar."
         )
     elif stale_carteira:
         st.warning(
             f"Snapshot de {ts_str}: carteira atual nao consta no cache. "
-            "Execute `python scripts/generate_daily_snapshots.py --scope carteira` para incluir."
+            "Execute `python scripts/daily_update.py` para incluir a carteira."
         )
     else:
         st.info(f"Dados do snapshot de {ts_str}.")

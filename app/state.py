@@ -63,6 +63,6 @@ def safe_page(func):
         except Exception as e:
             logger.exception(f"Erro na pagina {func.__name__}")
             st.error(f"Erro ao carregar esta pagina: {e}")
-            st.caption("Verifique se os dados estao atualizados via CLI: `fii update-prices` e `fii load-database`")
+            st.caption("Verifique se os dados estao atualizados via CLI: `fii update-prices` (uso diario) ou `python scripts/load_database.py` (carga inicial)")
             render_footer()
     return wrapper

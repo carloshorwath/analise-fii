@@ -223,7 +223,7 @@ D:/analise-de-acoes-v2/
 ├── src/fii_analysis/
 │   ├── config.py              ← TICKERS, períodos treino/teste, custos, IR
 │   ├── config_yaml.py         ← loader do config.yaml
-│   ├── cli.py                 ← typer: panorama, fii, carteira, calendario, radar, alertas
+│   ├── cli.py                 ← typer: panorama, fii, carteira, calendario, radar, alertas, update-prices, diario
 │   ├── data/
 │   │   ├── database.py        ← SQLAlchemy 2.0: ORM 15 tabelas (9 operacionais + 6 snapshot),
 │   │   │                        get_session_ctx, migrations
@@ -426,13 +426,14 @@ Renderizadas no Dossiê FII e nas páginas de análise. São features core, não
 
 **Pendente** (em ordem de prioridade):
 1. ~~**Cache de `optimizer_params`**~~ (**Concluído — Maio 2026**) — `save_optimizer_cache()`/`load_optimizer_cache()` em `threshold_optimizer_v2.py`, renovação via `scripts/refresh_optimizer_cache.py`.
-2. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
-3. **Fase 6**: `fii diario` (diff), relatório mensal Markdown/HTML, log de decisões.
-4. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
-5. Criar `tests/` com cobertura de integração para splits temporais e leakage.
+2. ~~**CLI diario + update-prices**~~ (**Concluído — Maio 2026**) — `fii diario` (cockpit Rich no terminal), `fii update-prices` (pipeline completo diário via CLI), ambos em `cli.py`.
+3. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
+4. Relatório mensal Markdown/HTML, log de decisões histórico.
+5. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
+6. Criar `tests/` com cobertura de integração para splits temporais e leakage.
 
 **Bugs menores conhecidos**:
-- `1_Panorama.py`: IFIX YTD hardcoded como `"n/d"` — `get_benchmark_ifix()` existe mas não é chamado (P3)
+- IFIX YTD mostra "—" — dado histórico indisponível via yfinance/brapi para IFIX.SA; fix de period='max'→'1d' aplicado, acumula diariamente
 - Paridade CLI/web no Panorama incompleta — faltam Rent. Acum., DY 24m, Tipo na web
 
 **Fora do escopo até decisão explícita:**

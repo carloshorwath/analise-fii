@@ -194,7 +194,7 @@ def main():
         if stale:
             st.warning(
                 f"⚠️ Snapshot desatualizado — gerado em {ts_str}. "
-                "Execute `python scripts/generate_daily_snapshots.py` para atualizar."
+                "Execute `python scripts/daily_update.py` para atualizar."
             )
         else:
             st.caption(f"📦 Dados do snapshot de {ts_str} · escopo: curado")
