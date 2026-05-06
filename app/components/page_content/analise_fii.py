@@ -94,12 +94,16 @@ def load_dados_analise(ticker: str, session, periodo: str = "1a") -> dict:
     preco_info = get_ultimo_preco(ticker, session)
     info = get_info_ticker(ticker, session)
     vol_medio = get_volume_medio_21d_ticker(ticker, session)
+    dy_gap_pct = (
+        get_dy_gap_percentil(ticker, ultimo, get_threshold("dy_janela_pregoes", 252), session)
+        if ultimo else None
+    )
 
     return dict(
         info=info, inicio=inicio, dias_desat=dias_desat,
         pv_df=pv_df, ultimo=ultimo,
         pvp=pvp, pvp_pct_val=pvp_pct_val, jan_val=jan_val, pvp_ant=pvp_ant,
-        dy=dy, dy_gap=dy_gap, dy_gap_ant=dy_gap_ant,
+        dy=dy, dy_gap=dy_gap, dy_gap_ant=dy_gap_ant, dy_gap_pct=dy_gap_pct,
         pvp_df=pvp_df, divs_df=divs_df,
         tend=tend, destruicao=destruicao, emissoes=emissoes,
         pl_df=pl_df, comp=comp,
@@ -145,10 +149,14 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
                 }
                 cor = _ACAO_COLORS.get(acao, "#546e7a")
                 conc_icon = {"ALTA": "⚡", "MEDIA": "👀", "BAIXA": "💤", "VETADA": "🚫"}.get(conc, "")
+                nota = ""
+                if conc == "VETADA":
+                    flag_dc = row.iloc[0].get("flag_destruicao_capital", False)
+                    nota = " &nbsp;<small style='color:#c62828'>(veto: destruição de capital detectada — veja aba Saúde)</small>" if flag_dc else " &nbsp;<small style='color:#c62828'>(veto: flag de risco ativo)</small>"
                 st.markdown(
                     f"**Sinal do dia:** "
                     f"<span style='color:{cor};font-weight:800;font-size:1.05em'>{acao}</span>"
-                    f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}",
+                    f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}{nota}",
                     unsafe_allow_html=True,
                 )
     except Exception:
@@ -174,13 +182,7 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
     pvp_thr = get_threshold("pvp_percentil_barato", 30)
     dy_gap_thr = get_threshold("dy_gap_percentil_caro", 70)
     piso = get_piso_liquidez()
-
-    with get_session_ctx() as session:
-        ultimo = dados["ultimo"]
-        dy_gap_pct = (
-            get_dy_gap_percentil(ticker, ultimo, get_threshold("dy_janela_pregoes", 252), session)
-            if ultimo else None
-        )
+    dy_gap_pct = dados.get("dy_gap_pct")
 
     r1, r2, r3, r4 = st.columns(4)
     _badge(r1, f"P/VP < {pvp_thr}%",

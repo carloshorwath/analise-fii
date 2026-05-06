@@ -501,6 +501,7 @@ def main():
                 novo_data = st.date_input("Data Compra", value=date.today())
             if st.form_submit_button("Adicionar", type="primary"):
                 save_carteira_posicao(novo_ticker, novo_qty, novo_preco, novo_data)
+                load_carteira_db.clear()
                 st.success(f"Posição adicionada: {novo_qty}x {novo_ticker} a R$ {novo_preco:.2f}")
                 st.rerun()
 
@@ -524,6 +525,7 @@ def main():
                 if source == "broker_export":
                     st.warning("CSV sem data de compra original: foi usada a data de hoje como placeholder.")
                 st.success(f"{len(records)} posições importadas com sucesso!")
+                load_carteira_db.clear()
                 st.rerun()
             except Exception as e:
                 st.error(f"Erro ao processar CSV: {e}")
@@ -543,6 +545,7 @@ def main():
             if to_delete and st.button("Confirmar remoção", type="secondary"):
                 pos_id = int(to_delete.split(":")[0].replace("ID ", ""))
                 delete_carteira_posicao(pos_id)
+                load_carteira_db.clear()
                 st.success("Posição removida!")
                 st.rerun()
         else:

@@ -24,6 +24,7 @@ def load_tickers_ativos() -> list[str]:
         return tickers_ativos(session)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_carteira_db() -> list[dict]:
     from sqlalchemy import select
     with get_session_ctx() as session:
