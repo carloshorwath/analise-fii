@@ -74,7 +74,11 @@
       "Bash(pkill -f \"streamlit run app/streamlit_app.py\")",
       "Bash(C:/ProgramData/anaconda3/python.exe -m streamlit run app/streamlit_app.py --server.headless true --server.port 8766 --server.runOnSave false)",
       "Bash(pkill -f \"server.port 8766\")",
-      "Skill(git)"
+      "Skill(git)",
+      "Bash(exit 1)",
+      "Bash(grep -v \"^$\")",
+      "Bash(python -c ' *)",
+      "Bash(python *)"
     ]
   }
 }

@@ -408,7 +408,8 @@ Renderizadas no Dossiê FII e nas páginas de análise. São features core, não
 
 ## Estado atual e próximos passos
 
-**Concluído** (até 2026-05-03):
+**Concluído** (atualizado em 2026-05-05):
+- **Validação Final V3**: Substituição do problemático `IFIX.SA` pelo ETF `XFIX11`, permitindo a restauração do download de histórico completo (`period="max"`) e corrigindo regressões de IFIX YTD. Desduplicação de scripts (remoção do `daily_update.py` em favor da CLI). Refinamento de UI com indicadores de *Sensibilidade Juros* (CDI Repricing) exibidos nativamente na tabela do dia. Conversão de `st.table` estáticas para `st.dataframe` compactos e adição de logs para engolir erros silenciosos em tempo de execução.
 - **Fases 0–5 Estatísticas + Camada de Decisão (Fases 1–4) + Score (Fase 2)**: Schema SQLite 15 tabelas (9 operacionais + 6 snapshot), ingestão CVM/yfinance/brapi/BCB CDI/Focus Selic, indicadores point-in-time, Event Study, Saúde financeira, Composição, Risk metrics, Score 0–100.
 - **Refatoração Arquitetural**: Singleton engine + context manager (`get_session_ctx`), separação `src/` (lógica pura) / `scripts/` (wrappers CLI) / `app/` (UI Streamlit). Remoção de duplicatas, centralização thresholds em `config.yaml`.
 - **MCP Server Estatístico** e **CriticAgent** (falsificação shuffle/placebo/estabilidade).
@@ -418,23 +419,19 @@ Renderizadas no Dossiê FII e nas páginas de análise. São features core, não
 - **Snapshots Diários** (`evaluation/daily_snapshots.py`): 6 tabelas desnormalizadas (runs, metrics, radar, decisions, advices, alerts) com versionamento motor e hashing universo.
 - **UI Nova**: Páginas 13_Hoje.py (cockpit operacional), 14_Dossie_FII.py (consolidado por ticker), 15_Laboratorio.py (auditoria: Otimizador/Episódios/WalkForward). Extração de conteúdo em `app/components/page_content/*.py` reutilizável.
 - **Agentes Claude Code**: 9 agentes em `.claude/agents/` (data-scientist, python-pro, streamlit-developer, documentation-engineer, ux-researcher, beta-tester-trader, release-manager, qa-operator, onboarding-writer).
-- **Auditoria UX**: 43 problemas identificados em `docs/UX_AUDIT.md` (P0→P4). Fixes P0 aplicados (error boundary global, consolidação sessões). Fixes P1 concluídos (gráficos valor_mercado, CAR extraído, event study desacoplado). Fixes P2/P3 parciais (st.tabs, radio horizontal, charts eixo data nativo, tabs 7_Fundamentos, footer, dead imports).
+- **Auditoria UX**: 43 problemas identificados em `docs/UX_AUDIT.md` (P0→P4). Fixes aplicados.
 - **Auditoria Estatística**: Thinning obrigatório para independência. Anualização Sharpe corrigida `sqrt(252/n)`. Overfitting detectado como SUSPEITO. Block bootstrap validado contra degenerescência.
 - **Experimento V2 CDI encerrado**: Teste OOS rejeitou hipótese de substituir sinal por resíduo CDI-ajustado. V1 CDI (informativa) permanece; V2 mantida como pesquisa interna (`cdi_comparison.py`, `cdi_oos_evaluation.py`, `_aceite_v2_cdi.py`).
-- **Fase 2 — Score 0–100**: Implementado `src/fii_analysis/features/score.py` com 4 sub-scores (Valuation 35%, Risco 30%, Liquidez 20%, Histórico 15%). Campos adicionados em `SnapshotTickerMetrics` e `SnapshotDecisions`. Integração em `daily_snapshots.py` via `calcular_score_batch()`. Renderizado em UI (pages 13_Hoje, analise_fii, snapshot_ui).
 - **Anomalias de Ingestão Corrigidas**: (1) Dupla leitura `ativo_passivo` — `keys_to_extract` em `load_cvm_zip()`; (2) Logger duplicado — `logger.remove()` em `load_database.py` antes de `logger.add()`; (3) CDI 404 abortava backfill — `HTTPError 404` com `continue` em `load_cdi_to_db()` (linha 380–383).
 
 **Pendente** (em ordem de prioridade):
-1. ~~**Cache de `optimizer_params`**~~ (**Concluído — Maio 2026**) — `save_optimizer_cache()`/`load_optimizer_cache()` em `threshold_optimizer_v2.py`, renovação via `scripts/refresh_optimizer_cache.py`.
-2. ~~**CLI diario + update-prices**~~ (**Concluído — Maio 2026**) — `fii diario` (cockpit Rich no terminal), `fii update-prices` (pipeline completo diário via CLI), ambos em `cli.py`.
-3. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
-4. Relatório mensal Markdown/HTML, log de decisões histórico.
-5. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
-6. Criar `tests/` com cobertura de integração para splits temporais e leakage.
+1. Snapshots reprodutíveis do `fii_data.db` com SHA-256 (§5.2 do V2).
+2. Relatório mensal Markdown/HTML, log de decisões histórico.
+3. Reconciliar `config.py` ↔ `config.yaml` (conhecer dívida técnica — parâmetros de decisão vs constantes de escopo).
+4. Criar `tests/` com cobertura de integração para splits temporais e leakage.
 
 **Bugs menores conhecidos**:
-- IFIX YTD mostra "—" — dado histórico indisponível via yfinance/brapi para IFIX.SA; fix de period='max'→'1d' aplicado, acumula diariamente
-- Paridade CLI/web no Panorama incompleta — faltam Rent. Acum., DY 24m, Tipo na web
+- Falso positivo em eventos de capital (destruição de capital/dividend safety flag disparam ao vender ativos e distribuir ganho pontual). Solução estrutural aguarda aprovação.
 
 **Fora do escopo até decisão explícita:**
 - LightGBM ou qualquer ML enquanto event study não confirmar padrão

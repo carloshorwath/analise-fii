@@ -94,7 +94,7 @@ def update_prices(
     from src.fii_analysis.data.database import get_session_ctx
     from src.fii_analysis.data.ingestion import (
         load_prices_yfinance, load_dividends_yfinance,
-        load_cdi_to_db, load_benchmark_yfinance, load_benchmark_brapi,
+        load_cdi_to_db, load_benchmark_yfinance,
     )
     from src.fii_analysis.models.threshold_optimizer_v2 import (
         ThresholdOptimizerV2, load_optimizer_cache, save_optimizer_cache,
@@ -129,13 +129,11 @@ def update_prices(
         except Exception as e:
             logger.error("CDI: {}", e)
 
-        logger.info("Atualizando IFIX...")
-        for fn in [lambda: load_benchmark_yfinance("IFIX.SA", session),
-                   lambda: load_benchmark_brapi("IFIX.SA", session)]:
-            try:
-                fn()
-            except Exception as e:
-                logger.warning("IFIX: {}", e)
+        logger.info("Atualizando XFIX11 (yfinance)...")
+        try:
+            load_benchmark_yfinance("XFIX11", session)
+        except Exception as e:
+            logger.warning("XFIX11: {}", e)
 
         logger.info("Verificando cache otimizador...")
         optimizer = ThresholdOptimizerV2()

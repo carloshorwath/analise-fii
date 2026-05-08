@@ -102,7 +102,7 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
         st.markdown("#### Melhores Parametros")
         df_params = pd.DataFrame([best_params]).T.reset_index()
         df_params.columns = ["Parametro", "Valor"]
-        st.table(df_params)
+        st.dataframe(df_params, hide_index=True, use_container_width=True)
 
         st.markdown("#### Performance por Split (Retorno Medio)")
         col_t, col_v, col_ts = st.columns(3)

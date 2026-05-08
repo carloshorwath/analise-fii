@@ -257,7 +257,7 @@ def _render_actions_today(report, scores: dict | None = None):
         "WalkForward": d.sinal_walkforward,
         "P/VP pct": f"{d.pvp_percentil:.1f}%" if d.pvp_percentil is not None else "n/d",
         "DY Gap pct": f"{d.dy_gap_percentil:.1f}%" if d.dy_gap_percentil is not None else "n/d",
-        "Preco Ref": f"{d.preco_referencia:.2f}" if d.preco_referencia is not None else "n/d",
+        "Sensibilidade Juros": f"{d.cdi_repricing_12m * 100:+.1f}%" if getattr(d, "cdi_repricing_12m", None) is not None else "n/d",
         "Flags": _flags_text(d),
     } for d in report.action_today])
     st.dataframe(df, use_container_width=True, hide_index=True,

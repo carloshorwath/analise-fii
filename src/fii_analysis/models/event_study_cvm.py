@@ -147,7 +147,7 @@ def calculate_car(ticker, events, forward_days, session, info_callback=None):
 
     ifix_rows = session.execute(
         select(BenchmarkDiario.data, BenchmarkDiario.fechamento)
-        .where(BenchmarkDiario.ticker == "IFIX.SA")
+        .where(BenchmarkDiario.ticker == "XFIX11")
         .order_by(BenchmarkDiario.data.asc())
     ).all()
 

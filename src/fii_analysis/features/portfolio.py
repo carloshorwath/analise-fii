@@ -155,13 +155,13 @@ def alocacao_segmento(df: pd.DataFrame) -> pd.DataFrame:
     return grp[["segmento", "count", "pct"]]
 
 
-_IFIX_TICKER = "IFIX.SA"
+_IFIX_TICKER = "XFIX11"
 
 
 def retorno_vs_ifix(ticker: str, inicio: date, fim: date, session) -> dict:
     """Retorno do FII vs IFIX no período [inicio, fim].
 
-    IFIX é buscado da tabela benchmark_diario (populada via load_benchmark_yfinance).
+    XFIX11 é buscado da tabela benchmark_diario (populada via load_benchmark_yfinance).
     Se não houver dados do IFIX, retorna None com warning — NÃO retorna zero.
     """
     preco_ini = session.execute(
@@ -196,7 +196,7 @@ def retorno_vs_ifix(ticker: str, inicio: date, fim: date, session) -> dict:
     if ifix_ini is None or ifix_fim is None or float(ifix_ini) == 0:
         logger.warning(
             "retorno_vs_ifix: sem dados de IFIX.SA em benchmark_diario para o periodo {}-{}. "
-            "Execute load_benchmark_yfinance('IFIX.SA', session) para popular.",
+            "Execute load_benchmark_yfinance('XFIX11', session) para popular.",
             inicio, fim,
         )
     else:

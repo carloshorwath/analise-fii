@@ -319,6 +319,11 @@ def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
             lci=_safe_float(row.get("LCI")),
             lci_lca=_safe_float(row.get("LCI_LCA")),
             disponibilidades=_safe_float(row.get("Disponibilidades")),
+            total_investido=_safe_float(row.get("Total_Investido")),
+            total_necessidades_liquidez=_safe_float(row.get("Total_Necessidades_Liquidez")),
+            valores_receber=_safe_float(row.get("Valores_Receber")),
+            contas_receber_aluguel=_safe_float(row.get("Contas_Receber_Aluguel")),
+            outros_valores_mobliarios=_safe_float(row.get("Outros_Valores_Mobliarios")),
             ativo_total=ativo_total if ativo_total > 0 else None,
         )
         session.add(registro)
@@ -519,7 +524,7 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
 # ---------------------------------------------------------------------------
 
 def load_benchmark_yfinance(ticker: str, session) -> None:
-    """Carga inicial / histórica do benchmark via yfinance. Usa 'IFIX.SA'."""
+    """Carga inicial / histórica do benchmark via yfinance."""
     ultimo = session.execute(
         select(BenchmarkDiario.data)
         .where(BenchmarkDiario.ticker == ticker)
@@ -535,7 +540,7 @@ def load_benchmark_yfinance(ticker: str, session) -> None:
         hist = yf_ticker.history(start=start, auto_adjust=False)
     else:
         logger.info("Benchmark {}: buscando historico completo", ticker)
-        hist = yf_ticker.history(period="1d", auto_adjust=False)
+        hist = yf_ticker.history(period="max", auto_adjust=False)
 
     if hist.empty:
         logger.info("Benchmark {}: nenhum dado novo", ticker)

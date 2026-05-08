@@ -137,7 +137,7 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
     # — Sinal do dia (snapshot) —
     try:
         from app.components.snapshot_ui import load_decisions_snapshot
-        _, dec_df = load_decisions_snapshot("curado")
+        snap_meta, dec_df = load_decisions_snapshot("curado")
         if not dec_df.empty and "ticker" in dec_df.columns:
             row = dec_df[dec_df["ticker"] == ticker]
             if not row.empty:
@@ -150,13 +150,28 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
                 cor = _ACAO_COLORS.get(acao, "#546e7a")
                 conc_icon = {"ALTA": "⚡", "MEDIA": "👀", "BAIXA": "💤", "VETADA": "🚫"}.get(conc, "")
                 nota = ""
+                # Cruzar flag do snapshot com dado live para detectar staleness
+                live_saude_ok = not saude["destruicao"]["destruicao"]
                 if conc == "VETADA":
                     flag_dc = row.iloc[0].get("flag_destruicao_capital", False)
-                    nota = " &nbsp;<small style='color:#c62828'>(veto: destruição de capital detectada — veja aba Saúde)</small>" if flag_dc else " &nbsp;<small style='color:#c62828'>(veto: flag de risco ativo)</small>"
+                    if flag_dc and live_saude_ok:
+                        score_live = saude["destruicao"].get("score_saude", "n/d")
+                        nota = (
+                            f" &nbsp;<small style='color:#e65100'>"
+                            f"(⚠ snapshot desatualizado — saúde atual: SAUDÁVEL score {score_live}/100)</small>"
+                        )
+                    elif flag_dc:
+                        nota = " &nbsp;<small style='color:#c62828'>(veto: destruição de capital detectada — veja aba Saúde)</small>"
+                    else:
+                        nota = " &nbsp;<small style='color:#c62828'>(veto: flag de risco ativo)</small>"
+                # Frescor do snapshot
+                snap_data = ""
+                if snap_meta and snap_meta.get("data_referencia"):
+                    snap_data = f" &nbsp;<small style='color:#888'>(ref: {snap_meta['data_referencia'].strftime('%d/%m/%Y')})</small>"
                 st.markdown(
                     f"**Sinal do dia:** "
                     f"<span style='color:{cor};font-weight:800;font-size:1.05em'>{acao}</span>"
-                    f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}{nota}",
+                    f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}{nota}{snap_data}",
                     unsafe_allow_html=True,
                 )
     except Exception:
@@ -212,7 +227,7 @@ def _badge(col, label: str, passou: bool, valor: str) -> None:
 
 
 def render_valuation(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
-    """Tab Valuation: gauge P/VP + série histórica com bandas + métricas."""
+    """Tab Valuation: gauge P/VP + 4 métricas horizontais + série histórica com bandas."""
     pvp = dados["pvp"]
     pvp_pct_val = dados["pvp_pct_val"]
     jan_val = dados["jan_val"]
@@ -223,60 +238,190 @@ def render_valuation(ticker: str, dados: dict, *, key_prefix: str = "afii") -> N
     pvp_df = dados["pvp_df"]
     inicio = dados["inicio"]
 
-    col_v1, col_v2 = st.columns([1, 2])
-    with col_v1:
+    # — Gauge P/VP centrado no topo —
+    _gauge_col1, _gauge_col2, _gauge_col3 = st.columns([1, 1, 1])
+    with _gauge_col2:
         st.plotly_chart(pvp_gauge(pvp, ticker), use_container_width=True)
-        st.metric(f"P/VP Percentil ({jan_val}d)", f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d")
 
-        if pvp is not None and pvp_ant is not None:
-            st.metric("P/VP (atual)", f"{pvp:.4f}", delta=f"{pvp - pvp_ant:+.4f}", help="Preco sobre Valor Patrimonial")
-        else:
-            st.metric("P/VP (atual)", f"{pvp:.4f}" if pvp else "n/d", help="Preco sobre Valor Patrimonial")
+    # — 4 métricas na horizontal —
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(f"P/VP Percentil ({jan_val}d)", f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d")
 
-        st.metric("DY 12m (trailing)", f"{dy:.2%}" if dy else "n/d", help="Dividend Yield trailing 12 meses")
+    if pvp is not None and pvp_ant is not None:
+        m2.metric("P/VP (atual)", f"{pvp:.4f}", delta=f"{pvp - pvp_ant:+.4f}", help="Preco sobre Valor Patrimonial")
+    else:
+        m2.metric("P/VP (atual)", f"{pvp:.4f}" if pvp else "n/d", help="Preco sobre Valor Patrimonial")
 
-        if dy_gap is not None and dy_gap_ant is not None:
-            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}", delta=f"{dy_gap - dy_gap_ant:+.2%}", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
-        else:
-            st.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap else "n/d", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
+    m3.metric("DY 12m (trailing)", f"{dy:.2%}" if dy else "n/d", help="Dividend Yield trailing 12 meses")
 
-    with col_v2:
-        pvp_df_plot = pvp_df[pvp_df["data"] >= inicio] if inicio is not None and not pvp_df.empty else pvp_df
-        st.plotly_chart(pvp_historico_com_bandas(pvp_df_plot, ticker), use_container_width=True)
+    if dy_gap is not None and dy_gap_ant is not None:
+        m4.metric("DY Gap vs CDI", f"{dy_gap:.2%}", delta=f"{dy_gap - dy_gap_ant:+.2%}", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
+    else:
+        m4.metric("DY Gap vs CDI", f"{dy_gap:.2%}" if dy_gap else "n/d", help="DY 12m - CDI 12m. Positivo significa que o fundo paga mais que o CDI")
+
+    # — Gráfico P/VP histórico em largura total —
+    pvp_df_plot = pvp_df[pvp_df["data"] >= inicio] if inicio is not None and not pvp_df.empty else pvp_df
+    st.plotly_chart(pvp_historico_com_bandas(pvp_df_plot, ticker), use_container_width=True)
 
 
 def render_saude(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
-    """Tab Saúde: flag destruição capital + tendência PL + emissões + gráfico."""
+    """Tab Saúde: diagnóstico inteligente + score + tendência PL + emissões + gráfico rico."""
     destruicao = dados["destruicao"]
     tend = dados["tend"]
     emissoes = dados["emissoes"]
     pl_df = dados["pl_df"]
 
+    gravidade = destruicao.get("gravidade", "saudavel")
+    tendencia = destruicao.get("tendencia", "estavel")
+    score = destruicao.get("score_saude", 100)
+    motivo = destruicao.get("motivo", "")
+
+    # Diagnóstico narrativo inteligente
+    diag_class = destruicao.get("diagnostico_class", "")
+    diag_emoji = destruicao.get("diagnostico_emoji", "")
+    diag_resumo = destruicao.get("diagnostico_resumo", motivo)
+
+    # --- Badge de gravidade ---
+    _GRAV_CONFIG = {
+        "critica":          {"emoji": "🔴", "label": "DESTRUIÇÃO CRÍTICA", "color": "#c0392b", "bg": "#fadbd8"},
+        "alerta":           {"emoji": "🟠", "label": "ALERTA",             "color": "#e67e22", "bg": "#fdebd0"},
+        "em_recuperacao":   {"emoji": "🟡", "label": "EM RECUPERAÇÃO",     "color": "#f39c12", "bg": "#fef9e7"},
+        "saudavel":         {"emoji": "🟢", "label": "SAUDÁVEL",           "color": "#27ae60", "bg": "#eafaf1"},
+    }
+    cfg = _GRAV_CONFIG.get(gravidade, _GRAV_CONFIG["saudavel"])
+
+    _TEND_CONFIG = {
+        "piorando":  {"arrow": "⬇", "label": "Piorando",  "color": "#c0392b"},
+        "estavel":   {"arrow": "➡", "label": "Estável",   "color": "#7f8c8d"},
+        "melhorando":{"arrow": "⬆", "label": "Melhorando", "color": "#27ae60"},
+    }
+    tcfg = _TEND_CONFIG.get(tendencia, _TEND_CONFIG["estavel"])
+
+    # --- Diagnóstico narrativo em destaque ---
+    st.markdown(
+        f'<div style="background:{cfg["bg"]};padding:14px 18px;border-radius:10px;'
+        f'border-left:5px solid {cfg["color"]};margin-bottom:6px">'
+        f'<span style="font-size:1.4em">{cfg["emoji"]}</span> '
+        f'<span style="color:{cfg["color"]};font-weight:800;font-size:1.2em">{cfg["label"]}</span>'
+        f' &nbsp;·&nbsp; Score: <b>{score}/100</b>'
+        f' &nbsp;·&nbsp; <span style="color:{tcfg["color"]}">{tcfg["arrow"]} {tcfg["label"]}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Narrativa inteligente
+    st.markdown(
+        f'<div style="background:#f8f9fa;padding:10px 16px;border-radius:8px;'
+        f'border-left:3px solid {cfg["color"]};margin-bottom:8px">'
+        f'<small style="color:#555">Diagnóstico:</small><br>'
+        f'<span style="font-size:0.95em">{diag_resumo}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # --- Score bar visual ---
+    score_color = "#2ecc71" if score >= 70 else ("#f39c12" if score >= 45 else ("#e67e22" if score >= 25 else "#e74c3c"))
+    st.markdown(
+        f'<div style="background:#ecf0f1;border-radius:4px;height:14px;position:relative;margin-bottom:12px">'
+        f'<div style="background:{score_color};border-radius:4px;height:14px;width:{score}%;transition:width 0.3s"></div>'
+        f'<span style="position:absolute;right:8px;top:-1px;font-size:10px;font-weight:700;color:#2c3e50">{score}/100</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     col_s1, col_s2 = st.columns(2)
     with col_s1:
-        if destruicao["destruicao"]:
-            st.error(f"DESTRUICAO DE CAPITAL detectada! {destruicao['motivo']}")
-        else:
-            st.success(f"Sem destruicao de capital. {destruicao['motivo']}")
+        # Detalhes dos componentes do score
+        score_vp_6m = destruicao.get("score_vp_6m")
+        score_vp_3m = destruicao.get("score_vp_3m")
+        slope_6m = destruicao.get("slope_6m")
+        slope_3m = destruicao.get("slope_3m")
+        pct_3m = destruicao.get("pct_3m", 0.0)
+        pct_6m = destruicao.get("pct_6m", 0.0)
+        current_consec = destruicao.get("current_consec", destruicao.get("meses_consecutivos", 0))
+        max_consec = destruicao.get("max_consec_historico", destruicao.get("meses_consecutivos", 0))
 
+        st.markdown("**Componentes do Score:**")
+        consec_label = f"**{current_consec}** (ativo)"
+        if max_consec > current_consec:
+            consec_label += f" | Máx. histórico: **{max_consec}**"
+        st.write(f"  - Meses consecutivos (rent.efet > patrim): {consec_label}")
+        if slope_3m is not None:
+            st.write(f"  - Inclinação VP 3m (peso 60%): **{slope_3m:+.4f}** ({pct_3m:+.2f}%/mês) — score destruição: {score_vp_3m:.0f}/100")
+        if slope_6m is not None:
+            st.write(f"  - Inclinação VP 6m (peso 30%): **{slope_6m:+.4f}** ({pct_6m:+.2f}%/mês) — score destruição: {score_vp_6m:.0f}/100")
+
+        # Streak score display
+        if slope_3m is not None and slope_3m < -0.1 and current_consec > 0:
+            streak_score = min(current_consec / 6.0, 1.0) * 100
+            st.write(f"  - Streak ativo (peso 10%): **{current_consec}** meses → score: {streak_score:.0f}/100")
+        else:
+            st.write(f"  - Streak ativo (peso 10%): **desconsiderado** (VP estável ou subindo)")
+
+        st.markdown("---")
+
+        # Interpretação textual
+        if gravidade == "em_recuperacao":
+            st.info(
+                "💡 **Possível oportunidade:** A gestão está revertendo a destruição de capital. "
+                "O VP/cota mostra sinais de recuperação nos últimos meses. "
+                "Combine com valuation (P/VP baixo) e liquidez para avaliar entrada."
+            )
+        elif gravidade == "critica":
+            st.error(
+                "⚠️ **Alto risco:** Destruição de capital ativa e agravante. "
+                "O VP/cota continua em queda severa. Considere evitar ou sair da posição."
+            )
+        elif gravidade == "alerta":
+            st.warning(
+                "⚡ **Atenção:** Sinais de destruição de capital detectados — "
+                "VP/cota em queda. Monitore de perto."
+            )
+        else:
+            st.success("✅ **Fundo saudável** — VP/cota estável ou em alta. Sem sinais de destruição.")
+
+        # Tendência PL
+        st.markdown("**Tendência PL (regressão):**")
         for periodo_t, dados_t in tend.items():
             coef = dados_t.get("coef_angular")
             r2 = dados_t.get("r2")
             n = dados_t.get("n", 0)
             st.write(
-                f"**PL {periodo_t}m:** coef={format_number(coef, 4) if coef else 'n/d'}, "
-                f"R2={format_number(r2) if r2 else 'n/d'}, n={n}"
+                f"  - **PL {periodo_t}m:** coef={format_number(coef, 4) if coef else 'n/d'}, "
+                f"R²={format_number(r2) if r2 else 'n/d'}, n={n}"
             )
 
+        # Condições originais
+        st.markdown("**Condições originais:**")
+        cond1 = destruicao.get("cond1_efetiva_gt_patrim", False)
+        cond2 = destruicao.get("cond2_cotas_estaveis", True)
+        cond3 = destruicao.get("cond3_vp_tendencia_negativa", False)
+        st.write(f"  - cond1 (rent.efetiva > patrim ≥ 3m): {'✅' if cond1 else '❌'}")
+        st.write(f"  - cond2 (cotas estáveis ≤ 1%): {'✅' if cond2 else '❌'}")
+        st.write(f"  - cond3 (VP/cota tendencia negativa): {'✅' if cond3 else '❌'}")
+
+        n_emissoes_ruins = destruicao.get("n_emissoes_ruins", 0)
+        if n_emissoes_ruins > 0:
+            st.error(f"🔴 {n_emissoes_ruins} emissão(ões) prejudicial(ies) — VP/cota caiu > 1%")
         if emissoes:
-            st.warning(f"{len(emissoes)} emissoes recentes (>1% cotas)")
             for e in emissoes:
-                st.write(f"  - {e['data_ref']}: +{e['variacao_pct']:.1f}% cotas")
+                clas = e.get("classificacao", "neutra")
+                impacto = e.get("impacto_vp_pct")
+                if clas == "prejudicial":
+                    icon = "🔴"
+                    detalhe = f"VP/cota caiu {impacto:+.1f}%" if impacto is not None else "VP/cota caiu"
+                elif clas == "benefica":
+                    icon = "🟢"
+                    detalhe = f"VP/cota subiu {impacto:+.1f}%" if impacto is not None else "VP/cota subiu"
+                else:
+                    icon = "🟡"
+                    detalhe = f"VP/cota {impacto:+.1f}% (neutra)" if impacto is not None else "Sem impacto no VP"
+                st.write(f"  - {icon} {e['data_ref']}: +{e['variacao_pct']:.1f}% cotas — {detalhe}")
         else:
             st.info("Sem emissoes recentes significativas.")
 
     with col_s2:
-        st.plotly_chart(pl_trend_chart(pl_df, ticker), use_container_width=True)
+        st.plotly_chart(pl_trend_chart(pl_df, ticker, destruicao_info=destruicao), use_container_width=True)
 
 
 def render_dividendos(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
@@ -291,18 +436,27 @@ def render_dividendos(ticker: str, dados: dict, *, key_prefix: str = "afii") -> 
 
 
 def render_composicao(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
-    """Tab Composição: tipo Tijolo/Papel/Híbrido + pie chart."""
+    """Tab Composição: tipo Tijolo/Papel/Híbrido + métricas + pie chart."""
     comp = dados["comp"]
 
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         st.metric("Tipo", comp.get("tipo", "n/d"))
-        st.metric("% Imoveis",
-                  f"{comp['pct_imoveis']:.1%}" if comp.get("pct_imoveis") is not None else "n/d")
-        st.metric("% Recebiveis",
-                  f"{comp['pct_recebiveis']:.1%}" if comp.get("pct_recebiveis") is not None else "n/d")
-        st.metric("% Caixa",
-                  f"{comp['pct_caixa']:.1%}" if comp.get("pct_caixa") is not None else "n/d")
+        c1a, c1b = st.columns(2)
+        c1a.metric("% Imoveis",
+                    f"{comp['pct_imoveis']:.1%}" if comp.get("pct_imoveis") is not None else "n/d")
+        c1b.metric("% Recebiveis (Titulos)",
+                    f"{comp['pct_recebiveis']:.1%}" if comp.get("pct_recebiveis") is not None else "n/d")
+        c1c, c1d = st.columns(2)
+        c1c.metric("% Caixa e Liquidez",
+                    f"{comp['pct_caixa']:.1%}" if comp.get("pct_caixa") is not None else "n/d")
+        c1d.metric("% Outros Invest.",
+                    f"{comp['pct_investimentos']:.1%}" if comp.get("pct_investimentos") is not None else "n/d")
+        c1e, c1f = st.columns(2)
+        c1e.metric("% Valores a Receber",
+                    f"{comp['pct_valores_receber']:.1%}" if comp.get("pct_valores_receber") is not None else "n/d")
+        c1f.metric("% Outros",
+                    f"{comp['pct_outros']:.1%}" if comp.get("pct_outros") is not None else "n/d")
         if comp.get("ativo_total"):
             st.metric("Ativo Total", format_currency(comp["ativo_total"]))
         if comp.get("data_ref"):
@@ -387,8 +541,9 @@ def render_score(ticker: str, *, key_prefix: str = "afii") -> None:
                 liquidez_21d_brl=liq_s,
                 session=session,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Erro ao calcular score para {ticker}: {e}")
 
     if sc is None:
         st.info("Nao foi possivel calcular o score. Verifique se ha dados suficientes no banco.")

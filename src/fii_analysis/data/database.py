@@ -96,6 +96,11 @@ class AtivoPassivo(Base):
     lci: Mapped[float | None] = mapped_column(Numeric)
     lci_lca: Mapped[float | None] = mapped_column(Numeric)
     disponibilidades: Mapped[float | None] = mapped_column(Numeric)
+    total_investido: Mapped[float | None] = mapped_column(Numeric)
+    total_necessidades_liquidez: Mapped[float | None] = mapped_column(Numeric)
+    valores_receber: Mapped[float | None] = mapped_column(Numeric)
+    contas_receber_aluguel: Mapped[float | None] = mapped_column(Numeric)
+    outros_valores_mobliarios: Mapped[float | None] = mapped_column(Numeric)
     ativo_total: Mapped[float | None] = mapped_column(Numeric)
 
 

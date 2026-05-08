@@ -372,10 +372,28 @@ def decidir_ticker(
     # -------------------------------------------------------------------------
     flag_destr = False
     motivo_destr: Optional[str] = None
+    gravidade_destr: Optional[str] = None
     try:
         destr = flag_destruicao_capital(ticker, session)
         flag_destr = bool(destr.get("destruicao", False))
         motivo_destr = destr.get("motivo")
+        gravidade_destr = destr.get("gravidade")
+        tendencia_destr = destr.get("tendencia", "")
+        score_destr = destr.get("score_destruicao", 0)
+        score_saude = destr.get("score_saude", 50)
+        if gravidade_destr == "em_recuperacao":
+            rationale.append(
+                f"Saude: EM RECUPERACAO (score {score_saude}/100, {tendencia_destr}) — "
+                f"gestao revertendo destruicao. {motivo_destr}"
+            )
+        elif gravidade_destr == "alerta":
+            rationale.append(
+                f"Saude: ALERTA destruicao capital (score {score_saude}/100, {tendencia_destr}) — {motivo_destr}"
+            )
+        elif gravidade_destr == "critica":
+            rationale.append(
+                f"Saude: CRITICA destruicao capital (score {score_saude}/100, {tendencia_destr}) — {motivo_destr}"
+            )
     except Exception as exc:
         rationale.append(f"Destruicao capital erro: {exc}")
 

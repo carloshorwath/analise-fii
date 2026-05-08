@@ -112,7 +112,7 @@ def get_serie_preco_volume(ticker: str, session: Session) -> pd.DataFrame:
 def get_benchmark_ifix(session: Session) -> pd.DataFrame:
     rows = session.execute(
         select(BenchmarkDiario.data, BenchmarkDiario.fechamento)
-        .where(BenchmarkDiario.ticker == "IFIX.SA")
+        .where(BenchmarkDiario.ticker == "XFIX11")
         .order_by(BenchmarkDiario.data.asc())
     ).all()
     if not rows:

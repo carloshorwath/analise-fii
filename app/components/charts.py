@@ -67,7 +67,7 @@ def pvp_gauge(pvp: float | None, ticker: str) -> go.Figure:
                    {"range": [1.1, 1.5], "color": "rgba(255,0,0,0.15)"},
                ]},
     ))
-    fig.update_layout(height=300)
+    fig.update_layout(height=300, margin=dict(l=20, r=20, t=60, b=20))
     return fig
 
 
@@ -89,18 +89,99 @@ def dy_trailing_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
     return fig
 
 
-def pl_trend_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
+def pl_trend_chart(df: pd.DataFrame, ticker: str, destruicao_info: dict | None = None) -> go.Figure:
+    """Gráfico de PL + VP/cota com cores indicando destruição/recuperação.
+
+    Args:
+        df: DataFrame com colunas data_ref, patrimonio_liq, vp_por_cota.
+        ticker: Código do FII.
+        destruicao_info: Dict retornado por flag_destruicao_capital (opcional).
+    """
     if df.empty:
         fig = go.Figure()
         fig.add_annotation(text="Sem dados", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
+    import numpy as np
+    from scipy import stats as sp_stats
+
     x_data = pd.to_datetime(df["data_ref"])
     fig = make_subplots(specs=[[{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=x_data, y=df["patrimonio_liq"] / 1e6, name="PL (mi)", marker_color="#636efa"), secondary_y=False)
-    fig.add_trace(go.Scatter(x=x_data, y=df["vp_por_cota"], mode="lines+markers", name="VP/cota", line=dict(color="#ef553b")), secondary_y=True)
+
+    # Cor das barras de PL: vermelho se VP/cota caindo, verde se estável/subindo
+    vp_vals = df["vp_por_cota"].values
+    bar_colors = []
+    for i in range(len(vp_vals)):
+        if i == 0:
+            bar_colors.append("#636efa")
+        else:
+            if pd.notna(vp_vals[i]) and pd.notna(vp_vals[i - 1]) and vp_vals[i - 1] > 0:
+                var = (vp_vals[i] - vp_vals[i - 1]) / vp_vals[i - 1]
+                if var < -0.005:
+                    bar_colors.append("#e74c3c")  # vermelho — VP caindo
+                elif var > 0.005:
+                    bar_colors.append("#2ecc71")  # verde — VP subindo
+                else:
+                    bar_colors.append("#636efa")  # azul — estável
+            else:
+                bar_colors.append("#636efa")
+
+    fig.add_trace(go.Bar(
+        x=x_data, y=df["patrimonio_liq"] / 1e6, name="PL (mi)",
+        marker_color=bar_colors,
+    ), secondary_y=False)
+
+    # Linha VP/cota com espessura e cor baseada na gravidade
+    vp_line_color = "#ef553b"
+    vp_line_width = 2
+    if destruicao_info:
+        grav = destruicao_info.get("gravidade", "saudavel")
+        if grav == "saudavel":
+            vp_line_color = "#2ecc71"
+        elif grav == "em_recuperacao":
+            vp_line_color = "#f39c12"
+        elif grav == "alerta":
+            vp_line_color = "#e67e22"
+        else:
+            vp_line_color = "#e74c3c"
+
+    fig.add_trace(go.Scatter(
+        x=x_data, y=df["vp_por_cota"], mode="lines+markers", name="VP/cota",
+        line=dict(color=vp_line_color, width=vp_line_width),
+    ), secondary_y=True)
+
+    # Linha de tendência (regressão) sobre VP/cota
+    vp_valid = df.dropna(subset=["vp_por_cota"])
+    if len(vp_valid) >= 3:
+        x_trend = np.arange(len(vp_valid), dtype=float)
+        y_trend = vp_valid["vp_por_cota"].values.astype(float)
+        slope, intercept, r_value, _, _ = sp_stats.linregress(x_trend, y_trend)
+        y_fit = slope * x_trend + intercept
+        trend_color = "#e74c3c" if slope < 0 else "#2ecc71"
+        trend_name = f"Tendência VP (slope={slope:.3f})"
+        fig.add_trace(go.Scatter(
+            x=pd.to_datetime(vp_valid["data_ref"]), y=y_fit,
+            mode="lines", name=trend_name,
+            line=dict(dash="dash", color=trend_color, width=1.5),
+        ), secondary_y=True)
+
+    # Badge de gravidade no título
+    title = f"{ticker} — Patrimonio Liquido 24m"
+    if destruicao_info:
+        grav = destruicao_info.get("gravidade", "")
+        tend = destruicao_info.get("tendencia", "")
+        score = destruicao_info.get("score_saude", 100)
+        _GRAV_EMOJI = {
+            "critica": "🔴", "alerta": "🟠",
+            "em_recuperacao": "🟡", "saudavel": "🟢",
+        }
+        _TEND_ARROW = {"piorando": "⬇", "estavel": "➡", "melhorando": "⬆"}
+        emoji = _GRAV_EMOJI.get(grav, "")
+        arrow = _TEND_ARROW.get(tend, "")
+        title = f"{ticker} — PL 24m {emoji} {grav.replace('_', ' ').title()} ({score}/100) {arrow} {tend}"
+
     fig.update_layout(
-        title=f"{ticker} — Patrimonio Liquido 24m",
+        title=title,
         template="plotly_white", height=400,
     )
     fig.update_xaxes(type="date", tickformat="%m/%y")
@@ -112,27 +193,35 @@ def pl_trend_chart(df: pd.DataFrame, ticker: str) -> go.Figure:
 def composicao_pie(comp: dict, ticker: str) -> go.Figure:
     labels = []
     values = []
-    if comp.get("pct_imoveis") is not None:
-        labels.append("Imoveis")
-        values.append(comp["pct_imoveis"] * 100)
-    if comp.get("pct_recebiveis") is not None:
-        labels.append("Recebiveis")
-        values.append(comp["pct_recebiveis"] * 100)
-    if comp.get("pct_caixa") is not None:
-        labels.append("Caixa")
-        values.append(comp["pct_caixa"] * 100)
-    outros = 100 - sum(values) if values else 0
-    if outros > 0.5:
-        labels.append("Outros")
-        values.append(outros)
+    _COLORS = {
+        "Imoveis": "#636efa",
+        "Recebiveis (Titulos)": "#ef553b",
+        "Caixa e Liquidez": "#00cc96",
+        "Outros Invest.": "#ffa15a",
+        "Valores a Receber": "#ab63fa",
+        "Outros": "#b6b6b6",
+    }
+    _fields = [
+        ("pct_imoveis", "Imoveis"),
+        ("pct_recebiveis", "Recebiveis (Titulos)"),
+        ("pct_caixa", "Caixa e Liquidez"),
+        ("pct_investimentos", "Outros Invest."),
+        ("pct_valores_receber", "Valores a Receber"),
+        ("pct_outros", "Outros"),
+    ]
+    for key, label in _fields:
+        val = comp.get(key)
+        if val is not None and val > 0.001:  # > 0.1%
+            labels.append(label)
+            values.append(val * 100)
 
     if not labels:
         fig = go.Figure()
         fig.add_annotation(text="Sem dados de composicao", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
         return fig
 
-    fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.4,
-                           marker_colors=["#636efa", "#ef553b", "#00cc96", "#ab63fa"]))
+    colors = [_COLORS.get(l, "#cccccc") for l in labels]
+    fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.4, marker_colors=colors))
     fig.update_layout(title=f"{ticker} — Composicao do Ativo", height=400)
     return fig
 

@@ -221,7 +221,9 @@ def main():
         )
         col3.metric(
             "P/VP Médio",
-            f"{avg_pvp:.2f}" if pd.notna(avg_pvp) else "—"
+            f"{avg_pvp:.2f}" if pd.notna(avg_pvp) else "—",
+            delta="desconto" if avg_pvp < 0.98 else "ágio" if avg_pvp > 1.02 else "neutro",
+            delta_color="inverse" if avg_pvp < 0.98 or avg_pvp > 1.02 else "off"
         )
     else:
         col2.metric("DY 12m Médio", "—")
@@ -230,6 +232,8 @@ def main():
     col4.metric(
         "Radar OK (≥3/4)",
         str(radar_ok_count),
+        delta=f"{(radar_ok_count/n_tickers)*100:.1f}% da base" if n_tickers > 0 else None,
+        delta_color="off",
         help="FIIs satisfazendo ao menos 3 dos 4 critérios do radar"
     )
     col5.metric(

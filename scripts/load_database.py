@@ -10,6 +10,7 @@ from sqlalchemy import select
 from src.fii_analysis.data.database import Carteira, Ticker, create_tables, get_session
 from src.fii_analysis.data.focus_bcb import fetch_focus_selic
 from src.fii_analysis.data.ingestion import (
+    load_ativo_passivo_to_db,
     load_cdi_to_db,
     load_cvm_to_db,
     load_dividends_yfinance,
@@ -74,6 +75,17 @@ def main():
             load_cvm_to_db(zip_path, year, session)
         except Exception as e:
             logger.error("Erro ao processar CVM {}: {}", year, e)
+
+    logger.info("--- Etapa 2.5: Carga ativo_passivo (CVM) ---")
+    for year in sorted(zips.keys()):
+        zip_path = zips[year]
+        if not zip_path.exists():
+            continue
+        logger.info("Processando ativo_passivo ano {} ...", year)
+        try:
+            load_ativo_passivo_to_db(zip_path, year, session)
+        except Exception as e:
+            logger.error("Erro ativo_passivo {}: {}", year, e)
 
     logger.info("--- Etapa 3: Carga CDI diario (BCB SGS serie 12) ---")
     try:

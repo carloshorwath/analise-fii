@@ -409,6 +409,17 @@ Recentemente (abril 2026), foi realizada uma auditoria completa nos modelos esta
 - `app/pages/4_Radar.py`: exportação CSV usa colunas formatadas ("Sim/Não" em vez de booleanos raw)
 - `app/pages/3_Carteira.py`: fallback carrega optimizer_params do cache quando snapshot indisponível
 
+### Validação Final V3 (Maio 2026) — ✅ Concluído
+
+**Auditoria e Correções de Regressão V3:**
+- Realizado mapeamento completo das alterações entre V2 e V3 com avaliação arquitetural.
+- **Fix Crítico de Benchmark**: O ticker problemático `IFIX.SA` no Yahoo Finance (que forçou um limite de `"1d"`) foi substituído pelo ETF **`XFIX11`**. A carga de dados foi restaurada para histórico completo (`period="max"`), garantindo a integridade dos cálculos de Beta e Momentum.
+- **Desduplicação**: Script redundante `scripts/daily_update.py` removido em favor da CLI oficial (`fii update-prices`).
+- **Otimização de UI**: Laços na tela de Carteira (`3_Carteira.py`) reescritos com operador walrus (`:=`) para ler o cache do otimizador do disco apenas uma vez por ticker.
+- **Tratamento de Erros**: Blocos `except Exception: pass` silenciosos em `analise_fii.py` substituídos por `logging.warning()`.
+- **Sensibilidade Juros (UX)**: Coluna "Preço Ref" na aba "Ações do Dia" (página Hoje) substituída por **"Sensibilidade Juros"**. Agora exibe o percentual direto de impacto no P/VP (`cdi_repricing_12m * 100`) baseado no cenário Focus BCB.
+- **Refinamento Visual**: Adicionados deltas informativos nas métricas "Radar OK" e "P/VP Médio" do Panorama. Tabelas pesadas (`st.table`) no Otimizador substituídas por `st.dataframe` responsivo.
+
 ### Outros pendentes
 
 1. **Falso positivo em eventos de capital**: `flag_destruicao_capital` e `dividend_safety_flag`

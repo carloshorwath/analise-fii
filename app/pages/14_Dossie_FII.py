@@ -28,7 +28,7 @@ def main():
         "Investigar",
     )
     render_inline_note(
-        "Selecione o ticker no topo. As abas cobrem todo o ciclo de investigacao "
+        "Selecione o ticker no topo. As 5 abas cobrem todo o ciclo de investigacao "
         "sem sub-abas aninhadas — cada aba abre diretamente no conteudo."
     )
 
@@ -80,24 +80,22 @@ def main():
 
     st.markdown("---")
 
-    # — 9 tabs planas (sem hierarquia aninhada) —
+    # — 5 tabs consolidadas (vertical-first, menos scroll horizontal) —
     (
-        tab_geral, tab_val, tab_div, tab_saude, tab_comp,
-        tab_dist, tab_risco, tab_preco, tab_eventos,
+        tab_geral, tab_val, tab_div, tab_saude, tab_eventos,
     ) = st.tabs([
         "📊 Visão Geral",
-        "📈 Valuation",
+        "📈 Valuation & Preço",
         "💰 Dividendos",
-        "🏥 Saúde & PL",
-        "🧩 Composição",
-        "⚖️ Distribuição vs Geração",
-        "⚡ Risco & Retorno",
-        "🕯️ Preço & Volume",
+        "🏥 Saúde & Risco",
         "🔬 Eventos CVM",
     ])
 
     with tab_geral:
         analise_fii.render_visao_geral(ticker, dados, key_prefix="dossie_geral")
+        st.markdown("---")
+        st.subheader("Composição do Ativo")
+        analise_fii.render_composicao(ticker, dados, key_prefix="dossie_comp")
 
     with tab_val:
         st.subheader("Valuation")
@@ -105,6 +103,9 @@ def main():
         st.markdown("---")
         st.subheader("P/VP Histórico (médias de longo prazo)")
         fundamentos.render_pvp_historico(ticker, key_prefix="dossie_pvphist")
+        st.markdown("---")
+        st.subheader("Preço & Volume")
+        analise_fii.render_preco_volume(ticker, dados, key_prefix="dossie_pv")
 
     with tab_div:
         st.subheader("Dividendos")
@@ -122,22 +123,12 @@ def main():
         st.markdown("---")
         st.subheader("Patrimônio Líquido & Cotas")
         fundamentos.render_pl_cotas(ticker, key_prefix="dossie_pl")
-
-    with tab_comp:
-        st.subheader("Composição do Ativo")
-        analise_fii.render_composicao(ticker, dados, key_prefix="dossie_comp")
-
-    with tab_dist:
-        st.subheader("Distribuição vs Geração")
-        fundamentos.render_distribuicao_vs_geracao(ticker, key_prefix="dossie_dist")
-
-    with tab_risco:
+        st.markdown("---")
         st.subheader("Risco & Retorno")
         fundamentos.render_risco_retorno(ticker, key_prefix="dossie_risco")
-
-    with tab_preco:
-        st.subheader("Preço & Volume")
-        analise_fii.render_preco_volume(ticker, dados, key_prefix="dossie_pv")
+        st.markdown("---")
+        st.subheader("Distribuição vs Geração")
+        fundamentos.render_distribuicao_vs_geracao(ticker, key_prefix="dossie_dist")
 
     with tab_eventos:
         st.subheader("Eventos CVM — Event Study Discreto")
