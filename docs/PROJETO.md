@@ -747,8 +747,8 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 ## 10. Roadmap
 
 ### Prioridade 1 — Testes
-- Criar `tests/` com cobertura dos módulos de features e models.
-- Priorizar testes de point-in-time, leakage e integridade temporal.
+- [x] Criar `tests/` com cobertura de features, models, snapshot, e CLI (Fase 0 Concluída).
+- [x] Testes de point-in-time, leakage e integridade temporal implementados.
 
 ### Prioridade 2 — Relatórios e histórico
 - `fii diario` — diff desde última execução (o que mudou).

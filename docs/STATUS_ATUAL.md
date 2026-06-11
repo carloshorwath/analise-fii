@@ -165,6 +165,8 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `_aceite_v3_cdi.py` | Teste aceite V3 CDI: Focus BCB + sensitivity + explainer + decisão inalterada + snapshot com migração. 6/6 testes passaram (29/04/2026). |
 | `_patch_database.py` | Patch ad-hoc banco. |
 | `_patch_ativo_passivo.py` | Patch ad-hoc ativo/passivo. |
+| `run_tests.ps1` | [PowerShell] Executa a suíte de testes com medição de cobertura no PowerShell (Anaconda Python). |
+
 
 ### `.claude/agents/`
 
@@ -176,6 +178,18 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `documentation-engineer.md` | Atualização de PROJETO.md e STATUS_ATUAL.md |
 | `ux-researcher.md` | Pesquisa UX: síntese de feedback em ações implementáveis |
 | `beta-tester-trader.md` | Teste beta: perspectiva de trader B&H real |
+
+### `tests/` (Suíte de Testes da Fase 0)
+
+| Arquivo/Pasta | Conteúdo / Função |
+|---|---|
+| `conftest.py` | Fixture do SQLite em memória populado com dados sintéticos (MOCK11/MOCK12, 600 pregões, 24 dividendos/relatórios) e isolamento por função. |
+| `test_indicators.py` | Testes do cálculo do P/VP point-in-time e DY trailing. |
+| `test_walk_forward.py` | Testes de make_splits, validate_no_leakage e descarte de eventos sobrepostos (<21d). |
+| `test_calculation.py` | Testes de percentil rolling (P/VP e DY Gap), z-score e propagação de NaN. |
+| `test_decision.py` | Testes das regras de veto absoluto por destruição de capital e cálculo de concordância. |
+| `test_snapshot.py` | Testes de idempotência e marcação de falhas na geração de snapshots. |
+| `test_cli_smoke.py` | Smoke tests de comandos do CLI (`diario`, `panorama`, `carteira`, `radar`, `alertas`). |
 
 ### `financial-advisor/` (Multi-agent ADK - Vertex AI)
 
@@ -313,4 +327,3 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 2. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
 3. `fii diario` com diff desde última execução
 4. Reconciliar `config.py` ↔ `config.yaml`
-5. Criar `tests/` (pyproject já configura pytest)

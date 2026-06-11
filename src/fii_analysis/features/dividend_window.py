@@ -39,8 +39,11 @@ def get_dividend_windows(ticker: str, session: Session) -> pd.DataFrame:
     fechamentos = {p.data: float(p.fechamento_aj) for p in pregoes if p.fechamento_aj is not None}
     datas_set = set(datas_pregoes)
 
-    rows = []
-    for data_com, valor_cota in dividendos:
+    # Apply thinning: discard subsequent events that are less than 21 trading days apart
+    valid_events = []
+    last_idx = -9999
+    for row in dividendos:
+        data_com = row.data_com
         if data_com in datas_set:
             idx_dia0 = datas_pregoes.index(data_com)
         else:
@@ -51,7 +54,18 @@ def get_dividend_windows(ticker: str, session: Session) -> pd.DataFrame:
                 idx_dia0 = i
             if idx_dia0 is None:
                 continue
+        
+        if idx_dia0 - last_idx < 21:
+            # Overlapping event, discard it
+            continue
+        
+        valid_events.append((row, idx_dia0))
+        last_idx = idx_dia0
 
+    rows = []
+    for row, idx_dia0 in valid_events:
+        data_com = row.data_com
+        valor_cota = row.valor_cota
         idx_start = max(0, idx_dia0 - 10)
         idx_end = min(len(datas_pregoes) - 1, idx_dia0 + 10)
         janela = datas_pregoes[idx_start : idx_end + 1]

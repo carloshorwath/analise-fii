@@ -16,7 +16,7 @@ def _extract_pvp_tuples(serie_df: pd.DataFrame) -> list[tuple]:
     result = []
     for _, row in serie_df.iterrows():
         pvp = row.get("pvp")
-        if pvp is not None:
+        if pvp is not None and pd.notna(pvp):
             result.append((row["data"], row.get("fechamento"), row.get("vp_por_cota"), pvp))
     return result
 
