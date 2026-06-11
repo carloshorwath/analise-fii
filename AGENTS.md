@@ -1,12 +1,13 @@
-# CLAUDE.md — Projeto FII Analysis
+# AGENTS.md — Projeto FII Analysis
 
 > **Fonte única de verdade:** [`docs/PROJETO.md`](docs/PROJETO.md)
-> Este arquivo é apenas um ponteiro. TODAS as regras, arquitetura, status e governança
-> estão documentados em `docs/PROJETO.md`. **Nunca duplique conteúdo aqui.**
+> Este arquivo é lido automaticamente por qualquer IA que trabalhe neste projeto.
+> TODAS as regras, arquitetura, status e governança estão documentados em `docs/PROJETO.md`.
+> **Nunca duplique conteúdo aqui.**
 
 ---
 
-## Agentes Claude Code (`.claude/agents/`)
+## Agentes (`.claude/agents/`)
 
 | Agente | Especialização |
 |---|---|
