@@ -96,4 +96,84 @@ def run_migrations(db_path: Path | None = None) -> None:
         _add_column(conn, "snapshot_decisions", "score_total", "INTEGER")
         conn.commit()
 
+        # Migração 005: Tabela universo para IFIX
+        if not _table_exists(conn, "universo"):
+            logger.info("Migracao: CREATE TABLE universo")
+            conn.execute(text("""
+                CREATE TABLE universo (
+                    ticker TEXT NOT NULL,
+                    cnpj TEXT NOT NULL,
+                    em_ifix BOOLEAN NOT NULL CHECK (em_ifix IN (0, 1)),
+                    peso_ifix REAL,
+                    data_referencia DATE NOT NULL,
+                    fonte TEXT NOT NULL,
+                    atualizado_em DATETIME NOT NULL,
+                    PRIMARY KEY (ticker, data_referencia)
+                )
+            """))
+            conn.commit()
+
+        # Migração 006: Tabela snapshot_opportunities
+        if not _table_exists(conn, "snapshot_opportunities"):
+            logger.info("Migracao: CREATE TABLE snapshot_opportunities")
+            conn.execute(text("""
+                CREATE TABLE snapshot_opportunities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    data_referencia DATE NOT NULL,
+                    vender TEXT NOT NULL,
+                    comprar TEXT NOT NULL,
+                    segmento TEXT NOT NULL,
+                    spread_pvp_pct REAL NOT NULL,
+                    spread_dy_gap REAL NOT NULL,
+                    delta_score REAL NOT NULL,
+                    custo_estimado_pct REAL NOT NULL,
+                    spread_liquido_pct REAL NOT NULL,
+                    dias_persistencia INTEGER NOT NULL,
+                    racional_json TEXT NOT NULL,
+                    vetos_json TEXT NOT NULL,
+                    critic_veredicto TEXT NOT NULL
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_snapshot_opportunities_run ON snapshot_opportunities (run_id)"))
+            conn.commit()
+
+        # Migração 007: Tabela llm_journal
+        if not _table_exists(conn, "llm_journal"):
+            logger.info("Migracao: CREATE TABLE llm_journal")
+            conn.execute(text("""
+                CREATE TABLE llm_journal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data DATE NOT NULL,
+                    template TEXT NOT NULL,
+                    prompt_version TEXT NOT NULL,
+                    modelo TEXT,
+                    ticker TEXT,
+                    snapshot_run_id INTEGER,
+                    resposta_md TEXT NOT NULL,
+                    latencia_ms INTEGER
+                )
+            """))
+            conn.execute(text("CREATE INDEX ix_llm_journal_run_ticker ON llm_journal (snapshot_run_id, ticker)"))
+            conn.commit()
+
+        # Migração 008: Tabela decisoes_log
+        if not _table_exists(conn, "decisoes_log"):
+            logger.info("Migracao: CREATE TABLE decisoes_log")
+            conn.execute(text("""
+                CREATE TABLE decisoes_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data DATE NOT NULL,
+                    tipo TEXT NOT NULL,
+                    ticker_vendido TEXT,
+                    ticker_comprado TEXT,
+                    quantidade INTEGER,
+                    preco REAL,
+                    opportunity_id INTEGER,
+                    racional_usuario TEXT
+                )
+            """))
+            conn.commit()
+
     logger.info("Migracoes aplicadas em {}", db_path)
+

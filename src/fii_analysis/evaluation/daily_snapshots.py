@@ -196,6 +196,8 @@ def resolve_snapshot_universe(
     scope="curado"    — TICKERS do config.py filtrado pelos ativos no banco
     scope="carteira"  — tickers das holdings (ou lê da tabela carteira)
     scope="db_ativos" — todos os tickers com inativo_em IS NULL no banco
+    scope="ifix"      — composição IFIX mais recente ∪ curado ∪ carteira
+                        (superset: garante que a carteira sempre está no run)
     """
     if scope == "curado":
         ativos = set(tickers_ativos(session))
@@ -210,7 +212,23 @@ def resolve_snapshot_universe(
     if scope == "db_ativos":
         return sorted(tickers_ativos(session))
 
-    raise ValueError(f"scope inválido: {scope!r}. Use: curado, carteira, db_ativos")
+    if scope == "ifix":
+        from src.fii_analysis.data.database import Universo
+        # Última data de referência disponível no universo
+        latest_date = session.execute(select(func.max(Universo.data_referencia))).scalar_one_or_none()
+        ifix: set[str] = set()
+        if latest_date:
+            ifix = set(session.execute(
+                select(Universo.ticker)
+                .where(Universo.em_ifix == True, Universo.data_referencia == latest_date)  # noqa: E712
+            ).scalars().all())
+        # Superset com curado + carteira: a carteira pode conter FIIs fora do IFIX
+        # e o lado VENDER do motor de oportunidades precisa deles no run.
+        curado = set(resolve_snapshot_universe(session, "curado"))
+        carteira = set(resolve_snapshot_universe(session, "carteira", holdings))
+        return sorted(ifix | curado | carteira)
+
+    raise ValueError(f"scope inválido: {scope!r}. Use: curado, carteira, db_ativos, ifix")
 
 
 # =============================================================================
@@ -617,10 +635,11 @@ def load_snapshot_decisions(
             nivel_concordancia=row.nivel_concordancia or "BAIXA",
             n_concordam_buy=row.n_concordam_buy or 0,
             n_concordam_sell=row.n_concordam_sell or 0,
-            pvp_atual=row.pvp_atual,
-            pvp_percentil=row.pvp_percentil,
-            dy_gap_percentil=row.dy_gap_percentil,
-            preco_referencia=row.preco_referencia,
+            pvp_atual=_float_or_none(row.pvp_atual),
+            pvp_percentil=_float_or_none(row.pvp_percentil),
+            dy_gap_percentil=_float_or_none(row.dy_gap_percentil),
+            preco_referencia=_float_or_none(row.preco_referencia),
+            score_total=getattr(row, "score_total", None),
             episodio_eh_novo=row.episodio_eh_novo,
             pregoes_desde_ultimo_episodio=row.pregoes_desde_ultimo_episodio,
             janela_captura_aberta=bool(row.janela_captura_aberta)
@@ -899,8 +918,21 @@ def generate_daily_snapshot(
         )
         all_falhos.extend(falhos_base)
 
+        # Universo dual (ADR-23): no escopo "ifix" os 3 motores de decisão rodam
+        # apenas para curado ∪ carteira — o restante do IFIX é observação
+        # (métricas + radar). Os motores não são validados/calibrados fora da
+        # lista curada e rodá-los para ~100 tickers inviabiliza o pipeline diário.
+        if scope == "ifix":
+            decision_tickers = sorted(
+                set(resolve_snapshot_universe(session, "curado"))
+                | set(resolve_snapshot_universe(session, "carteira", holdings))
+            )
+            decision_tickers = [t for t in decision_tickers if t in set(resolved_tickers)]
+        else:
+            decision_tickers = resolved_tickers
+
         n_decisions, falhos_d = build_snapshot_decisions(
-            session, run_id, resolved_tickers, forward_days=forward_days
+            session, run_id, decision_tickers, forward_days=forward_days
         )
         all_falhos.extend(falhos_d)
 
@@ -917,6 +949,46 @@ def generate_daily_snapshot(
             n_alerts = build_snapshot_structural_alerts(
                 session, run_id, advices_objs, carteira_hash=c_hash
             )
+
+        # Gerar Oportunidades de Rotação.
+        # Veredicto fixo "DESCRITIVO": o motor de rotação ainda não possui
+        # backtest point-in-time válido (o módulo opportunities_backtest é
+        # [PESQUISA] — usa decisões de hoje sobre datas passadas, o que viola
+        # a regra §4.1 do PROJETO.md). Não rodar validação espúria no pipeline.
+        n_opportunities = 0
+        try:
+            from src.fii_analysis.data.database import SnapshotOpportunities
+            from src.fii_analysis.decision.opportunities import detectar_oportunidades
+
+            decisoes_run = load_snapshot_decisions(session, run_id)
+            universo_decisoes = {d.ticker: d for d in decisoes_run}
+            opps = detectar_oportunidades(
+                session, today, universo_decisoes=universo_decisoes, run_id=run_id
+            )
+            veredicto = "DESCRITIVO"
+
+            for opp in opps:
+                session.add(SnapshotOpportunities(
+                    run_id=run_id,
+                    data_referencia=today,
+                    vender=opp.vender,
+                    comprar=opp.comprar,
+                    segmento=opp.segmento,
+                    spread_pvp_pct=opp.spread_pvp_pct,
+                    spread_dy_gap=opp.spread_dy_gap,
+                    delta_score=opp.delta_score,
+                    custo_estimado_pct=opp.custo_estimado_pct,
+                    spread_liquido_pct=opp.spread_liquido_pct,
+                    dias_persistencia=opp.dias_persistencia,
+                    racional_json=json.dumps(opp.racional, ensure_ascii=False),
+                    vetos_json=json.dumps(opp.flags_veto, ensure_ascii=False),
+                    critic_veredicto=veredicto
+                ))
+                n_opportunities += 1
+            session.flush()
+            logger.info("SnapshotOpportunities: {} gerados (veredicto={})", n_opportunities, veredicto)
+        except Exception as e:
+            logger.warning(f"Falha ao gerar SnapshotOpportunities para run_id={run_id}: {e}")
 
         # Persistir Focus BCB no run
         try:
@@ -947,6 +1019,7 @@ def generate_daily_snapshot(
             "n_decisions": n_decisions,
             "n_advices": n_advices,
             "n_alerts": n_alerts,
+            "n_opportunities": n_opportunities,
             "tickers_falhos": list(set(all_falhos)),
             "mensagem": "Snapshot gerado com sucesso.",
         }

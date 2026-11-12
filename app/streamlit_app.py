@@ -91,6 +91,7 @@ home_page = st.Page(render_home, title="Inicio", icon=":material/home:", default
 
 # Diario
 hoje_page = st.Page("pages/13_Hoje.py", title="Hoje", icon=":material/today:")
+oportunidades_page = st.Page("pages/16_Oportunidades.py", title="Oportunidades", icon=":material/compare_arrows:")
 carteira_page = st.Page("pages/3_Carteira.py", title="Carteira", icon=":material/account_balance_wallet:")
 panorama_page = st.Page("pages/1_Panorama.py", title="Panorama", icon=":material/table_chart:")
 radar_page = st.Page("pages/4_Radar.py", title="Radar", icon=":material/radar:")
@@ -106,7 +107,7 @@ laboratorio_page = st.Page("pages/15_Laboratorio.py", title="Laboratorio", icon=
 pg = st.navigation(
     {
         "Entrada": [home_page],
-        "Diario": [hoje_page, carteira_page, panorama_page, radar_page],
+        "Diario": [hoje_page, oportunidades_page, carteira_page, panorama_page, radar_page],
         "Investigacao": [dossie_page, alertas_page, event_study_page],
         "Tecnico": [laboratorio_page],
     },

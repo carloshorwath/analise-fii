@@ -41,3 +41,9 @@ def get_janela_dy_meses() -> list[int]:
 def get_threshold(key: str, default=None):
     thresholds = get("thresholds", {})
     return thresholds.get(key, default)
+
+
+def get_oportunidades_param(key: str, default=None):
+    opts = get("oportunidades", {})
+    return opts.get(key, default)
+

@@ -34,6 +34,9 @@ Identificar padrões estatísticos de comportamento de preço de FIIs em janelas
 | 5 | Radar descritivo | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) | `features/radar.py`, `evaluation/radar.py` |
 | 6 | Score comunicativo (Fase 2) | Score 0–100 com 4 sub-scores (Valuation/Risco/Liquidez/Histórico) | `features/score.py`, `features/risk_metrics.py` |
 | 7 | Alertas e relatórios | Diff diário, Markdown, alertas por threshold | `evaluation/alertas.py`, `evaluation/reporter.py` |
+| 8 | Oportunidades de rotação (Fase 5) | Rotação intra-segmento relativa de portfólio | `decision/opportunities.py`, `app/pages/16_Oportunidades.py` |
+| 9 | Síntese LLM (Fase 5) | Análise qualitativa automatizada e prompt packs | `llm/context_builder.py`, `llm/gateway.py`, `llm/prompts.py` |
+
 
 ---
 
@@ -52,6 +55,7 @@ Identificar padrões estatísticos de comportamento de preço de FIIs em janelas
 | Benchmark (XFIX11) | yfinance (`XFIX11`) | Substituiu IFIX/^IFIX.SA (inválidos no yfinance) |
 | CDI diário | BCB SGS série 12 | Taxa diária em %; armazenado em `cdi_diario` |
 | Expectativas Focus BCB | BCB Focus (Selic 3m/6m/12m) | Cache diário em `dados/cache/focus_selic.json` |
+| Composição IFIX | B3 (GetPortfolioDay) | Fallback obrigatório: `dados/ifix_composicao.csv` (mantido por self-healing); CNPJ resolvido via DB → CSV → StatusInvest; persistido em `universo` |
 
 **URLs CVM:**
 
@@ -142,12 +146,13 @@ D:/analise-de-acoes-v3/
 ├── src/fii_analysis/
 │   ├── config.py                      # TICKERS, períodos treino/teste, custos, IR
 │   ├── config_yaml.py                 # Loader do config.yaml (get_threshold)
-│   ├── cli.py                         # Typer CLI: 9 comandos (panorama, fii, carteira, calendario, radar, alertas, consulta, update-prices, diario)
+│   ├── cli.py                         # Typer CLI: 14 comandos (panorama, fii, consulta, radar, alertas, calendario, carteira, update-prices, diario, oportunidades, registrar-decisao, review, prompt, analise)
 │   ├── __main__.py                    # Entry point para `python -m fii_analysis`
 │   ├── data/
-│   │   ├── database.py                # SQLAlchemy 2.0: 15 tabelas (9 operacionais + 6 snapshot)
-│   │   ├── migrations.py              # Migrações idempotentes (sem Alembic): 004 migrações
-│   │   ├── ingestion.py              # CVM, yfinance, brapi, BCB SGS
+│   │   ├── database.py                # SQLAlchemy 2.0: 16 tabelas (10 operacionais + 6 snapshot)
+│   │   ├── migrations.py              # Migrações idempotentes (sem Alembic): 008 migrações
+│   │   ├── ingestion.py              # CVM (+refresh automático do ZIP do ano), yfinance, brapi, BCB SGS
+│   │   ├── ifix.py                   # Composição IFIX (B3 + fallback CSV) → tabela universo
 │   │   ├── cdi.py                    # get_cdi_acumulado_12m() — desacoplado de ingestion
 │   │   └── focus_bcb.py              # fetch_focus_selic() — expectativas Focus BCB com cache
 │   ├── decision/                      # Camada de decisão (Sinal → Ação)
@@ -156,8 +161,17 @@ D:/analise-de-acoes-v3/
 │   │   ├── abertos.py                 # Detecção de oportunidades abertas
 │   │   ├── portfolio_advisor.py       # Conselhos de carteira (HOLD/AUMENTAR/REDUZIR/SAIR)
 │   │   ├── daily_report.py            # DailyCommandCenter: agregação decisão + carteira + CSV
-│   │   └── cdi_focus_explainer.py     # Explicação CDI + Focus BCB (informativo, não altera ação)
+│   │   ├── cdi_focus_explainer.py     # Explicação CDI + Focus BCB (informativo, não altera ação)
+│   │   ├── opportunities.py           # Motor central de rotação relativa (Fase 2)
+│   │   ├── opportunities_backtest.py  # [PESQUISA] Backtest da rotação (NÃO point-in-time; não usado no pipeline)
+│   │   └── decision_journal.py        # Log de decisões reais e ex-post reviews (Fase 4)
+│   ├── llm/                           # Camada LLM (Fase 3)
+│   │   ├── context_builder.py         # Construtor de contextos quantitativos
+│   │   ├── prompts.py                 # Templates de prompts versionados
+│   │   ├── gateway.py                 # Integração n8n e exportação de prompt packs
+│   │   └── journal.py                 # Log e auditoria de respostas do LLM
 │   ├── features/
+
 │   │   ├── dividend_window.py         # Janela ±10 dias úteis (event study)
 │   │   ├── indicators.py              # P/VP, DY trailing (point-in-time)
 │   │   ├── valuation.py               # Percentil rolling, DY N-meses, DY Gap, z-score P/VP, cap rate
@@ -192,6 +206,7 @@ D:/analise-de-acoes-v3/
 │   │   ├── alertas.py                 # Markdown diário + terminal
 │   │   ├── daily_report.py            # Relatório diário acionável (MD+CSV, 5 seções)
 │   │   ├── daily_snapshots.py         # Geração/leitura de snapshots diários (6 tabelas)
+│   │   ├── daily_diff.py              # Diff de snapshots N vs N-1 (Fase 4)
 │   │   └── radar.py                   # Render matriz booleana
 │   └── mcp_server/
 │       └── server.py                  # MCP: validate_split, detect_leakage, etc
@@ -212,7 +227,8 @@ D:/analise-de-acoes-v3/
 │   │   ├── 12_WalkForward.py          # Wrapper standalone (não na sidebar)
 │   │   ├── 13_Hoje.py                 # Diário — Cockpit operacional (snapshots)
 │   │   ├── 14_Dossie_FII.py           # Investigação — Consolidado por ticker (Análise/Fundamentos/Eventos)
-│   │   └── 15_Laboratorio.py          # Técnico — Auditoria (Otimizador/Episódios/WalkForward)
+│   │   ├── 15_Laboratorio.py          # Técnico — Auditoria (Otimizador/Episódios/WalkForward)
+│   │   └── 16_Oportunidades.py        # Diário — Cards de rotação, gerar prompts e registrar decisão
 │   └── components/
 │       ├── page_content/              # Módulos reutilizáveis por Dossie/Laboratório + wrappers
 │       │   ├── analise_fii.py         # render(ticker) — análise por FII
@@ -240,7 +256,8 @@ D:/analise-de-acoes-v3/
 │   ├── analise_spread_recompra.py     # Wrapper: simulação spread recompra (lógica em div_capture)
 │   ├── scrape_fundsexplorer.py        # Scraping FundsExplorer
 │   ├── daily_report.py                # CLI do relatório diário (MD+CSV) com --com-otimizador
-│   ├── generate_daily_snapshots.py    # CLI para gerar snapshot diário (--scope {curado,carteira,db_ativos})
+│   ├── generate_daily_snapshots.py    # CLI para gerar snapshot diário (--scope {curado,carteira,db_ativos,ifix})
+│   ├── load_ifix_universe.py          # Carga inicial do universo IFIX (B3 + CVM + yfinance)
 │   ├── refresh_optimizer_cache.py     # Renova cache de params do otimizador (executar semanalmente)
 │   ├── test_recommender.py            # Sanity check do motor de decisão
 │   ├── test_saude_score.py            # Diagnóstico de saúde financeira para todos os ativos
@@ -467,8 +484,10 @@ Simulação com preço ajustado, otimização grid search (244 combinações: bu
 
 O CLI é independente do Streamlit e deve ser executado no terminal utilizando o interpretador do Anaconda:
 
-**Comando base:**
-`C:/ProgramData/anaconda3/python.exe -m fii_analysis COMANDO`
+**Comando base (wrappers na raiz do projeto, cuidam de PYTHONPATH e encoding):**
+- PowerShell: `.\fii COMANDO`  (ex.: `.\fii diario`)
+- cmd.exe: `fii COMANDO`
+- Forma explícita: `C:/ProgramData/anaconda3/python.exe -m src.fii_analysis COMANDO` (a partir da raiz)
 
 | Comando | Função |
 |---|---|
@@ -479,8 +498,14 @@ O CLI é independente do Streamlit e deve ser executado no terminal utilizando o
 | `alertas` | Gera e exibe alertas diários com base nos thresholds de risco |
 | `calendario` | Lista as próximas datas-com previstas para os próximos 30 dias |
 | `carteira` | Exibe posições, alocação por segmento e retorno vs IFIX |
-| `update-prices` | Pipeline diário completo: preços + dividendos + CDI + XFIX11 + cache otimizador + snapshot |
-| `diario` | Cockpit do dia no terminal (sinais 3 motores, score 0–100, percentis) lendo do snapshot |
+| `update-prices` | Pipeline diário completo: preços + dividendos + CDI + XFIX11 + cache otimizador + snapshot. Default `--scope ifix` (IFIX ∪ curado ∪ carteira); métricas/radar para todo o universo, decisões só para curado ∪ carteira |
+| `diario` | Cockpit do dia no terminal (sinais 3 motores, score 0–100, percentis) lendo do snapshot. `--diff` exibe mudanças. |
+| `oportunidades` | Exibe as oportunidades de rotação ativas a partir do último snapshot |
+| `registrar-decisao` | Registra uma operação ou decisão no log de decisões |
+| `review` | Exibe relatório ex-post de assertividade das rotações recomendadas vs XFIX11 |
+| `prompt` | Gera Prompt Pack local em Markdown para colagem manual |
+| `analise` | Análise qualitativa enriquecida com IA (via gateway ou prompt pack) |
+
 
 ### 6.2 Streamlit Dashboard
 
@@ -488,7 +513,7 @@ Entry point: `app/streamlit_app.py`. Layout `wide`, sidebar expandida com 3 grup
 
 **Navegação (sidebar):**
 
-- **Diário:** `13_Hoje.py`, `3_Carteira.py`, `1_Panorama.py`, `4_Radar.py`
+- **Diário:** `13_Hoje.py`, `16_Oportunidades.py`, `3_Carteira.py`, `1_Panorama.py`, `4_Radar.py`
 - **Investigação:** `14_Dossie_FII.py`, `6_Alertas.py`, `5_Event_Study.py`
 - **Técnico:** `15_Laboratorio.py`
 
@@ -499,6 +524,8 @@ As páginas 2/7/8/10/11/12 são wrappers standalone (não na sidebar) — seu co
 | **1_Panorama** | Diário | Métricas gerais, coluna Ação Hoje, coluna Score 0–100, radar OK |
 | **3_Carteira** | Diário | CRUD de posições, sugestões operacionais (badge HOLD/AUMENTAR/REDUZIR/SAIR), alertas estruturais |
 | **4_Radar** | Diário | Heatmap booleano, tabela detalhada, exportação CSV |
+| **16_Oportunidades** | Diário | Cards de rotação intra-segmento (DESCRITIVOS — sem validação estatística de retorno), geração de prompts e registro de decisão |
+
 | **13_Hoje** | Diário | Cockpit operacional: recomendações diárias, watchlist, carteira cruzada, riscos, contexto de juros |
 | **14_Dossie_FII** | Investigação | Consolidado por ticker — abas Análise FII / Fundamentos / Eventos CVM |
 | **5_Event_Study** | Investigação | Event study agregado: CAR, testes, CriticAgent |
@@ -566,7 +593,11 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 |---|---|---|---|
 | SNFF11 | 40.011.225/0001-68 | Liquidação/descontinuação | Preservar histórico; `inativo_em` marcado; excluído de panorama/radar/alertas |
 
-**Regra:** lista curada, escolhida a dedo — não automatizar adição de novos FIIs.
+**Regra (atualizada pelo ADR-23 — universo dual):** a lista curada acima continua sendo o único
+universo de **decisão operacional** (3 motores, badges, otimizador) e não é automatizada.
+O **universo IFIX** (tabela `universo`, ~107 FIIs) é camada de **observação e comparação**:
+recebe métricas + radar no snapshot e alimenta o lado COMPRAR do motor de rotação.
+Um FII do IFIX só vira posição se o investidor decidir manualmente.
 
 ---
 
@@ -714,10 +745,10 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 
 ### Status Geral
 
-- **Fase 0–5 + Refatoração Arquitetural + Camada de Decisão (F1–F7) + Motor V2 (Fase 1–3) + Validação V3 Concluídos.**
+- **Fase 0–5 + Refatoração Arquitetural + Camada de Decisão (F1–F7) + Motor V2 (Fase 1–3) + Validação V3 + Memória Estratégica (Fase 4) Concluídos.**
 - O sistema possui separação clara entre ingestão (data), lógica de negócio (features), análise estatística (models), camada de decisão (decision), cache de snapshots (evaluation/daily_snapshots) e visualização (app/evaluation).
-- O CLI conta com **9 comandos** incluindo `consulta TICKER`, `update-prices` e `diario`.
-- **14 arquivos de página** Streamlit com error boundary global; 8 visíveis na sidebar (3 grupos: Diário, Investigação, Técnico).
+- O CLI conta com **11 comandos** incluindo `consulta TICKER`, `update-prices`, `diario`, `registrar-decisao` e `review`.
+- **14 arquivos de página** Streamlit com error boundary global; 8 visíveis na sidebar (3 grupos: Diário, Investigação, Técnico) + aba interativa de Diário & Performance na página de Carteira.
 - Sistema de snapshots diários com 6 tabelas desnormalizadas, versionamento por motor e hash de universo/carteira.
 - Score comunicativo 0–100 implementado com pesos adaptativos (não altera decisões).
 - Camada CDI V1 informativa (sensitivity + Focus BCB + explainer) — não altera `_derivar_acao()`.
@@ -751,9 +782,9 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 - [x] Testes de point-in-time, leakage e integridade temporal implementados.
 
 ### Prioridade 2 — Relatórios e histórico
-- `fii diario` — diff desde última execução (o que mudou).
+- [x] `fii diario` — diff desde última execução (o que mudou) (Fase 4 Concluída).
+- [x] Log de decisões de investimento (compra/venda) para backtest futuro vs IFIX (Fase 4 Concluída).
 - Relatório mensal Markdown: panorama + alertas + event study + radar + proventos.
-- Log de decisões de investimento (compra/venda) para backtest futuro vs IFIX.
 
 ### Prioridade 3 — Reprodutibilidade
 - Implementar snapshots reprodutíveis do `fii_data.db` com hash SHA-256.
@@ -768,7 +799,7 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 - Streamlit/Flask adicionais (dashboard atual é suficiente).
 - Multi-usuário, autenticação, notificações push.
 - Exportação para IR.
-- Adicionar novos FIIs ao universo (lista curada, não automatizar).
+- Adicionar novos FIIs à **lista curada de decisão** automaticamente (o universo IFIX de observação é automatizado — ADR-23).
 
 ---
 
@@ -798,6 +829,11 @@ Arquivo: `src/fii_analysis/mcp_server/server.py`. Ferramentas disponíveis:
 | ADR-20 | Governança de documentação | Múltiplas IAs com configs duplicadas e dessincronizadas | SSOT em `docs/PROJETO.md` + thin wrappers por IA | Elimina ~950 linhas de duplicação; drift impossível; nova IA = novo wrapper de 15 linhas |
 | ADR-21 | Benchmark XFIX11 | ^IFIX e IFIX11.SA inválidos no yfinance (404/delisted) | `XFIX11` via yfinance (period=max) | ETF que replica IFIX; histórico completo disponível; substitui ^IFIX para beta e momentum |
 | ADR-22 | CDI V2 rejeitada | Hipótese: resíduo CDI-ajustado melhor que P/VP bruto | Manter P/VP bruto + CDI V1 informativo | Resíduo piora em OOS (2 piora, 1 empata, 1 não-confiável); CDI é parte do sinal, não ruído |
+| ADR-23 | Universo dual | Necessidade de observar mercado sem automatizar carteira | Carteira curada (decisão) + IFIX (observação) | Mantém controle e robustez na carteira, enquanto radar e rotação ganham cross-section |
+| ADR-24 | LLM via gateway n8n | Integrar análise qualitativa sem contaminar a decisão | Webhook n8n com fallback local para prompt pack | LLM nunca altera Ação final; secrets ficam fora do repositório; permite troca fácil de modelo |
+| ADR-25 | Motor de rotação relativa | Responder o que comprar e vender com honestidade estatística | Motor intra-segmento DESCRITIVO (filtros + custos + persistência + cooldown). Lado COMPRAR consome métricas/radar do snapshot; lado VENDER consome decisões da carteira | Sem backtest point-in-time válido, o motor é rotulado DESCRITIVO. `opportunities_backtest.py` é [PESQUISA] — usa decisões de hoje sobre datas passadas e violaria §4.1 se exibido como validação. Silêncio é resultado válido |
+| ADR-27 | Turnaround não é vetado | Veto absoluto por destruição de capital bloqueava compra na baixa | Saúde graduada (saudável/em_recuperação/alerta/crítica): "em recuperação" não veta — vira candidato TURNAROUND com rótulo explícito de risco | Quando o VP volta a subir após destruição passada, o mercado pode já ter precificado o pior; o investidor decide com o risco exposto, não às cegas |
+| ADR-26 | Diário de Decisões e Review Ex-Post | Necessidade de fechar ciclo de aprendizado do investidor | Comparador de Snapshots (Daily Diff) + decisoes_log no SQLite + ex-post review vs XFIX11 | Permite ao investidor avaliar se suas decisões reais bateram o mercado, medindo custo de oportunidade de sugestões ignoradas e hit-rate real das recomendações. |
 
 ---
 

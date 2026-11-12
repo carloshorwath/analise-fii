@@ -344,8 +344,8 @@ def main():
         consol["segmento"] = consol["ticker"].map(seg_map).fillna("n/d")
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab_visao, tab_sugestoes, tab_alertas, tab_gerenciar = st.tabs([
-        "📊 Visão Geral", "💡 Sugestões", "⚠️ Alertas", "⚙️ Gerenciar",
+    tab_visao, tab_sugestoes, tab_alertas, tab_diario, tab_gerenciar = st.tabs([
+        "📊 Visão Geral", "💡 Sugestões", "⚠️ Alertas", "📝 Diário & Performance", "⚙️ Gerenciar",
     ])
 
     # ── TAB 1: Visão Geral ────────────────────────────────────────────────────
@@ -481,6 +481,192 @@ def main():
                         f'</div>',
                         unsafe_allow_html=True,
                     )
+
+    # ── TAB: Diário & Performance ─────────────────────────────────────────────
+    with tab_diario:
+        st.subheader("📝 Diário de Decisões & Review Ex-Post")
+        
+        tab_log_nova, tab_historico, tab_review = st.tabs([
+            "✍️ Registrar Decisão", "📜 Histórico de Logs", "🎯 Review Ex-Post (Performance)"
+        ])
+        
+        with tab_log_nova:
+            st.markdown("##### Registrar Nova Operação ou Decisão")
+            
+            with get_session_ctx() as session:
+                from src.fii_analysis.data.database import get_latest_ready_snapshot_run, SnapshotOpportunities
+                run = get_latest_ready_snapshot_run(session)
+                opp_options = ["Nenhuma (operação avulsa)"]
+                opp_map = {}
+                if run:
+                    opps = session.execute(
+                        select(SnapshotOpportunities).where(SnapshotOpportunities.run_id == run.id)
+                    ).scalars().all()
+                    for o in opps:
+                        label = f"ID {o.id}: VENDER {o.vender} ➔ COMPRAR {o.comprar} (Spread: {o.spread_liquido_pct:+.1f} pp)"
+                        opp_options.append(label)
+                        opp_map[label] = o
+
+            vincular_opp = st.selectbox("Vincular a uma recomendação ativa de hoje", opp_options)
+            opp_selecionada = opp_map.get(vincular_opp)
+            
+            with st.form("form_decisao"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    dec_tipo = st.selectbox(
+                        "Tipo de Decisão", 
+                        ["ROTACAO", "COMPRA", "VENDA", "IGNORADA"],
+                        index=0 if opp_selecionada else 1
+                    )
+                    default_vender = opp_selecionada.vender if opp_selecionada else ""
+                    default_comprar = opp_selecionada.comprar if opp_selecionada else ""
+                    dec_vender = st.text_input("Ticker Vendido (Opcional)", value=default_vender).upper().strip()
+                    dec_comprar = st.text_input("Ticker Comprado (Opcional)", value=default_comprar).upper().strip()
+                    
+                with col2:
+                    dec_qtd = st.number_input("Quantidade (Opcional)", min_value=0, value=0, step=1)
+                    dec_preco = st.number_input("Preço Executado (R$, Opcional)", min_value=0.0, value=0.0, step=0.01)
+                    dec_data = st.date_input("Data do Sinal/Operação", value=opp_selecionada.data_referencia if opp_selecionada else date.today())
+                
+                dec_racional = st.text_area("Racional / Notas do Investidor", placeholder="Escreva o motivo da operação ou por que decidiu ignorar a oportunidade...")
+                
+                submitted = st.form_submit_button("Gravar Decisão no Diário", type="primary")
+                if submitted:
+                    if dec_tipo in ["ROTACAO", "VENDA"] and not dec_vender:
+                        st.error("Para rotação ou venda, informe o Ticker Vendido.")
+                    elif dec_tipo in ["ROTACAO", "COMPRA"] and not dec_comprar:
+                        st.error("Para rotação ou compra, informe o Ticker Comprado.")
+                    else:
+                        with get_session_ctx() as session:
+                            from src.fii_analysis.decision.decision_journal import registrar_decisao, get_fechamento_on_or_before
+                            
+                            opp_id = opp_selecionada.id if opp_selecionada else None
+                            final_preco = dec_preco if dec_preco > 0 else None
+                            
+                            if final_preco is None or final_preco == 0.0:
+                                t_preco = dec_comprar if dec_comprar else dec_vender
+                                if t_preco:
+                                    final_preco = get_fechamento_on_or_before(session, t_preco, dec_data)
+                            
+                            registrar_decisao(
+                                session=session,
+                                tipo=dec_tipo,
+                                ticker_vendido=dec_vender if dec_vender else None,
+                                ticker_comprado=dec_comprar if dec_comprar else None,
+                                quantidade=dec_qtd if dec_qtd > 0 else None,
+                                preco=final_preco,
+                                opportunity_id=opp_id,
+                                racional_usuario=dec_racional if dec_racional else None,
+                                data=dec_data
+                            )
+                            st.success("Decisão gravada com sucesso!")
+                            st.rerun()
+
+        with tab_historico:
+            st.markdown("##### Histórico de Decisões Registradas")
+            with get_session_ctx() as session:
+                from src.fii_analysis.data.database import DecisaoLog
+                logs = session.execute(
+                    select(DecisaoLog).order_by(DecisaoLog.data.desc(), DecisaoLog.id.desc())
+                ).scalars().all()
+                
+            if not logs:
+                st.info("Nenhuma decisão registrada ainda.")
+            else:
+                log_data = []
+                for l in logs:
+                    log_data.append({
+                        "ID": l.id,
+                        "Data": l.data,
+                        "Tipo": l.tipo,
+                        "Vendido": l.ticker_vendido or "—",
+                        "Comprado": l.ticker_comprado or "—",
+                        "Qtd": l.quantidade or "—",
+                        "Preço (R$)": f"R$ {l.preco:.2f}" if l.preco else "—",
+                        "Racional": l.racional_usuario or "—"
+                    })
+                df_logs = pd.DataFrame(log_data)
+                st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                
+                col_del1, col_del2 = st.columns([3, 1])
+                with col_del1:
+                    to_del_id = st.selectbox("Selecione um ID de log para remover:", options=[""] + [str(l.id) for l in logs])
+                with col_del2:
+                    st.write("")
+                    st.write("")
+                    if to_del_id and st.button("Confirmar Exclusão do Log", type="secondary"):
+                        with get_session_ctx() as session:
+                            to_del = session.get(DecisaoLog, int(to_del_id))
+                            if to_del:
+                                session.delete(to_del)
+                                session.commit()
+                                st.success(f"Log {to_del_id} removido com sucesso!")
+                                st.rerun()
+
+        with tab_review:
+            st.markdown("##### Review Ex-Post (Retorno de Rotações Recomendadas)")
+            review_periodo = st.selectbox("Horizonte de avaliação (dias)", [30, 60, 90, 180], index=2)
+            
+            with get_session_ctx() as session:
+                from src.fii_analysis.decision.decision_journal import calcular_retornos_ex_post
+                res_review = calcular_retornos_ex_post(session, dias_horizonte=review_periodo)
+                
+            if not res_review:
+                st.warning(f"Sem dados históricos suficientes de recomendações com horizonte mínimo de {review_periodo} dias.")
+            else:
+                n_tot = len(res_review)
+                n_act = sum(1 for r in res_review if r["realizada"])
+                n_ign = n_tot - n_act
+                
+                avg_par = sum(r["retorno_par"] for r in res_review) / n_tot
+                avg_bench = sum(r["retorno_xfix11"] for r in res_review) / n_tot
+                hit_rt = sum(1 for r in res_review if r["bateu_xfix11"]) / n_tot
+                
+                ign_ret = [r["retorno_par"] for r in res_review if not r["realizada"]]
+                cust_oport = sum(ign_ret) / len(ign_ret) if ign_ret else 0.0
+                
+                st.markdown(
+                    '<div class="kpi-row">'
+                    + _kpi("Hit-Rate vs XFIX11", f"{hit_rt * 100:.1f}%", f"{sum(1 for r in res_review if r['bateu_xfix11'])} de {n_tot} batem o índice")
+                    + _kpi("Retorno Médio Par", f"{avg_par * 100:+.2f}%", f"Benchmark XFIX11: {avg_bench * 100:+.2f}%", "pos" if avg_par >= 0 else "neg")
+                    + _kpi("Rotas Efetuadas", f"{n_act}", f"Ignoradas: {n_ign}")
+                    + _kpi("Custo de Oportunidade", f"{cust_oport * 100:+.2f}%", "Média dos pares ignorados", "warn" if cust_oport > 0 else "")
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+                
+                df_rev_disp = []
+                for r in res_review:
+                    df_rev_disp.append({
+                        "Data Rec.": r["data_recomendacao"].strftime("%d/%m/%Y"),
+                        "Vender": r["vender"],
+                        "Comprar": r["comprar"],
+                        "Ret Vender": r["retorno_vender"],
+                        "Ret Comprar": r["retorno_comprar"],
+                        "Ret Par": r["retorno_par"],
+                        "Ret XFIX11": r["retorno_xfix11"],
+                        "Bateu XFIX11?": "SIM" if r["bateu_xfix11"] else "NÃO",
+                        "Realizada?": "SIM" if r["realizada"] else "NÃO"
+                    })
+                df_rev_disp = pd.DataFrame(df_rev_disp)
+                
+                def _review_color_style(val):
+                    if isinstance(val, float):
+                        c = "#2e7d32" if val >= 0 else "#c62828"
+                        return f"color:{c};font-weight:600"
+                    return ""
+                
+                styled_rev = (
+                    df_rev_disp.style
+                    .map(_review_color_style, subset=["Ret Vender", "Ret Comprar", "Ret Par", "Ret XFIX11"])
+                    .format({
+                        "Ret Vender": "{:.1%}",
+                        "Ret Comprar": "{:.1%}",
+                        "Ret Par": "{:.1%}",
+                        "Ret XFIX11": "{:.1%}"
+                    })
+                )
+                st.dataframe(styled_rev, use_container_width=True, hide_index=True)
 
     # ── TAB 4: Gerenciar ──────────────────────────────────────────────────────
     with tab_gerenciar:

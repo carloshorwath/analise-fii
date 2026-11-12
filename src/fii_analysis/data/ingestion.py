@@ -5,6 +5,8 @@ from zipfile import ZipFile
 
 import os
 import requests
+import json
+import time
 import pandas as pd
 import pandas_market_calendars as mcal
 import yfinance as yf
@@ -13,6 +15,25 @@ from loguru import logger
 
 load_dotenv(r"C:\Modelos-AI\Brapi\.env")
 _b3 = mcal.get_calendar("B3")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+CVM_RAW_DIR = PROJECT_ROOT / "dados" / "cvm" / "raw"
+CVM_INF_MENSAL_URL = "https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_{year}.zip"
+
+YF_EXCLUSOES_PATH = PROJECT_ROOT / "dados" / "yfinance_exclusoes.json"
+
+def _get_yf_exclusoes() -> list[str]:
+    if not YF_EXCLUSOES_PATH.exists():
+        return []
+    with open(YF_EXCLUSOES_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def _add_yf_exclusao(ticker: str):
+    excs = _get_yf_exclusoes()
+    if ticker not in excs:
+        excs.append(ticker)
+        with open(YF_EXCLUSOES_PATH, "w", encoding="utf-8") as f:
+            json.dump(excs, f, indent=2)
 
 
 def _ex_to_data_com(ex_date: date) -> date:
@@ -35,6 +56,7 @@ from src.fii_analysis.data.database import (
     PrecoDiario,
     RelatorioMensal,
     Ticker,
+    Universo,
 )
 
 
@@ -76,7 +98,9 @@ def load_cvm_to_db(zip_path: Path, year: int, session) -> None:
         logger.warning("Complemento vazio para {}, ano {}", zip_path, year)
         return
 
-    cnpts_monitorados = set(session.scalars(select(Ticker.cnpj)).all())
+    cnpjs_tickers = session.scalars(select(Ticker.cnpj)).all()
+    cnpjs_universo = session.scalars(select(Universo.cnpj)).all()
+    cnpts_monitorados = set(cnpjs_tickers) | set(cnpjs_universo)
     if not cnpts_monitorados:
         logger.warning("Nenhum ticker cadastrado na tabela tickers")
         return
@@ -136,6 +160,12 @@ def load_cvm_to_db(zip_path: Path, year: int, session) -> None:
 
 
 def load_prices_yfinance(ticker: str, session) -> None:
+    if ticker in _get_yf_exclusoes():
+        logger.info("{}: ignorado (exclusoes yfinance)", ticker)
+        return
+        
+    time.sleep(0.5)  # Throttling
+    
     ultimo = session.execute(
         select(PrecoDiario.data)
         .where(PrecoDiario.ticker == ticker)
@@ -152,10 +182,16 @@ def load_prices_yfinance(ticker: str, session) -> None:
         logger.info("{}: buscando historico completo", ticker)
 
     yf_ticker = yf.Ticker(symbol)
-    if start:
-        hist = yf_ticker.history(start=start, auto_adjust=False)
-    else:
-        hist = yf_ticker.history(period="max", auto_adjust=False)
+    try:
+        if start:
+            hist = yf_ticker.history(start=start, auto_adjust=False)
+        else:
+            hist = yf_ticker.history(period="max", auto_adjust=False)
+    except Exception as e:
+        logger.error("{}: falha yfinance ({})", ticker, e)
+        _add_yf_exclusao(ticker)
+        return
+        
     if hist.empty:
         logger.info("{}: nenhum dado novo", ticker)
         return
@@ -191,6 +227,10 @@ def load_prices_yfinance(ticker: str, session) -> None:
 
 
 def load_dividends_yfinance(ticker: str, session) -> None:
+    if ticker in _get_yf_exclusoes():
+        return
+        
+    time.sleep(0.5)  # Throttling
     symbol = f"{ticker}.SA"
     yf_ticker = yf.Ticker(symbol)
     divs = yf_ticker.dividends
@@ -236,7 +276,9 @@ def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
         logger.warning("ativo_passivo vazio para {}, ano {}", zip_path, year)
         return
 
-    cnpts_monitorados = set(session.scalars(select(Ticker.cnpj)).all())
+    cnpjs_tickers = session.scalars(select(Ticker.cnpj)).all()
+    cnpjs_universo = session.scalars(select(Universo.cnpj)).all()
+    cnpts_monitorados = set(cnpjs_tickers) | set(cnpjs_universo)
     if not cnpts_monitorados:
         logger.warning("Nenhum ticker cadastrado na tabela tickers")
         return
@@ -476,6 +518,8 @@ def load_ifix_to_db(session, anos: int = 5) -> int:
         logger.warning("Brapi IFIX11 falhou: {}. Momentum IFIX indisponivel.", exc)
         return 0
 
+    agora = datetime.now()
+    inseridos = 0
     for item in hist:
         ts = item.get("date")
         if ts is None:
@@ -628,3 +672,44 @@ def load_benchmark_brapi(ticker: str, session) -> None:
         inseridos += 1
     session.commit()
     logger.info("Benchmark brapi {}: {} registros inseridos", ticker, inseridos)
+
+
+def refresh_cvm_current_year(session, max_age_days: int = 7) -> bool:
+    """Re-baixa o ZIP CVM do ano corrente (e do anterior em jan/fev) se o local
+    estiver mais velho que max_age_days, e reingere complemento + ativo_passivo.
+
+    Retorna True se algum ZIP foi atualizado. Mantém o diferencial de dados do
+    projeto: sem isso, cvm_defasada dispara para o universo inteiro ~45 dias
+    após a última carga manual.
+    """
+    hoje = date.today()
+    anos = {hoje.year}
+    if hoje.month <= 2:
+        anos.add(hoje.year - 1)  # relatórios de dez/nov ainda chegam no início do ano
+
+    atualizou = False
+    for year in sorted(anos):
+        dest = CVM_RAW_DIR / f"inf_mensal_fii_{year}.zip"
+        if dest.exists():
+            idade_dias = (datetime.now() - datetime.fromtimestamp(dest.stat().st_mtime)).days
+            if idade_dias < max_age_days:
+                logger.info("CVM {}: ZIP local tem {} dia(s), sem refresh", year, idade_dias)
+                continue
+        url = CVM_INF_MENSAL_URL.format(year=year)
+        logger.info("CVM {}: baixando {} ...", year, url)
+        try:
+            resp = requests.get(url, timeout=120)
+            resp.raise_for_status()
+        except Exception as e:
+            logger.error("CVM {}: falha no download ({}). Mantendo ZIP local.", year, e)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(resp.content)
+        logger.info("CVM {}: ZIP atualizado ({} KB). Reingerindo...", year, len(resp.content) // 1024)
+        try:
+            load_cvm_to_db(dest, year, session)
+            load_ativo_passivo_to_db(dest, year, session)
+            atualizou = True
+        except Exception as e:
+            logger.error("CVM {}: falha na reingestão: {}", year, e)
+    return atualizou

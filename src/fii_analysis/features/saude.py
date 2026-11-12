@@ -104,35 +104,50 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     if len(relatorios) < 3:
         return _destruicao_result(False, "saudavel", "estavel", 100, "dados insuficientes")
 
+    ef_vals = [float(r.rentab_efetiva) for r in relatorios if r.rentab_efetiva is not None]
+    median_ef = float(np.median(ef_vals)) if ef_vals else 0.0
+
     # --- Consecutividade rent_efetiva > rent_patrim ---
     # max_consec: maior streak histórico (display). current_consec: streak ativo (score).
+    # relatorios is DESCENDING (most recent first). We iterate ASCENDING to find max_consec.
     consec = 0
     max_consec = 0
     streak_end_idx = 0
-    for i, r in enumerate(relatorios):
+    for i, r in enumerate(reversed(relatorios)):
         ef = float(r.rentab_efetiva) if r.rentab_efetiva is not None else None
         pa = float(r.rentab_patrim) if r.rentab_patrim is not None else None
-        if ef is not None and pa is not None and ef > pa:
-            consec += 1
-            if consec > max_consec:
-                max_consec = consec
-                streak_end_idx = i
-        else:
-            consec = 0
+        
+        if ef is not None and pa is not None:
+            is_extraordinario = (ef > 3 * median_ef) and (median_ef > 0)
+            if is_extraordinario:
+                continue  # Skip extraordinary events
+                
+            if ef > pa:
+                consec += 1
+                if consec > max_consec:
+                    max_consec = consec
+                    streak_end_idx = len(relatorios) - 1 - i
+            else:
+                consec = 0
 
-    # current_consec: streak a partir do mês mais recente.
-    # Se o mês mais recente NÃO é ruim → current_consec = 0 (problema parou).
+    # current_consec: streak ativo (contando retroativamente do mais recente)
     current_consec = 0
     for r in relatorios:
         ef = float(r.rentab_efetiva) if r.rentab_efetiva is not None else None
         pa = float(r.rentab_patrim) if r.rentab_patrim is not None else None
-        if ef is not None and pa is not None and ef > pa:
-            current_consec += 1
-        else:
-            break
+        
+        if ef is not None and pa is not None:
+            is_extraordinario = (ef > 3 * median_ef) and (median_ef > 0)
+            if is_extraordinario:
+                continue
+                
+            if ef > pa:
+                current_consec += 1
+            else:
+                break
 
-    cond1 = max_consec >= get_threshold("meses_consec_alerta", 3)
-    cond1_current = current_consec >= get_threshold("meses_consec_alerta", 3)
+    cond1 = max_consec >= get_threshold("meses_consec_alerta", 2)
+    cond1_current = current_consec >= get_threshold("meses_consec_alerta", 2)
 
     janela_streak = relatorios[:streak_end_idx + 1]
 

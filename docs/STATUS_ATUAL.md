@@ -26,9 +26,10 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 
 | Arquivo | Conteúdo |
 |---|---|
-| `database.py` | SQLAlchemy 2.0: ORM declarativo (15 tabelas: 9 operacionais + 6 snapshot), `get_session_ctx`, `get_session`, `get_cnpj_by_ticker`, `get_ultima_coleta`, `get_ultimo_preco_date`, `get_latest_ready_snapshot_run`. |
-| `migrations.py` | Migrações idempotentes (sem Alembic): 4 migrações (001: CDI sensitivity em snapshot_decisions; 002: Focus BCB + CDI deltas; 003: risk_metrics em snapshot_ticker_metrics; 004: score 0–100). Função `run_migrations(db_path)`. |
-| `ingestion.py` | CVM (ZIP → complemento/geral/ativo_passivo), yfinance (preços + dividendos), brapi (atualização diária), BCB SGS série 12 (CDI), conversão ex-date → data-com via calendário B3. `load_benchmark_yfinance()` usa `XFIX11` (substituiu ^IFIX). |
+| `database.py` | SQLAlchemy 2.0: ORM declarativo (16 tabelas: 10 operacionais + 6 snapshot), `get_session_ctx`, `get_session`, `get_cnpj_by_ticker`, `get_ultima_coleta`, `get_ultimo_preco_date`, `get_latest_ready_snapshot_run`. |
+| `migrations.py` | Migrações idempotentes (sem Alembic): 8 migrações (001: CDI sensitivity; 002: Focus BCB; 003: risk_metrics; 004: score 0-100; 005: universo; 006: snapshot_opportunities; 007: llm_journal; 008: decisoes_log). |
+| `ingestion.py` | CVM (ZIP → complemento/geral/ativo_passivo), yfinance (preços + dividendos, com throttle e lista de exclusões em `dados/yfinance_exclusoes.json`), brapi, BCB SGS série 12 (CDI), conversão ex-date → data-com via calendário B3. `refresh_cvm_current_year()` re-baixa o ZIP CVM do ano corrente quando > 7 dias e reingere (chamado pelo `update-prices`). `load_benchmark_yfinance()` usa `XFIX11`. |
+| `ifix.py` | `get_ifix_composition()` — composição teórica do IFIX via B3 (GetPortfolioDay) com fallback `dados/ifix_composicao.csv` (self-healing preserva mapeamentos); resolução de CNPJ via tickers → universo → CSV → StatusInvest; persiste na tabela `universo`. |
 | `cdi.py` | `get_cdi_acumulado_12m(t, session)` — lê apenas `cdi_diario`, desacoplado de `ingestion.py` |
 | `focus_bcb.py` | `fetch_focus_selic()` — busca expectativas Focus BCB (Selic 3m/6m/12m), cache diário em `dados/cache/focus_selic.json`. Retorna `FocusSelicResult` com status `OK`/`SEM_DADOS`/`ERRO_API`. |
 
@@ -40,7 +41,7 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | `indicators.py` | P/VP point-in-time, DY trailing (série e valor) |
 | `valuation.py` | Percentil rolling P/VP (504d), DY N-meses (12/24/36), DY Gap vs CDI, percentil DY Gap (252d), z-score P/VP (504d), cap rate anualizado + spread vs CDI |
 | `portfolio.py` | Panorama carteira, alocação, Herfindahl, retorno vs IFIX |
-| `saude.py` | Tendência PL, flag destruição de capital, análise de emissões, LTV (leverage to value) flag |
+| `saude.py` | Tendência PL, saúde graduada (saudável/em_recuperação/alerta/crítica) com score 0–100, skip de meses extraordinários (eventos de capital), análise de emissões, LTV flag |
 | `fundamentos.py` | Rentabilidade efetiva/patrimonial, alavancagem (Ativo/PL), classificação por alerta |
 | `composicao.py` | Classificação Tijolo/Papel/Híbrido via `ativo_passivo` CVM |
 | `radar.py` | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) |
@@ -78,6 +79,9 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | `abertos.py` | Detectores de oportunidades abertas hoje: `detectar_episodio_aberto` (NOVO vs CONTINUAÇÃO); `detectar_janela_captura` (estima próxima data-com pela mediana histórica). |
 | `portfolio_advisor.py` | Cruzamento decisões × posições da carteira. Dataclass `HoldingAdvice` com badge ∈ {HOLD, AUMENTAR, REDUZIR, SAIR, EVITAR_NOVOS_APORTES}. Funções `aconselhar_carteira`, `alertas_estruturais`, `exportar_sugestoes_md/csv`. |
 | `daily_report.py` | `DailyCommandCenter` dataclass + `build_daily_command_center()` — agrega decisões, carteira e exportação (MD+CSV). |
+| `opportunities.py` | F2 — Motor de rotação DESCRITIVO: lado VENDER usa decisões da carteira; lado COMPRAR usa métricas/radar do snapshot (universo IFIX). Suporta candidatos TURNAROUND (saúde "em recuperação" não veta, rotulada). |
+| `opportunities_backtest.py` | **[PESQUISA — não operacional]** Backtest da rotação. NÃO é point-in-time (usa decisões de hoje em datas passadas); não é chamado pelo pipeline. |
+| `decision_journal.py` | F4 — Gravação de decisões reais e ex-post reviews de retornos das recomendações vs `XFIX11`. |
 
 ### `src/fii_analysis/evaluation/`
 
@@ -118,6 +122,7 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `13_Hoje.py` | sim (Diário) | Cockpit operacional que lê snapshot por padrão: recomendações diárias, watchlist, carteira cruzada e riscos. Tab contexto de juros. |
 | `14_Dossie_FII.py` | sim (Investigação) | Visão consolidada por ticker — abas internas Análise FII / Fundamentos / Eventos CVM. Ticker selecionado compartilhado via `st.session_state.dossie_ticker`. |
 | `15_Laboratorio.py` | sim (Técnico) | Tela de auditoria/backtest com abas Otimizador V2 / Episódios / Walk-Forward. |
+| `16_Oportunidades.py` | sim (Diário) | Cards de rotação intra-segmento (DESCRITIVOS — sem validação estatística de retorno), geração de prompts e registro de decisão. |
 | `2_Analise_FII.py` | não | Wrapper standalone — chama `app.components.page_content.analise_fii.render(ticker)`. |
 | `7_Fundamentos.py` | não | Wrapper standalone — chama `app.components.page_content.fundamentos.render(ticker)`. |
 | `8_Fund_EventStudy.py` | não | Wrapper standalone — chama `app.components.page_content.fund_eventstudy.render()`. |
@@ -154,7 +159,8 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `analise_spread_recompra.py` | Wrapper — lógica em `models/div_capture.py` |
 | `scrape_fundsexplorer.py` | Scraping FundsExplorer |
 | `daily_report.py` | CLI do relatório diário (Fase 2): MD+CSV em `dados/alertas/`. Flags: `--tickers`, `--com-otimizador`, `--output-dir`. |
-| `generate_daily_snapshots.py` | CLI para gerar snapshot diário: `--scope {curado,carteira,db_ativos}`, `--force`. |
+| `generate_daily_snapshots.py` | CLI para gerar snapshot diário: `--scope {curado,carteira,db_ativos,ifix}`, `--force`. Scope `ifix` = IFIX ∪ curado ∪ carteira (métricas/radar para todos; decisões/advices só para curado ∪ carteira). |
+| `load_ifix_universe.py` | Carga inicial do universo IFIX: composição B3 → `universo`, reingestão CVM dos ZIPs locais, preços+dividendos yfinance (~6 min para 107 tickers). |
 | `refresh_optimizer_cache.py` | Renova cache de params do otimizador para todos os tickers ativos. Executar semanalmente. |
 | `test_recommender.py` | Sanity check ad-hoc do motor de decisão (KNIP11). |
 | `test_saude_score.py` | Diagnóstico de saúde financeira — roda `flag_destruicao_capital` para todos os tickers ativos com tabela comparativa (score, gravidade, tendência, streaks, VP slope). |
@@ -188,8 +194,12 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `test_walk_forward.py` | Testes de make_splits, validate_no_leakage e descarte de eventos sobrepostos (<21d). |
 | `test_calculation.py` | Testes de percentil rolling (P/VP e DY Gap), z-score e propagação de NaN. |
 | `test_decision.py` | Testes das regras de veto absoluto por destruição de capital e cálculo de concordância. |
+| `test_saude.py` | Testes de saúde financeira e falsos positivos em eventos de capital. |
+| `test_ifix.py` | Testes de composição IFIX obtidos via API da B3 e fallback de CSV. |
 | `test_snapshot.py` | Testes de idempotência e marcação de falhas na geração de snapshots. |
 | `test_cli_smoke.py` | Smoke tests de comandos do CLI (`diario`, `panorama`, `carteira`, `radar`, `alertas`). |
+| `test_opportunities.py` | Testes do motor de oportunidades de rotação, incluindo persistência, vetos e cooldown. |
+| `test_decision_memory.py` | Testes da Memória Estratégica: diff diário, registro de decisões e cálculo de retornos ex-post. |
 
 ### `financial-advisor/` (Multi-agent ADK - Vertex AI)
 
@@ -217,6 +227,7 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 | `snapshot_decisions` | `id` (auto) | Decisões consolidadas: 3 sinais brutos, ação derivada, concordância, flags de risco, janelas abertas, versionamento por motor. Campos CDI/Focus: `cdi_status`, `cdi_beta`, `cdi_r_squared`, `cdi_p_value`, `cdi_residuo_atual`, `cdi_residuo_percentil`, `cdi_delta_focus_12m`, `cdi_repricing_12m`. Score: `score_total`. |
 | `snapshot_portfolio_advices` | `id` (auto) | Conselhos de carteira: `badge`, `peso_carteira`, `valor_mercado`, `racional`, `valida_ate` |
 | `snapshot_structural_alerts` | `id` (auto) | Alertas estruturais: concentração Herfindahl, top-2 peso, n_tickers — descritivos |
+| `snapshot_opportunities` | `id` (auto) | Oportunidades de rotação de carteira: vender, comprar, segmento, spreads, delta_score, custos, persistência, vetos, `critic_veredicto` (sempre "DESCRITIVO" — sem backtest point-in-time válido). |
 
 ---
 
@@ -277,14 +288,15 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 
 ---
 
-## Volume de dados (referência 2026-04-16)
+## Volume de dados (referência 2026-06-11, pós carga IFIX)
 
 | Tabela | Registros |
 |---|---|
-| `tickers` | 6 ativos + 1 inativo (SNFF11) |
-| `precos_diarios` | 8.184 (6+ tickers) |
-| `dividendos` | 355 |
-| `relatorios_mensais` | 227 |
+| `tickers` | 26 (curados + posições da carteira) |
+| `universo` | 107 FIIs do IFIX (fonte b3_api) |
+| `precos_diarios` | ~164.700 (110 tickers, até 2026-06-11) |
+| `relatorios_mensais` | ~6.400 (110 CNPJs, 2021–2026, referência até abr/2026) |
+| `carteira` | 23 posições |
 
 ---
 
@@ -302,7 +314,7 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 
 ---
 
-## CLI (9 comandos)
+## CLI (14 comandos)
 
 | Comando | Função |
 |---|---|
@@ -314,16 +326,27 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 | `calendario` | Próximas datas-com |
 | `carteira` | Posições, alocação, retorno vs IFIX |
 | `update-prices` | Pipeline diário: preços + dividendos + CDI + XFIX11 + cache otimizador + snapshot |
-| `diario` | Cockpit do dia no terminal (sinais, score, percentis) via snapshot |
+| `diario` | Cockpit do dia no terminal (sinais, score, percentis) via snapshot. `--diff` exibe mudanças vs snapshot anterior. |
+| `oportunidades` | Exibe as oportunidades de rotação ativas a partir do último snapshot |
+| `registrar-decisao` | Registra uma operação ou decisão no log de decisões |
+| `review` | Exibe relatório ex-post de assertividade das rotações recomendadas vs XFIX11 |
+| `prompt` | Gera Prompt Pack local em Markdown para colagem manual |
+| `analise` | Análise qualitativa enriquecida com IA (via gateway ou prompt pack) |
 
-**Workflow diário recomendado:** `fii update-prices` → aguarde ±30s → `fii diario` ou abra Streamlit.
+
+**Workflow diário recomendado** (wrappers `fii.cmd`/`fii.ps1` na raiz):
+`.\fii update-prices` (default scope `ifix`: preços+dividendos do universo, refresh CVM automático, CDI, XFIX11 e snapshot com oportunidades) → `.\fii diario` (abre com o diff "o que mudou") → `.\fii oportunidades` → opcional: `.\fii prompt TICKER` / `.\fii analise TICKER` (LLM via n8n ou prompt pack) → registrar operações com `.\fii registrar-decisao` e medir com `.\fii review`.
 
 ---
 
 ## Pendentes conhecidos
 
-1. **Falso positivo em eventos de capital**: `flag_destruicao_capital` e `dividend_safety_flag`
-   disparam incorretamente quando FII vende ativo e distribui ganho pontual. **Decisão pendente.**
-2. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
-3. `fii diario` com diff desde última execução
+1. ~~Falso positivo em eventos de capital~~ — **Mitigado**: `flag_destruicao_capital` agora ignora
+   meses extraordinários (rent_efetiva > 3× mediana 12m) e usa gravidade graduada
+   (saudável/em_recuperação/alerta/crítica); "em recuperação" não veta (vira TURNAROUND rotulado).
+   Cobertura em `tests/test_saude.py`. Monitorar casos reais no universo IFIX.
+2. **Backtest point-in-time do motor de rotação**: `opportunities_backtest.py` é [PESQUISA]
+   (usa decisões de hoje em datas passadas). Enquanto não houver `decidir_ticker(t)` com corte
+   temporal, as oportunidades permanecem DESCRITIVAS.
+3. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
 4. Reconciliar `config.py` ↔ `config.yaml`

@@ -68,3 +68,13 @@ sinais:
         pvp_percentil_max: 30
       sell:
         pvp_percentil_min: 70
+
+oportunidades:
+  spread_pvp_percentil_min: 25
+  persistencia_dias: 3
+  cooldown_dias: 21
+  max_oportunidades_dia: 3
+  # Rotacao so quando o candidato tem score composto >= score da posicao vendida
+  # (anti value-trap: barato e pior nao e troca, e downgrade)
+  delta_score_min: 0
+

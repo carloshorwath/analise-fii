@@ -5,6 +5,7 @@ import streamlit as st
 
 _DIARIO_PAGES = [
     "Hoje",
+    "Oportunidades",
     "Panorama",
     "Carteira",
     "Radar",

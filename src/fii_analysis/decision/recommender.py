@@ -118,6 +118,7 @@ class TickerDecision:
     pvp_percentil: Optional[float]
     dy_gap_percentil: Optional[float]
     preco_referencia: Optional[float]
+    score_total: Optional[int] = None
 
     # === ESTATISTICA HISTORICA (apendice) ===
     n_episodios_buy: int = 0

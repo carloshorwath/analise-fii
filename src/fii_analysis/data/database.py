@@ -125,6 +125,18 @@ class BenchmarkDiario(Base):
     coletado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class Universo(Base):
+    __tablename__ = "universo"
+
+    ticker: Mapped[str] = mapped_column(String, primary_key=True)
+    cnpj: Mapped[str] = mapped_column(String, nullable=False)
+    em_ifix: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    peso_ifix: Mapped[float | None] = mapped_column(Numeric)
+    data_referencia: Mapped[date] = mapped_column(Date, primary_key=True)
+    fonte: Mapped[str] = mapped_column(String, nullable=False)
+    atualizado_em: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class Carteira(Base):
     __tablename__ = "carteira"
 
@@ -339,6 +351,64 @@ class SnapshotStructuralAlerts(Base):
     valor: Mapped[float | None] = mapped_column(Numeric)
 
 
+class SnapshotOpportunities(Base):
+    """Oportunidades de rotação salvas por run_id."""
+
+    __tablename__ = "snapshot_opportunities"
+    __table_args__ = (
+        Index("ix_snapshot_opportunities_run", "run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    data_referencia: Mapped[date] = mapped_column(Date, nullable=False)
+    vender: Mapped[str] = mapped_column(String, nullable=False)
+    comprar: Mapped[str] = mapped_column(String, nullable=False)
+    segmento: Mapped[str] = mapped_column(String, nullable=False)
+    spread_pvp_pct: Mapped[float] = mapped_column(Numeric, nullable=False)
+    spread_dy_gap: Mapped[float] = mapped_column(Numeric, nullable=False)
+    delta_score: Mapped[float] = mapped_column(Numeric, nullable=False)
+    custo_estimado_pct: Mapped[float] = mapped_column(Numeric, nullable=False)
+    spread_liquido_pct: Mapped[float] = mapped_column(Numeric, nullable=False)
+    dias_persistencia: Mapped[int] = mapped_column(Integer, nullable=False)
+    racional_json: Mapped[str] = mapped_column(Text, nullable=False)
+    vetos_json: Mapped[str] = mapped_column(Text, nullable=False)
+    critic_veredicto: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class LlmJournal(Base):
+    """Log de interações com LLM para fins de auditoria e histórico."""
+    __tablename__ = "llm_journal"
+    __table_args__ = (
+        Index("ix_llm_journal_run_ticker", "snapshot_run_id", "ticker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data: Mapped[date] = mapped_column(Date, nullable=False)
+    template: Mapped[str] = mapped_column(String, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String, nullable=False)
+    modelo: Mapped[str | None] = mapped_column(String)  # Retornado pelo gateway
+    ticker: Mapped[str | None] = mapped_column(String)  # Ticker ou par de rotação (ex: "KNIP11" ou "MOCK11_MOCK13")
+    snapshot_run_id: Mapped[int | None] = mapped_column(Integer)
+    resposta_md: Mapped[str] = mapped_column(Text, nullable=False)
+    latencia_ms: Mapped[int | None] = mapped_column(Integer)
+
+
+class DecisaoLog(Base):
+    """Registro histórico de decisões tomadas pelo usuário."""
+    __tablename__ = "decisoes_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    data: Mapped[date] = mapped_column(Date, nullable=False)
+    tipo: Mapped[str] = mapped_column(String, nullable=False)  # COMPRA / VENDA / ROTACAO / IGNORADA
+    ticker_vendido: Mapped[str | None] = mapped_column(String)
+    ticker_comprado: Mapped[str | None] = mapped_column(String)
+    quantidade: Mapped[int | None] = mapped_column(Integer)
+    preco: Mapped[float | None] = mapped_column(Numeric)
+    opportunity_id: Mapped[int | None] = mapped_column(Integer)  # ID da tabela snapshot_opportunities
+    racional_usuario: Mapped[str | None] = mapped_column(Text)
+
+
 def get_engine(db_path: Path = DEFAULT_DB_PATH):
     global _engine
     if _engine is not None and Path(_engine.url.database) == Path(db_path):
@@ -364,11 +434,22 @@ def get_session(db_path: Path = DEFAULT_DB_PATH):
 
 def create_tables(db_path: Path = DEFAULT_DB_PATH):
     Base.metadata.create_all(get_engine(db_path))
+    from src.fii_analysis.data.migrations import run_migrations
+    run_migrations(db_path)
 
 
 def get_cnpj_by_ticker(ticker: str, session: Session) -> str | None:
-    return session.execute(
+    """Resolve CNPJ pelo ticker: tabela tickers (curado) com fallback no universo (IFIX)."""
+    cnpj = session.execute(
         select(Ticker.cnpj).where(Ticker.ticker == ticker)
+    ).scalar_one_or_none()
+    if cnpj is not None:
+        return cnpj
+    return session.execute(
+        select(Universo.cnpj)
+        .where(Universo.ticker == ticker)
+        .order_by(Universo.data_referencia.desc())
+        .limit(1)
     ).scalar_one_or_none()
 
 

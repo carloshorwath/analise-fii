@@ -17,6 +17,7 @@ from app.components.snapshot_ui import (
     load_latest_snapshot_meta,
     load_panorama_snapshot,
     render_snapshot_info,
+    load_opportunities_snapshot,
 )
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
@@ -24,6 +25,9 @@ from src.fii_analysis.decision import (
     export_daily_report_csv,
     export_daily_report_md,
 )
+from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown
+from src.fii_analysis.data.database import SnapshotRun
+from sqlalchemy import select
 
 safe_set_page_config(page_title="Hoje", page_icon="compass", layout="wide")
 
@@ -138,6 +142,45 @@ def main():
         "As acoes abaixo sao SUGESTOES operacionais geradas por regras estatisticas do sistema. "
         "Nao sao ordens executaveis e devem ser validadas antes de operar."
     )
+
+    # ── Seção: O que mudou desde ontem ─────────────────────────────────────────
+    with get_session_ctx() as session:
+        runs = session.execute(
+            select(SnapshotRun)
+            .where(SnapshotRun.status == "ready")
+            .order_by(SnapshotRun.data_referencia.desc(), SnapshotRun.criado_em.desc())
+            .limit(2)
+        ).scalars().all()
+        
+        diff_md = None
+        if len(runs) >= 2:
+            diff_obj = calcular_diff_diario(session, runs[0].id, runs[1].id)
+            diff_md = render_diff_markdown(diff_obj)
+
+    if diff_md:
+        with st.expander("🔍 O que mudou desde ontem", expanded=True):
+            st.markdown(diff_md)
+
+    # ── Seção: Oportunidades de Rotação (Top 3) ──────────────────────────────────
+    with st.spinner("Buscando oportunidades de rotação..."):
+        _, opps_df = load_opportunities_snapshot()
+    
+    if not opps_df.empty:
+        with st.expander("🔄 Oportunidades de Rotação (Top 3)", expanded=True):
+            st.markdown("Sugestões de troca de ativos com maior spread líquido e sem vetos ativos:")
+            top_3 = opps_df.head(3)
+            for _, o in top_3.iterrows():
+                st.markdown(
+                    f"- **VENDER {o['vender']}** ➔ **COMPRAR {o['comprar']}** | "
+                    f"Spread Líq: **`{o['spread_liquido_pct']:+.1f} pp`** | "
+                    f"Delta Score: **`{o['delta_score']:+.0f}`** | "
+                    f"Persistência: `{o['dias_persistencia']} dias` | "
+                    f"Critic: `{o['critic_veredicto']}`"
+                )
+            st.markdown("*(Acesse o menu lateral **Oportunidades** para ver detalhes, gerar prompts e registrar a execução)*")
+    else:
+        with st.expander("🔄 Oportunidades de Rotação (Top 3)", expanded=False):
+            st.info("Nenhuma oportunidade de rotação ativa hoje.")
 
     # Carregar scores do snapshot para exibir badges coloridos
     _, snap_df = load_panorama_snapshot(snapshot_scope)

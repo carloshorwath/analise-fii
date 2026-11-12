@@ -23,6 +23,10 @@ from src.fii_analysis.decision.recommender import (
     decidir_ticker,
     decidir_universo,
 )
+from src.fii_analysis.decision.decision_journal import (
+    registrar_decisao,
+    calcular_retornos_ex_post,
+)
 
 __all__ = [
     "TickerDecision",
@@ -38,4 +42,6 @@ __all__ = [
     "build_daily_command_center",
     "export_daily_report_md",
     "export_daily_report_csv",
+    "registrar_decisao",
+    "calcular_retornos_ex_post",
 ]

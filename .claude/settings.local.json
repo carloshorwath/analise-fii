@@ -78,7 +78,14 @@
       "Bash(exit 1)",
       "Bash(grep -v \"^$\")",
       "Bash(python -c ' *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "PowerShell(git -C D:\\\\analise-de-acoes-v3 status --short)",
+      "PowerShell(git -C D:\\\\analise-de-acoes-v3 diff --stat)",
+      "PowerShell(Get-Content C:\\\\Users\\\\carlo\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\D--analise-de-acoes-v3\\\\dac3eff0-3285-4bec-99f5-d8ef8d1e96c8\\\\tasks\\\\bpcvl7ogc.output -Tail 3; Get-Process -Id \\(Get-Content $null -ErrorAction SilentlyContinue\\) -ErrorAction SilentlyContinue)",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; C:/ProgramData/anaconda3/python.exe -m fii_analysis oportunidades 2>&1 | Select-Object -Last 20)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8599 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -Confirm:$false }; Write-Output \"streamlit encerrado\"; Remove-Item D:\\\\analise-de-acoes-v3\\\\scripts\\\\_check_run33.py -Confirm:$false)",
+      "PowerShell(Set-Location D:\\\\analise-de-acoes-v3; cmd /c \"fii.cmd review\" | Select-Object -Last 3; Write-Output \"exit: $LASTEXITCODE\")",
+      "Bash(C:/ProgramData/anaconda3/python.exe -c \"import streamlit,sys;print\\(sys.version\\);print\\(streamlit.__version__\\)\")"
     ]
   }
 }

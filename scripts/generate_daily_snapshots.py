@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument(
         "--scope",
         default="curado",
-        choices=["curado", "carteira", "db_ativos"],
+        choices=["curado", "carteira", "db_ativos", "ifix"],
         help="Universo a processar (default: curado)",
     )
     parser.add_argument(
@@ -77,7 +77,7 @@ def main() -> None:
 
     with get_session_ctx() as session:
         holdings: list[dict] = []
-        if args.scope == "carteira":
+        if args.scope in ("carteira", "ifix"):
             holdings = _load_holdings(session)
             if not holdings:
                 print("Aviso: carteira vazia — gerando sem portfolio advices")

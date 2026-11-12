@@ -54,7 +54,7 @@ def get_pvp_percentil(ticker: str, t: date, janela: int | None = None, session: 
     if n < 63:
         return None, 0
 
-    percentil = float(np.percentile(window, 100) if pvp_em_t >= max(window) else
+    percentil = float(100.0 if pvp_em_t >= max(window) else
                  np.searchsorted(sorted(window), pvp_em_t) / n * 100)
 
     if n >= 252:

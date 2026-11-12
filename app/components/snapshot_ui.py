@@ -31,14 +31,43 @@ from src.fii_analysis.data.database import (
     SnapshotRun,
     SnapshotStructuralAlerts,
     SnapshotTickerMetrics,
+    SnapshotOpportunities,
     get_latest_ready_snapshot_run,
     get_session_ctx,
 )
 
 
+
 # ---------------------------------------------------------------------------
 # Helpers internos
 # ---------------------------------------------------------------------------
+
+
+def _resolve_run(session, scope: str, carteira_hash: str | None = None) -> SnapshotRun | None:
+    """Run mais recente para o scope, preferindo o run 'ifix' quando for mais novo.
+
+    O run 'ifix' é um superset (métricas/radar de todo o universo; decisões e
+    advices de curado ∪ carteira), então pode servir qualquer scope — as funções
+    de carga filtram as linhas para o universo pedido via _tickers_do_scope().
+    """
+    run_scoped = get_latest_ready_snapshot_run(session, scope=scope, carteira_hash=carteira_hash)
+    if scope == "ifix":
+        return run_scoped
+    run_ifix = get_latest_ready_snapshot_run(session, scope="ifix", carteira_hash=carteira_hash)
+    if run_ifix is None:
+        return run_scoped
+    if run_scoped is None or run_ifix.data_referencia >= run_scoped.data_referencia:
+        return run_ifix
+    return run_scoped
+
+
+def _tickers_do_scope(session, scope: str) -> set[str] | None:
+    """Universo de tickers do scope, para filtrar linhas de um run superset."""
+    try:
+        from src.fii_analysis.evaluation.daily_snapshots import resolve_snapshot_universe
+        return set(resolve_snapshot_universe(session, scope))
+    except Exception:
+        return None
 
 
 def _run_to_meta(run: SnapshotRun) -> dict:
@@ -74,7 +103,7 @@ def load_latest_snapshot_meta(
 ) -> dict | None:
     """Retorna metadados do snapshot mais recente ready, ou None."""
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(session, scope=scope, carteira_hash=carteira_hash)
+        run = _resolve_run(session, scope, carteira_hash)
         return _run_to_meta(run) if run else None
 
 
@@ -87,7 +116,7 @@ def load_panorama_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataF
              volume_medio_21d, cvm_defasada, segmento, dy_mes.
     """
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(session, scope=scope)
+        run = _resolve_run(session, scope)
         if run is None:
             return None, pd.DataFrame()
         meta = _run_to_meta(run)
@@ -96,6 +125,10 @@ def load_panorama_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataF
             .where(SnapshotTickerMetrics.run_id == run.id)
             .order_by(SnapshotTickerMetrics.ticker)
         ).scalars().all()
+        if run.universe_scope != scope:
+            permitidos = _tickers_do_scope(session, scope)
+            if permitidos is not None:
+                rows = [r for r in rows if r.ticker in permitidos]
         if not rows:
             return meta, pd.DataFrame()
         records = [
@@ -144,7 +177,7 @@ def load_radar_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataFram
              vistos (int 0–4), saude_motivo.
     """
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(session, scope=scope)
+        run = _resolve_run(session, scope)
         if run is None:
             return None, pd.DataFrame()
         meta = _run_to_meta(run)
@@ -153,6 +186,10 @@ def load_radar_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataFram
             .where(SnapshotRadar.run_id == run.id)
             .order_by(SnapshotRadar.ticker)
         ).scalars().all()
+        if run.universe_scope != scope:
+            permitidos = _tickers_do_scope(session, scope)
+            if permitidos is not None:
+                rows = [r for r in rows if r.ticker in permitidos]
         if not rows:
             return meta, pd.DataFrame()
         records = [
@@ -181,10 +218,10 @@ def load_portfolio_advices_snapshot(
     df vazio significa que o snapshot não inclui a carteira atual.
     """
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(
+        run = _resolve_run(
             session,
-            scope=scope,
-            carteira_hash=carteira_hash if scope == "carteira" else None,
+            scope,
+            carteira_hash if scope == "carteira" else None,
         )
         if run is None:
             return None, pd.DataFrame()
@@ -225,10 +262,10 @@ def load_structural_alerts_snapshot(
 ) -> tuple[dict | None, pd.DataFrame]:
     """Retorna (meta, df) com alertas estruturais do último snapshot ready."""
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(
+        run = _resolve_run(
             session,
-            scope=scope,
-            carteira_hash=carteira_hash if scope == "carteira" else None,
+            scope,
+            carteira_hash if scope == "carteira" else None,
         )
         if run is None:
             return None, pd.DataFrame()
@@ -278,7 +315,7 @@ def load_command_center_snapshot(
         ).hexdigest()[:12]
 
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(session, scope=scope, carteira_hash=c_hash)
+        run = _resolve_run(session, scope, c_hash)
         if run is None:
             return None
         # holdings=None é correto aqui: o run já foi filtrado pelo c_hash, então
@@ -301,9 +338,7 @@ def load_carteira_advices_snapshot(
     )
 
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(
-            session, scope="carteira", carteira_hash=carteira_hash
-        )
+        run = _resolve_run(session, "carteira", carteira_hash)
         if run is None:
             return None, [], []
         meta = _run_to_meta(run)
@@ -322,7 +357,7 @@ def load_decisions_snapshot(scope: str = "curado") -> tuple[dict | None, pd.Data
              sinal_episodio, sinal_walkforward, flag_destruicao_capital.
     """
     with get_session_ctx() as session:
-        run = get_latest_ready_snapshot_run(session, scope=scope)
+        run = _resolve_run(session, scope)
         if run is None:
             return None, pd.DataFrame()
         meta = _run_to_meta(run)
@@ -331,6 +366,10 @@ def load_decisions_snapshot(scope: str = "curado") -> tuple[dict | None, pd.Data
             .where(SnapshotDecisions.run_id == run.id)
             .order_by(SnapshotDecisions.ticker)
         ).scalars().all()
+        if run.universe_scope != scope:
+            permitidos = _tickers_do_scope(session, scope)
+            if permitidos is not None:
+                rows = [r for r in rows if r.ticker in permitidos]
         if not rows:
             return meta, pd.DataFrame()
         records = [
@@ -348,9 +387,54 @@ def load_decisions_snapshot(scope: str = "curado") -> tuple[dict | None, pd.Data
         return meta, pd.DataFrame(records)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_opportunities_snapshot() -> tuple[dict | None, pd.DataFrame]:
+    """Retorna (meta, df) com as oportunidades de rotação do último snapshot ready.
+
+    Colunas: id, vender, comprar, segmento, spread_pvp_pct, spread_dy_gap,
+             delta_score, custo_estimado_pct, spread_liquido_pct,
+             dias_persistencia, racional_json, vetos_json, critic_veredicto,
+             data_referencia.
+    """
+    with get_session_ctx() as session:
+        # Oportunidades vivem no run mais recente, qualquer que seja o scope
+        run = get_latest_ready_snapshot_run(session)
+        if run is None:
+            return None, pd.DataFrame()
+        meta = _run_to_meta(run)
+        rows = session.execute(
+            select(SnapshotOpportunities)
+            .where(SnapshotOpportunities.run_id == run.id)
+            .order_by(SnapshotOpportunities.spread_liquido_pct.desc())
+        ).scalars().all()
+        if not rows:
+            return meta, pd.DataFrame()
+        records = [
+            {
+                "id": r.id,
+                "vender": r.vender,
+                "comprar": r.comprar,
+                "segmento": r.segmento,
+                "spread_pvp_pct": float(r.spread_pvp_pct) if r.spread_pvp_pct is not None else 0.0,
+                "spread_dy_gap": float(r.spread_dy_gap) if r.spread_dy_gap is not None else 0.0,
+                "delta_score": float(r.delta_score) if r.delta_score is not None else 0.0,
+                "custo_estimado_pct": float(r.custo_estimado_pct) if r.custo_estimado_pct is not None else 0.0,
+                "spread_liquido_pct": float(r.spread_liquido_pct) if r.spread_liquido_pct is not None else 0.0,
+                "dias_persistencia": r.dias_persistencia,
+                "racional_json": r.racional_json,
+                "vetos_json": r.vetos_json,
+                "critic_veredicto": r.critic_veredicto,
+                "data_referencia": r.data_referencia,
+            }
+            for r in rows
+        ]
+        return meta, pd.DataFrame(records)
+
+
 # ---------------------------------------------------------------------------
 # Renderização de frescor
 # ---------------------------------------------------------------------------
+
 
 
 def render_snapshot_info(meta: dict | None, *, stale_carteira: bool = False) -> None:
