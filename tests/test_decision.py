@@ -37,7 +37,13 @@ def test_decidir_ticker_veto_integration(MockOptimizer, mock_wf, db_session):
     mock_wf.return_value = {
         "sinal_hoje": {"sinal": "BUY", "data_ultimo_sinal_oos": date(2025, 4, 1)},
         "n_steps": 10,
-        "summary": {"BUY": {"p_value": 0.01}}
+        # n_effective >= 30 e p corrigido (0.01 * 2 = 0.02) < 0.05 => WF tem suporte
+        "summary": {"BUY": {"p_value": 0.01, "n_effective": 40, "mean": 0.02}}
+    }
+    stats_otim = {  # otimizador com suporte: n=40 independentes, p Bonferroni 0.001
+        "n_buy_thinned": 40, "n_sell_thinned": 40,
+        "p_value_buy_bonferroni": 0.001, "p_value_sell_bonferroni": 0.5,
+        "avg_return_buy_independent": 0.02,
     }
     
     # Mock optimizer signal
@@ -49,7 +55,7 @@ def test_decidir_ticker_veto_integration(MockOptimizer, mock_wf, db_session):
     # MOCK11 is healthy by default in our conftest.py
     decision_healthy = decidir_ticker(
         "MOCK11", db_session, optimizer_params={"some": "param"},
-        pvp_pct_low=10.0, pvp_pct_high=90.0
+        pvp_pct_low=10.0, pvp_pct_high=90.0, optimizer_stats=stats_otim,
     )
     # Since walkforward (BUY) + optimizer (BUY) + episodes (which could be NEUTRO)
     # The total buy count will be >= 2 => COMPRAR
@@ -84,7 +90,7 @@ def test_decidir_ticker_veto_integration(MockOptimizer, mock_wf, db_session):
     # Query decidir_ticker again on a date after these reports are delivered
     decision_unhealthy = decidir_ticker(
         "MOCK11", db_session, optimizer_params={"some": "param"},
-        pvp_pct_low=10.0, pvp_pct_high=90.0
+        pvp_pct_low=10.0, pvp_pct_high=90.0, optimizer_stats=stats_otim,
     )
     
     assert decision_unhealthy.flag_destruicao_capital is True

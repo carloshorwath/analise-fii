@@ -59,6 +59,7 @@ from src.fii_analysis.decision.portfolio_advisor import (
     alertas_estruturais,
 )
 from src.fii_analysis.decision.recommender import TickerDecision, decidir_universo
+from src.fii_analysis.decision.suporte import extrair_stats_otimizador, restaurar_de_rationale
 from src.fii_analysis.features.portfolio import carteira_panorama
 from src.fii_analysis.features.radar import radar_matriz
 from src.fii_analysis.features.risk_metrics import (
@@ -148,7 +149,7 @@ def _build_optimizer_params_map(session: Session, tickers: list[str]) -> dict[st
             best = result["best_params"]
             params_map[ticker] = best
             try:
-                save_optimizer_cache(ticker, best)
+                save_optimizer_cache(ticker, best, test_stats=extrair_stats_otimizador(result))
                 logger.info(f"Optimizer cache salvo para {ticker}")
             except Exception as e:
                 logger.warning(f"Falha ao salvar optimizer cache para {ticker}: {e}")
@@ -619,6 +620,8 @@ def load_snapshot_decisions(
     rows = get_snapshot_decisions(session, run_id)
     decisions: list[TickerDecision] = []
     for row in rows:
+        rationale_row = json.loads(row.rationale_json) if row.rationale_json else []
+        suporte_row, bloqueio_row = restaurar_de_rationale(rationale_row)
         d = TickerDecision(
             ticker=row.ticker,
             data_referencia=row.data_referencia or date.today(),
@@ -655,7 +658,9 @@ def load_snapshot_decisions(
             cdi_residuo_percentil=_float_or_none(getattr(row, "cdi_residuo_percentil", None)),
             cdi_delta_focus_12m=_float_or_none(getattr(row, "cdi_delta_focus_12m", None)),
             cdi_repricing_12m=_float_or_none(getattr(row, "cdi_repricing_12m", None)),
-            rationale=json.loads(row.rationale_json) if row.rationale_json else [],
+            suporte_sinais=suporte_row,
+            bloqueio_compra=bloqueio_row,
+            rationale=rationale_row,
         )
         decisions.append(d)
     return decisions

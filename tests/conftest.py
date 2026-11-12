@@ -19,6 +19,20 @@ test_engine = create_engine(
 db._engine = test_engine
 db.get_engine = lambda db_path=None: test_engine
 
+@pytest.fixture(autouse=True)
+def isolar_diretorios_de_saida(tmp_path, monkeypatch):
+    """Redireciona escritas em dados/ (alertas, prompts, cache otimizador, exclusoes yf) para tmp_path."""
+    import src.fii_analysis.evaluation.alertas as alertas_mod
+    import src.fii_analysis.llm.gateway as gateway_mod
+    import src.fii_analysis.models.threshold_optimizer_v2 as opt_mod
+    import src.fii_analysis.data.ingestion as ingestion_mod
+
+    monkeypatch.setattr(alertas_mod, "ALERTAS_DIR", tmp_path / "alertas")
+    monkeypatch.setattr(gateway_mod, "PROMPTS_DIR", str(tmp_path / "prompts"))
+    monkeypatch.setattr(opt_mod, "_OPTIMIZER_CACHE_DIR", tmp_path / "optimizer_cache")
+    monkeypatch.setattr(ingestion_mod, "YF_EXCLUSOES_PATH", tmp_path / "yfinance_exclusoes.json")
+
+
 # Function-scoped fixture ensures complete test isolation
 @pytest.fixture(autouse=True)
 def setup_database():

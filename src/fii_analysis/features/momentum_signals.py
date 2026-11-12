@@ -5,7 +5,7 @@ from datetime import date
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from src.fii_analysis.data.database import CdiDiario, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
+from src.fii_analysis.data.database import BenchmarkDiario, CdiDiario, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
 
 
 def get_pl_trend(ticker: str, target_date: date, session: Session, months: int = 3) -> str:
@@ -50,7 +50,13 @@ def get_pl_trend(ticker: str, target_date: date, session: Session, months: int =
 
 
 def get_rentab_divergencia(ticker: str, target_date: date, session: Session, meses: int = 6, tolerancia: float = 0.01) -> tuple[bool, float | None]:
-    """Detecta divergencia sistematica entre rentabilidade efetiva e patrimonial."""
+    """Media (efetiva - patrimonial) dos ultimos meses; flag se > tolerancia.
+
+    ATENCAO: efetiva - patrimonial == dy_mes_pct (identidade exata nos dados da
+    CVM). Esta funcao mede, portanto, o rendimento distribuido medio do mes (p.p.),
+    NAO se o fundo distribui mais do que gera. A flag fica True para qualquer
+    fundo que pague rendimento > tolerancia/mes.
+    """
     cnpj = get_cnpj_by_ticker(ticker, session)
     if not cnpj:
         return (False, None)
@@ -176,11 +182,13 @@ def get_momentum_relativo_ifix(
     """
     Retorna retorno_fii_21d - retorno_ifix_21d em percentual.
     Positivo = FII superou o mercado. Negativo = fraqueza idiossincratica.
-    Retorna None se IFIX nao estiver no banco ou dados insuficientes.
+    O IFIX vem de benchmark_diario (ticker XFIX11), alinhado nas MESMAS datas da janela
+    do FII (ultimo fechamento do benchmark <= cada data). Retorna None se o benchmark
+    nao estiver no banco ou dados insuficientes.
     """
     try:
         stmt_fii = (
-            select(PrecoDiario.fechamento_aj)
+            select(PrecoDiario.fechamento_aj, PrecoDiario.data)
             .where(
                 PrecoDiario.ticker == ticker,
                 PrecoDiario.data <= target_date
@@ -188,27 +196,27 @@ def get_momentum_relativo_ifix(
             .order_by(PrecoDiario.data.desc())
             .limit(window + 1)
         )
-        rows_fii = session.execute(stmt_fii).scalars().all()
+        rows_fii = session.execute(stmt_fii).all()
 
-        stmt_ifix = (
-            select(PrecoDiario.fechamento_aj)
-            .where(
-                PrecoDiario.ticker == 'IFIX11',
-                PrecoDiario.data <= target_date
-            )
-            .order_by(PrecoDiario.data.desc())
-            .limit(window + 1)
-        )
-        rows_ifix = session.execute(stmt_ifix).scalars().all()
-
-        if len(rows_fii) < window + 1 or len(rows_ifix) < window + 1:
+        if len(rows_fii) < window + 1 or any(r[0] is None for r in rows_fii):
             return None
 
-        if any(v is None for v in rows_fii) or any(v is None for v in rows_ifix):
+        def _ifix_em(d: date) -> float | None:
+            return session.execute(
+                select(BenchmarkDiario.fechamento)
+                .where(BenchmarkDiario.ticker == "XFIX11", BenchmarkDiario.data <= d,
+                       BenchmarkDiario.fechamento.isnot(None))
+                .order_by(BenchmarkDiario.data.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+
+        ifix_fim = _ifix_em(rows_fii[0][1])
+        ifix_ini = _ifix_em(rows_fii[window][1])
+        if ifix_fim is None or ifix_ini is None or float(ifix_ini) == 0:
             return None
 
-        retorno_fii = (float(rows_fii[0]) / float(rows_fii[window])) - 1
-        retorno_ifix = (float(rows_ifix[0]) / float(rows_ifix[window])) - 1
+        retorno_fii = (float(rows_fii[0][0]) / float(rows_fii[window][0])) - 1
+        retorno_ifix = (float(ifix_fim) / float(ifix_ini)) - 1
 
         return round((retorno_fii - retorno_ifix) * 100, 4)
     except Exception:

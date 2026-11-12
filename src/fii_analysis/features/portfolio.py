@@ -10,7 +10,7 @@ from src.fii_analysis.data.database import (
     BenchmarkDiario, Dividendo, PrecoDiario, RelatorioMensal, Ticker,
     get_cnpj_by_ticker, volume_medio_21d,
 )
-from src.fii_analysis.features.indicators import get_pvp, get_dy_trailing
+from src.fii_analysis.features.indicators import get_pvp, get_dy_trailing, get_vp_cotas_pit
 from src.fii_analysis.features.valuation import get_dy_n_meses
 
 
@@ -93,18 +93,7 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
         fech_ultimo = float(ultimo[1]) if ultimo[1] else None
 
         cnpj = get_cnpj_by_ticker(ticker, session)
-        vp_row = None
-        if cnpj:
-            vp_row = session.execute(
-                select(RelatorioMensal.vp_por_cota)
-                .where(
-                    RelatorioMensal.cnpj == cnpj,
-                    RelatorioMensal.data_entrega <= data_ultimo,
-                    RelatorioMensal.vp_por_cota.isnot(None),
-                )
-                .order_by(RelatorioMensal.data_referencia.desc())
-                .limit(1)
-            ).scalar_one_or_none()
+        vp_row, _ = get_vp_cotas_pit(ticker, data_ultimo, session)
 
         vp = float(vp_row) if vp_row else None
         pvp = (fech_ultimo / vp) if (fech_ultimo and vp and vp > 0) else None

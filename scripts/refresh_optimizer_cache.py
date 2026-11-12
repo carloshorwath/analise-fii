@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.fii_analysis.config import TICKERS, tickers_ativos
 from src.fii_analysis.data.database import create_tables, get_session_ctx
+from src.fii_analysis.decision.suporte import extrair_stats_otimizador
 from src.fii_analysis.models.threshold_optimizer_v2 import (
     ThresholdOptimizerV2,
     save_optimizer_cache,
@@ -54,7 +55,9 @@ def main() -> None:
                     print(f"ERRO: {result.get('error', 'sem best_params')}")
                     falhos.append(ticker)
                 else:
-                    save_optimizer_cache(ticker, result["best_params"])
+                    save_optimizer_cache(
+                        ticker, result["best_params"], test_stats=extrair_stats_otimizador(result)
+                    )
                     print(f"OK (buy_pct={result['best_params'].get('pvp_percentil_buy')})")
                     ok += 1
             except Exception as e:

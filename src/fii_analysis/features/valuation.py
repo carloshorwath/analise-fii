@@ -86,7 +86,7 @@ def get_dy_n_meses(ticker: str, t: date, n_meses: int, session: Session | None =
     soma_div = session.execute(
         select(func.coalesce(func.sum(Dividendo.valor_cota), 0)).where(
             Dividendo.ticker == ticker,
-            Dividendo.data_com >= inicio,
+            Dividendo.data_com > inicio,  # semiaberta (inicio, t]: nao conta 13 pagamentos
             Dividendo.data_com <= t,
         )
     ).scalar_one()
@@ -139,7 +139,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
         select(Dividendo.data_com, Dividendo.valor_cota)
         .where(
             Dividendo.ticker == ticker,
-            Dividendo.data_com >= _meses_atras(data_max, 12),
+            Dividendo.data_com > _meses_atras(data_min, 12),  # cobre a janela 12m da data mais antiga
             Dividendo.data_com <= data_max,
             Dividendo.valor_cota.isnot(None),
         )

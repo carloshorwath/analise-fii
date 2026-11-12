@@ -46,11 +46,11 @@ Identificar padrões estatísticos de comportamento de preço de FIIs em janelas
 
 | Dado | Fonte | Observação |
 |---|---|---|
-| Preços históricos OHLCV | yfinance (`TICKER.SA`) | Carga inicial; `auto_adjust=False`; sufixo `.SA` obrigatório |
-| Data-com de dividendos | yfinance | CVM **não** tem esta informação; ex-date convertida para data-com via calendário B3 |
+| Preços históricos OHLCV | yfinance (`TICKER.SA`) | Carga inicial; `auto_adjust=False`; sufixo `.SA` obrigatório. `fechamento_aj` **não** é o Adj Close do Yahoo: é reconstruído pelo projeto (§4.9) |
+| Data-com de dividendos | yfinance | CVM **não** tem esta informação; ex-date convertida para data-com via calendário B3; duplicatas removidas (§4.9) |
 | VP por cota, PL, cotas, DY% | CVM dados abertos | Arquivo `complemento` dos ZIPs; encoding `latin1`; separador `;` |
 | Dados cadastrais (segmento, mandato) | CVM dados abertos | Arquivo `geral` dos ZIPs; campo `Data_Entrega` para point-in-time |
-| Composição do ativo | CVM dados abertos | Arquivo `ativo_passivo` dos ZIPs |
+| Composição do ativo | CVM dados abertos | Arquivo `ativo_passivo` dos ZIPs; `ativo_total` vem do campo `Valor_Ativo` do arquivo `complemento` (§4.9) |
 | Atualização diária de preços | brapi.dev | 15.000 req/mês; token externo em `C:\Modelos-AI\Brapi\.env` |
 | Benchmark (XFIX11) | yfinance (`XFIX11`) | Substituiu IFIX/^IFIX.SA (inválidos no yfinance) |
 | CDI diário | BCB SGS série 12 | Taxa diária em %; armazenado em `cdi_diario` |
@@ -75,23 +75,24 @@ pandas = ">=2.2"
 yfinance = ">=0.2.40"
 requests = ">=2.31"
 python-dotenv = ">=1.0"
+pandas-market-calendars = ">=4.0"
 numpy = ">=1.26"
 scipy = ">=1.12"
 statsmodels = ">=0.14"
 loguru = ">=0.7"
-typer = ">=0.12"
+typer = ">=0.9"
 rich = ">=13.0"
-pandas_market_calendars = ">=4.0"
-python-dateutil = ">=2.9"
 pyyaml = ">=6.0"
-plotly = ">=5.0"
-streamlit = ">=1.30"
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+dev = ["pytest>=8.0", "pytest-cov", "ruff"]
 mcp = ["mcp>=1.1", "pydantic>=2.6"]
+web = ["flask>=3.0", "streamlit>=1.30", "plotly>=5.18"]
 ml  = ["lightgbm>=4.3"]
+scripts = ["matplotlib>=3.8", "beautifulsoup4>=4.12"]   # plot_car*.py, scrape_fundsexplorer.py
 ```
+
+`pandas-market-calendars` é dependência obrigatória (conversão ex-date → data-com e `update-prices`). O extra `scripts` cobre apenas os scripts de gráfico/scraping. `python-dateutil` é importado por `features/valuation.py` mas não é declarado no `pyproject.toml` (vem transitivamente do pandas).
 
 **Runtime:** Anaconda em `C:/ProgramData/anaconda3/python.exe`.
 
@@ -110,7 +111,7 @@ Migrações idempotentes em `src/fii_analysis/data/migrations.py`.
 | `precos_diarios` | (`ticker`, `data`) | `abertura`, `maxima`, `minima`, `fechamento`, `fechamento_aj`, `volume`, `fonte`, `coletado_em` |
 | `dividendos` | (`ticker`, `data_com`) | `valor_cota`, `fonte` |
 | `relatorios_mensais` | (`cnpj`, `data_referencia`) | `data_entrega`, `vp_por_cota`, `patrimonio_liq`, `cotas_emitidas`, `dy_mes_pct`, `rentab_efetiva`, `rentab_patrim` |
-| `ativo_passivo` | (`cnpj`, `data_referencia`) | `data_entrega`, `direitos_bens_imoveis`, `cri`, `cri_cra`, `lci`, `lci_lca`, `disponibilidades`, `ativo_total` |
+| `ativo_passivo` | (`cnpj`, `data_referencia`) | `data_entrega`, `direitos_bens_imoveis`, `cri`, `cri_cra`, `lci`, `lci_lca`, `disponibilidades`, `total_investido`, `total_necessidades_liquidez`, `valores_receber`, `contas_receber_aluguel`, `outros_valores_mobliarios`, `ativo_total` (= `Valor_Ativo` do `complemento`; §4.9) |
 | `cdi_diario` | `data` | `taxa_diaria_pct`, `coletado_em` |
 | `benchmark_diario` | (`ticker`, `data`) | `fechamento`, `coletado_em` |
 | `eventos_corporativos` | `id` (auto) | `ticker`, `cnpj`, `data`, `tipo`, `cnpj_antigo`, `cnpj_novo`, `observacao` |
@@ -151,7 +152,8 @@ D:/analise-de-acoes-v3/
 │   ├── data/
 │   │   ├── database.py                # SQLAlchemy 2.0: 16 tabelas (10 operacionais + 6 snapshot)
 │   │   ├── migrations.py              # Migrações idempotentes (sem Alembic): 008 migrações
-│   │   ├── ingestion.py              # CVM (+refresh automático do ZIP do ano), yfinance, brapi, BCB SGS
+│   │   ├── ingestion.py              # CVM (+refresh automático do ZIP do ano), yfinance, brapi, BCB SGS; ativo_total (Valor_Ativo), dedup de dividendos, recálculo de fechamento_aj
+│   │   ├── corporate_actions.py      # Lógica pura: detecção de splits pela CVM, VP ajustado, dedup de dividendos, retorno total (§4.9)
 │   │   ├── ifix.py                   # Composição IFIX (B3 + fallback CSV) → tabela universo
 │   │   ├── cdi.py                    # get_cdi_acumulado_12m() — desacoplado de ingestion
 │   │   └── focus_bcb.py              # fetch_focus_selic() — expectativas Focus BCB com cache
@@ -162,6 +164,8 @@ D:/analise-de-acoes-v3/
 │   │   ├── portfolio_advisor.py       # Conselhos de carteira (HOLD/AUMENTAR/REDUZIR/SAIR)
 │   │   ├── daily_report.py            # DailyCommandCenter: agregação decisão + carteira + CSV
 │   │   ├── cdi_focus_explainer.py     # Explicação CDI + Focus BCB (informativo, não altera ação)
+│   │   ├── suporte.py                 # Trava de significância: sinal só vota com n independente ≥ 30 e p corrigido < 0,05 (§4.2)
+│   │   ├── elegibilidade.py           # Bloqueio de COMPRAR/AUMENTAR/rotação: fundo em liquidação/encerrado ou preço defasado (§4.2)
 │   │   ├── opportunities.py           # Motor central de rotação relativa (Fase 2)
 │   │   ├── opportunities_backtest.py  # [PESQUISA] Backtest da rotação (NÃO point-in-time; não usado no pipeline)
 │   │   └── decision_journal.py        # Log de decisões reais e ex-post reviews (Fase 4)
@@ -173,7 +177,7 @@ D:/analise-de-acoes-v3/
 │   ├── features/
 
 │   │   ├── dividend_window.py         # Janela ±10 dias úteis (event study)
-│   │   ├── indicators.py              # P/VP, DY trailing (point-in-time)
+│   │   ├── indicators.py              # P/VP, DY trailing (point-in-time); get_relatorios_ajustados / get_vp_cotas_pit (VP/cota na base do preço)
 │   │   ├── valuation.py               # Percentil rolling, DY N-meses, DY Gap, z-score P/VP, cap rate
 │   │   ├── portfolio.py               # Panorama, alocação, retorno vs IFIX, Herfindahl
 │   │   ├── saude.py                   # Tendência PL, flag destruição capital, emissões, LTV
@@ -193,7 +197,7 @@ D:/analise-de-acoes-v3/
 │   │   ├── critic.py                  # Shuffle/placebo/estabilidade (CriticAgent)
 │   │   ├── strategy.py                # Simulação dividend capture, otimização, risco
 │   │   ├── trade_simulator.py         # Motor puro de simulação (caixa/CDI, dividendos, preço bruto)
-│   │   ├── threshold_optimizer_v2.py  # Otimizador V2: grid 244 combinações, volume drop filter, cache JSON
+│   │   ├── threshold_optimizer_v2.py  # Otimizador V2: grid 244 combinações, volume drop filter, cache JSON (best_params + test_stats)
 │   │   ├── div_capture.py             # Estratégias de captura: janela flexível, compra fixa,
 │   │   │                                vende-recompra, spread-recompra (lógica pura sem UI)
 │   │   ├── event_study_cvm.py         # Event study CVM: CAR, NW HAC, block bootstrap placebo
@@ -314,10 +318,24 @@ Parâmetros de decisão e filtros são centralizados na seção `thresholds` do 
 |---|---|---|
 | `pvp_percentil_barato` | Percentil P/VP para sinal verde no radar | 30 |
 | `dy_gap_percentil_caro` | Percentil DY Gap para sinal vermelho no radar | 70 |
-| `meses_consec_alerta` | Meses distribuindo mais que gera para erro de saúde | 3 |
+| `meses_consec_alerta` | Meses consecutivos com rentabilidade patrimonial negativa (VP/cota em queda no mês) para erro de saúde | 3 |
 | `alavancagem_limite` | Razão Ativo/PL considerada alavancagem significativa | 1.05 |
 | `piso_liquidez` | Volume financeiro médio 21d mínimo | 500.000 |
 | `dias_staleness` | Dias de atraso permitidos na coleta de preço | 3 |
+
+Seções adicionais do `config.yaml` (lidas por `config_yaml.get_saude_param` / `get_decisao_param`, com default no código):
+
+| Seção.chave | Descrição | Default |
+|---|---|---|
+| `saude.vp_pct_mes_saudavel` / `vp_pct_mes_severo` | Limiares da inclinação do VP/cota em **% ao mês** (slope / VP médio da janela): acima do primeiro = sem destruição; abaixo do segundo = severo | +0,1 / −0,5 |
+| `saude.tendencia_delta_pct_mes` | Diferença 3m vs 6m (p.p./mês) para melhorando/piorando | 0,1 |
+| `decisao.suporte_n_min` / `suporte_p_max` | Um sinal só vota se tiver n eventos independentes fora da amostra ≥ n_min e p-valor corrigido < p_max | 30 / 0,05 |
+| `decisao.testes_episodio` / `testes_walkforward` | Tamanho da família de testes (Bonferroni) por ticker | 2 / 2 |
+| `decisao.preco_defasado_dias_uteis` | Atraso (pregões) do último preço acima do qual o ticker não recebe compra | 5 |
+
+Sinal sem suporte continua gravado e exibido como informativo (`BUY (info)`), mas não entra em `n_concordam_*`; o status vai em `rationale_json` (linha `SUPORTE_JSON`). Ticker com evento de liquidação/encerramento vigente (`eventos_corporativos`) ou preço defasado nunca recebe COMPRAR/AUMENTAR nem entra como candidato de rotação (`decision/elegibilidade.py`).
+
+Origem de n e p por sinal (`decision/suporte.py`): otimizador = split de **teste** (`n_*_thinned`, p Bonferroni sobre o grid), lido do campo `test_stats` do cache `dados/optimizer_cache/<ticker>.json` (gravado por `save_optimizer_cache`; cache antigo sem `test_stats` ou gerado com outros `best_params` = sinal sem suporte até o cache ser regenerado por `scripts/refresh_optimizer_cache.py`; `update-prices` só regenera cache com mais de 7 dias); episódios = `n` thinned e p do t-test × `testes_episodio`; walk-forward = `n_effective` e p do t-test × `testes_walkforward`. BUY exige média > 0 e SELL média < 0 nos eventos.
 
 A função `classificar_alerta_distribuicao` (`fundamentos.py`) utiliza esses thresholds para categorizar o risco de destruição de capital (Success, Warning, Error).
 
@@ -334,6 +352,8 @@ vp = SELECT Valor_Patrimonial_Cotas
      ORDER BY data_referencia DESC LIMIT 1
 ```
 
+O VP usado em qualquer razão com o preço é o **VP/cota na base do preço** (ajustado por splits), obtido por `features/indicators.get_vp_cotas_pit` / `get_relatorios_ajustados` — nunca o `vp_por_cota` nominal cru (§4.9).
+
 ### 4.4 P/VP e DY são calculados, nunca armazenados
 
 ```python
@@ -349,7 +369,7 @@ Quando duas datas-com distam < 21 dias úteis, **o evento seguinte é descartado
 
 ### 4.6 Ingestão idempotente
 
-Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever sem verificação. O preço ajustado do yfinance é recalculado retroativamente — sempre salvar `coletado_em`.
+Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever sem verificação. O preço ajustado do yfinance é recalculado retroativamente — sempre salvar `coletado_em`. Exceções controladas na carga de preços: linhas vazias (abertura/máxima/mínima/volume = 0 ou nulos) ou coletadas no próprio pregão (fechamento possivelmente provisório) são reabertas e regravadas numa janela de 400 dias; linhas com `fonte = 'yfinance:invalido'` nunca são reescritas pela carga. `fechamento_aj` é recalculado por inteiro ao fim de cada carga de preços/dividendos (§4.9).
 
 ### 4.7 Proteções contra data leakage
 
@@ -369,6 +389,19 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 - **Dividendo sem data-com:** excluir da análise de event study, manter no panorama.
 - **NaN nunca vira zero silenciosamente.**
 
+### 4.9 Base única de cotas, dividendos e retorno total
+
+Lógica pura em `src/fii_analysis/data/corporate_actions.py`; aplicada na ingestão (`data/ingestion.py`) e na leitura (`features/indicators.py`).
+
+- **Base única:** preço (`fechamento` = `Close` do yfinance, já ajustado por split), dividendo por cota (`dividendos.valor_cota`) e VP/cota usado em P/VP ficam na base da **quantidade atual de cotas**. O VP/cota da CVM é nominal (contemporâneo ao informe) e é convertido por `ajustar_relatorios`.
+- **Detecção de split (só com `relatorios_mensais`):** entre dois informes consecutivos, `cotas_emitidas` varia por fator F (≥ 1,8 ou ≤ 1/1,8), VP/cota varia por ~1/F e o PL fica estável (±20%) — emissão/amortização mexem no PL e não são confundidas. F é arredondado ao fator "redondo" mais próximo (tolerância 8%); sem fator redondo, o evento é ignorado como ambíguo. O evento é ancorado no **primeiro informe pós-split**: só muda a unidade (P/VP inalterado), sem vazamento de informação futura.
+- **Dividendos:** duplicata = mesmo valor por cota com data-com a ≤ 7 dias de outra linha (o Yahoo revisa ex-dates); mantém a data na convenção correta, senão a mais antiga (`deduplicar_proximos`, `limpar_dividendos_duplicados`; a carga também não insere duplicatas). Linha gravada que é múltiplo de split do valor atual do Yahoo é regravada com o valor do Yahoo (`_reconciliar_base_split`); diferenças < 1,8× (ajustes de subscrição) são preservadas.
+- **`fechamento_aj` = série de retorno total do projeto**, recalculada por inteiro (`recalcular_fechamento_aj`) a partir de `fechamento` + `dividendos`: dividendo reinvestido no primeiro pregão com preço após a data-com; série escalada para terminar igual ao último `fechamento`. Não usa o Adj Close do Yahoo. Uso: retornos relativos (event study, otimizador, momentum, risco). Como o nível muda a cada dividendo novo, nunca compará-lo com `fechamento` em data passada nem somar dividendos sobre ele.
+- **Retorno total 12m** (`risk_metrics.retorno_total_12m`) = `(P_t − P_t−252 + Σ dividendos) / P_t−252` com `fechamento` bruto (com `fechamento_aj` os dividendos seriam contados 2×).
+- **`ativo_total`** (`ativo_passivo`) = `Valor_Ativo` informado pelo fundo no arquivo `complemento`; fallback (ausente/≤ 0) = `Total_Investido + Total_Necessidades_Liquidez + Valores_Receber`, sem somar de novo os componentes já contidos em `Total_Investido` (ex.: `Direitos_Bens_Imoveis`) nem `Contas_Receber_*` (`calcular_ativo_total`). `load_ativo_passivo_to_db(..., atualizar_existentes=True)` regrava linhas existentes (recarga após correção de regra).
+
+Consumidores que ainda usam cotas/VP nominais: ver `docs/STATUS_ATUAL.md`, "Pendentes conhecidos".
+
 ---
 
 ## 5. Métricas e Metodologia
@@ -380,9 +413,11 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 | **P/VP em t** | `preco_em_t / vp_vigente(data_entrega <= t)` — VP do último relatório CVM entregue antes de t. |
 | **Percentil P/VP rolling** | Posição na distribuição da janela de 504 pregões (2 anos) até t−1. |
 | **Z-score P/VP** | `(pvp - media_504d) / desvio_504d` — normalização do P/VP. |
-| **DY N-meses** (12/24/36) | Soma dividendos com data-com em `[t−N meses, t]` / preço atual. |
+| **DY N-meses** (12/24/36) | Soma dividendos com data-com em `(t−N meses, t]` (janela semiaberta: não conta 13 pagamentos em 12m) / preço atual. |
 | **DY Gap** | `DY 12m − CDI acumulado 12m` (point-in-time). |
-| **Percentil DY Gap** | Posição na distribuição da janela de 252 pregões (1 ano) até t−1. |
+| **Percentil DY Gap** | Posição na distribuição da janela de 252 pregões (1 ano) até t−1; os dividendos são buscados desde 12 meses antes da data mais antiga da janela, para que o DY 12m de cada ponto da janela seja completo. Continua concentrado no topo (ver STATUS_ATUAL). |
+| **Média anual de DY** (`fundamentos.get_dy_medias`) | `DY 24m / 2` e `DY 60m / 5` (`get_dy_n_meses` devolve a soma do período); `dy_mes_pct` e DY 12m são frações e comparados como fração. |
+| **Retorno total 12m** | Ver §4.9 (`fechamento` bruto + dividendos). |
 | **Cap Rate anualizado** | `DY_3m × 4` anualizado. |
 | **Cap Rate spread** | `Cap Rate anualizado − CDI acumulado 12m`. |
 
@@ -390,11 +425,12 @@ Antes de coletar dados, verificar se já existem no banco. Nunca sobrescrever se
 
 | Métrica | Definição |
 |---|---|
-| **Mês Saudável** | `rentab_patrim >= 0` E `rentab_efetiva >= rentab_patrim`. |
+| **Mês Saudável** | `rentab_patrim >= 0` E `rentab_efetiva >= rentab_patrim`. Nota: `efetiva − patrimonial ≡ dy_mes_pct` (identidade exata nos dados da CVM), logo o critério mede apenas VP/cota não caindo no mês e DY ≥ 0 — **não** mede "distribuir mais do que gera". |
 | **Alertas de Saúde** | **Erro:** >= `meses_consec_alerta` (default 3) consecutivos não saudáveis. **Aviso:** < 4 meses saudáveis no total dos últimos 6 meses. |
 | **Alavancagem** | `Ativo_Total / Patrimonio_Liquido`. Alerta se > `alavancagem_limite`. |
 | **LTV (Leverage to Value)** | `max(0, ativo_total - PL) / ativo_total`. |
-| **Tendência PL** | Regressão linear (6m, 12m) sobre o VP por cota. |
+| **Destruição de capital** (`saude.flag_destruicao_capital`) | Usa o **VP/cota** (não a identidade acima). Limiares em **% do VP/cota por mês** (slope da regressão 3m/6m ÷ VP médio da janela × 100; `saude.vp_pct_mes_saudavel` / `vp_pct_mes_severo`, §4.2), logo cota cara e barata têm a mesma régua. Streak = meses consecutivos em que o VP/cota **caiu** mais que `vp_pct_mes_saudavel` no mês (substituiu o critério "efetiva > patrimonial", que equivale a `dy_mes_pct > 0`). Tendência = slope 3m vs 6m (`tendencia_delta_pct_mes`). Chamada com `t` (point-in-time: só `data_entrega <= t`); o `recommender` passa a data de referência, os demais chamadores usam hoje. |
+| **Tendência PL** | Regressão linear (6m, 12m) sobre o VP por cota (`saude.tendencia_pl`, também com `t`). |
 | **Emissões recentes** | Salto em `Cotas_Emitidas` mês a mês > 1%. |
 
 ### 5.3 Composição do ativo
@@ -473,7 +509,7 @@ Simulação com preço ajustado, otimização grid search (244 combinações: bu
 |---|---|
 | **Volume drop flag** | Volume 21d < volume 63d − threshold% (filtra BUYs no otimizador) |
 | **Volume ratio 21/63** | Razão volume 21d / volume 63d |
-| **Momentum relativo IFIX** | Retorno FII 21d vs IFIX 21d |
+| **Momentum relativo IFIX** | Retorno FII 21d (`fechamento_aj`) vs retorno 21d do benchmark `XFIX11` (`benchmark_diario`), alinhado nas mesmas datas da janela do FII; `None` se não houver benchmark no banco |
 | **Dividend safety** | Análise payout vs caixa, cortes 24m, flag insustentável |
 
 ---
@@ -526,7 +562,7 @@ As páginas 2/7/8/10/11/12 são wrappers standalone (não na sidebar) — seu co
 | **4_Radar** | Diário | Heatmap booleano, tabela detalhada, exportação CSV |
 | **16_Oportunidades** | Diário | Cards de rotação intra-segmento (DESCRITIVOS — sem validação estatística de retorno), geração de prompts e registro de decisão |
 
-| **13_Hoje** | Diário | Cockpit operacional: recomendações diárias, watchlist, carteira cruzada, riscos, contexto de juros |
+| **13_Hoje** | Diário | Cockpit operacional: recomendações diárias, watchlist, carteira cruzada, riscos, contexto de juros. Sinais sem suporte estatístico aparecem como `BUY (info)`/`SELL (info)` (§4.2); sem snapshot, a página orienta `fii update-prices` |
 | **14_Dossie_FII** | Investigação | Consolidado por ticker — abas Análise FII / Fundamentos / Eventos CVM |
 | **5_Event_Study** | Investigação | Event study agregado: CAR, testes, CriticAgent |
 | **6_Alertas** | Investigação | Geração sob demanda, listagem de Markdowns por data |
@@ -617,6 +653,8 @@ Um FII do IFIX só vira posição se o investidor decidir manualmente.
 | Benchmark XFIX11 (yfinance) | Implementado | `data/ingestion.py` |
 | Expectativas Focus BCB (Selic) | Implementado | `data/focus_bcb.py` |
 | Conversão ex-date → data-com via calendário B3 | Implementado | `data/ingestion.py` |
+| Dedup de dividendos, detecção de splits pela CVM, retorno total (`fechamento_aj` próprio) | Implementado | `data/corporate_actions.py`, `data/ingestion.py` |
+| `ativo_total` = `Valor_Ativo` (`complemento`) com fallback sem dupla contagem | Implementado | `data/ingestion.py` |
 
 ### Features
 
@@ -643,6 +681,7 @@ Um FII do IFIX só vira posição se o investidor decidir manualmente.
 | Volume drop flag, volume ratio 21/63 | Implementado | `features/volume_signals.py` |
 | Momentum relativo IFIX 21d, dividend safety | Implementado | `features/momentum_signals.py` |
 | Rentabilidade efetiva/patrimonial, alavancagem | Implementado | `features/fundamentos.py` |
+| VP/cota na base do preço (`get_relatorios_ajustados`, `get_vp_cotas_pit`) | Implementado | `features/indicators.py` |
 
 ### Models
 
@@ -677,6 +716,8 @@ Um FII do IFIX só vira posição se o investidor decidir manualmente.
 | Detecção de oportunidades abertas | Implementado | `decision/abertos.py` |
 | Conselhos de carteira (badge + export MD/CSV) | Implementado | `decision/portfolio_advisor.py` |
 | DailyCommandCenter (agregação + relatório) | Implementado | `decision/daily_report.py` |
+| Trava de significância dos sinais (n ≥ 30, p corrigido < 0,05) | Implementado | `decision/suporte.py` |
+| Elegibilidade de compra (liquidação/encerramento, preço defasado) | Implementado | `decision/elegibilidade.py` |
 
 ### Evaluation
 
@@ -833,6 +874,8 @@ Um FII do IFIX só vira posição se o investidor decidir manualmente.
 | ADR-24 | LLM via gateway n8n | Integrar análise qualitativa sem contaminar a decisão | Webhook n8n com fallback local para prompt pack | LLM nunca altera Ação final; secrets ficam fora do repositório; permite troca fácil de modelo |
 | ADR-25 | Motor de rotação relativa | Responder o que comprar e vender com honestidade estatística | Motor intra-segmento DESCRITIVO (filtros + custos + persistência + cooldown). Lado COMPRAR consome métricas/radar do snapshot; lado VENDER consome decisões da carteira | Sem backtest point-in-time válido, o motor é rotulado DESCRITIVO. `opportunities_backtest.py` é [PESQUISA] — usa decisões de hoje sobre datas passadas e violaria §4.1 se exibido como validação. Silêncio é resultado válido |
 | ADR-27 | Turnaround não é vetado | Veto absoluto por destruição de capital bloqueava compra na baixa | Saúde graduada (saudável/em_recuperação/alerta/crítica): "em recuperação" não veta — vira candidato TURNAROUND com rótulo explícito de risco | Quando o VP volta a subir após destruição passada, o mercado pode já ter precificado o pior; o investidor decide com o risco exposto, não às cegas |
+| ADR-28 | Trava de significância e elegibilidade | Sinais com poucos eventos independentes votavam igual aos demais; fundos em liquidação/sem preço recente podiam receber COMPRAR | Sinal só vota com n independente fora da amostra ≥ 30 e p corrigido < 0,05 (`decisao.*` no `config.yaml`); sinal sem suporte é gravado e exibido como `(info)`. Fundo com liquidação/encerramento vigente ou preço defasado > 5 pregões não recebe COMPRAR/AUMENTAR nem entra como candidato de rotação | Coerente com o princípio "nenhuma hipótese não validada é input de decisão" (§1): o silêncio (AGUARDAR) é resultado válido; a posição existente continua listada |
+| ADR-29 | Base única de cotas e `fechamento_aj` próprio | Splits e dividendos duplicados distorciam P/VP e DY; o Adj Close do Yahoo muda retroativamente | Preço, dividendo e VP/cota na base da quantidade atual de cotas (splits detectados pela CVM); `fechamento_aj` reconstruído como retorno total a partir de `fechamento` + `dividendos` (§4.9) | Reprodutível e auditável com dados do próprio banco; recalculável por inteiro a cada carga |
 | ADR-26 | Diário de Decisões e Review Ex-Post | Necessidade de fechar ciclo de aprendizado do investidor | Comparador de Snapshots (Daily Diff) + decisoes_log no SQLite + ex-post review vs XFIX11 | Permite ao investidor avaliar se suas decisões reais bateram o mercado, medindo custo de oportunidade de sugestões ignoradas e hit-rate real das recomendações. |
 
 ---

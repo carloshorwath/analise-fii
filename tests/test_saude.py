@@ -52,10 +52,10 @@ def test_falso_positivo_lucro_extraordinario(db_session):
     # Avaliando no mês 8
     res = flag_destruicao_capital("TEST11", session=db_session, t=date(2024, 8, 20))
     
-    # O streak (current_consec) deve ser 1 (apenas o mês 8). O mês 7 é ignorado.
-    # Se não fosse ignorado, seriam 2, o que engatilharia alertas.
-
-    assert res["current_consec"] == 1
+    # current_consec agora mede meses consecutivos de QUEDA do VP/cota (> 0,1%/mês);
+    # o critério antigo (efetiva > patrimonial) era identicamente dy_mes > 0.
+    # Aqui o VP caiu 0,1% no último mês (não excede o limiar) -> streak 0, fundo saudável.
+    assert res["current_consec"] == 0
     assert res["destruicao"] is False
     assert res["gravidade"] in ("saudavel", "em_recuperacao")
 

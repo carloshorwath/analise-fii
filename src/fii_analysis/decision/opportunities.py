@@ -30,6 +30,7 @@ from src.fii_analysis.data.database import (
     PrecoDiario,
     Universo,
 )
+from src.fii_analysis.decision.elegibilidade import motivo_bloqueio_compra
 from src.fii_analysis.decision.recommender import TickerDecision, decidir_universo
 from src.fii_analysis.decision.portfolio_advisor import aconselhar_carteira
 from src.fii_analysis.features.valuation import get_pvp_percentil
@@ -116,8 +117,21 @@ def _tickers_ifix(session) -> list[str]:
     ).scalars().all()
 
 
+def _bloqueio_candidato(session, ticker: str, data_ref: Optional[date]) -> Optional[str]:
+    """Motivo pelo qual o ticker nao pode ser candidato de compra (liquidacao, preco defasado)."""
+    try:
+        motivo = motivo_bloqueio_compra(ticker, data_ref, session)
+    except Exception as exc:  # elegibilidade nao pode derrubar o motor de rotacao
+        logger.warning("{}: falha ao checar elegibilidade de compra: {}", ticker, exc)
+        return None
+    if motivo:
+        logger.info("{}: excluido como candidato de compra — {}", ticker, motivo)
+    return motivo
+
+
 def _candidatos_comprar_de_snapshot(
-    session, run_id: int, tickers_universo: set[str], tickers_carteira: set[str]
+    session, run_id: int, tickers_universo: set[str], tickers_carteira: set[str],
+    data_ref: Optional[date] = None,
 ) -> list[_BuyCandidate]:
     """Lado COMPRAR a partir de snapshot_ticker_metrics + snapshot_radar do run.
 
@@ -150,6 +164,8 @@ def _candidatos_comprar_de_snapshot(
             continue
         if (rad.vistos or 0) < 3:
             continue
+        if _bloqueio_candidato(session, t, data_ref):
+            continue
 
         classe = classificar_fii(t, session=session)
         if not classe or classe == "Indefinido":
@@ -173,6 +189,7 @@ def _candidatos_comprar_de_decisoes(
     universo_decisoes: dict[str, TickerDecision],
     tickers_universo: set[str],
     tickers_carteira: set[str],
+    data_ref: Optional[date] = None,
 ) -> list[_BuyCandidate]:
     """Lado COMPRAR a partir de TickerDecision (caminho legado / testes)."""
     pvp_barato = get_threshold("pvp_percentil_barato", 30)
@@ -185,6 +202,8 @@ def _candidatos_comprar_de_decisoes(
             continue
         decisao = universo_decisoes.get(t)
         if not decisao:
+            continue
+        if decisao.bloqueio_compra or _bloqueio_candidato(session, t, data_ref):
             continue
 
         saude_ok = not decisao.flag_destruicao_capital
@@ -287,11 +306,11 @@ def detectar_oportunidades(
     # 4. Candidatos a COMPRAR
     if run_id is not None:
         candidatos_comprar = _candidatos_comprar_de_snapshot(
-            session, run_id, tickers_universo, tickers_carteira
+            session, run_id, tickers_universo, tickers_carteira, data_ref
         )
     else:
         candidatos_comprar = _candidatos_comprar_de_decisoes(
-            session, universo_decisoes, tickers_universo, tickers_carteira
+            session, universo_decisoes, tickers_universo, tickers_carteira, data_ref
         )
 
     if not candidatos_comprar:

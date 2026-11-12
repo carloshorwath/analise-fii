@@ -8,7 +8,10 @@ Tres camadas separadas semanticamente:
 3. ACAO   — derivada (COMPRAR/VENDER/AGUARDAR/EVITAR). Risco critico
             VETA qualquer BUY mesmo com 3/3 de concordancia.
 
-Concordancia e HEURISTICA, nao estatistica. Niveis:
+Concordancia e HEURISTICA, nao estatistica. Um sinal so entra no voto se tiver
+suporte estatistico (n de eventos independentes fora da amostra e p-valor
+corrigido; ver decision/suporte.py) — sinal sem suporte e gravado e exibido como
+informativo, mas nao conta. Niveis:
     ALTA   — 3/3 modos concordam, sem flag critica
     MEDIA  — 2/3 modos concordam, sem flag critica
     BAIXA  — 1 modo isolado, ou 2+/2 com algum modo indisponivel
@@ -30,6 +33,14 @@ import pandas as pd
 
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.decision.abertos import detectar_episodio_aberto, detectar_janela_captura
+from src.fii_analysis.decision.elegibilidade import data_referencia_mercado, motivo_bloqueio_compra
+from src.fii_analysis.decision.suporte import (
+    conta_no_voto,
+    linhas_rationale,
+    suporte_episodio,
+    suporte_otimizador,
+    suporte_walkforward,
+)
 from src.fii_analysis.features.composicao import classificar_fii
 from src.fii_analysis.features.momentum_signals import (
     get_dividend_safety,
@@ -55,7 +66,7 @@ from src.fii_analysis.features.volume_signals import (
     get_volume_drop_flag,
 )
 from src.fii_analysis.models.episodes import get_pvp_series, identify_episodes
-from src.fii_analysis.models.threshold_optimizer_v2 import ThresholdOptimizerV2
+from src.fii_analysis.models.threshold_optimizer_v2 import ThresholdOptimizerV2, load_optimizer_cache_stats
 from src.fii_analysis.models.walk_forward_rolling import walk_forward_roll
 
 
@@ -148,6 +159,15 @@ class TickerDecision:
     janela_captura_aberta: bool = False
     proxima_data_com_estimada: Optional[date] = None
     dias_ate_proxima_data_com: Optional[int] = None
+
+    # === Suporte estatistico dos sinais (so quem tem suporte vota) ===
+    # {"otimizador"|"episodio"|"walkforward": {sinal, status, n, p, motivo}}
+    suporte_sinais: dict = field(default_factory=dict)
+
+    # === Elegibilidade de compra ===
+    # Motivo textual se o ticker nao pode receber COMPRAR/AUMENTAR/candidato
+    # (fundo em liquidacao/encerrado, preco desatualizado). None = elegivel.
+    bloqueio_compra: Optional[str] = None
 
     # === Auditoria ===
     rationale: list[str] = field(default_factory=list)
@@ -254,6 +274,8 @@ def decidir_ticker(
     forward_days: int = 20,
     pvp_pct_low: float = 10.0,
     pvp_pct_high: float = 90.0,
+    optimizer_stats: Optional[dict] = None,
+    data_ref_mercado: Optional[date] = None,
 ) -> TickerDecision:
     """Avalia um ticker e devolve TickerDecision com Sinal/Acao/Risco.
 
@@ -276,6 +298,14 @@ def decidir_ticker(
         Janela de retorno forward para episodios (default 20 pregoes).
     pvp_pct_low / pvp_pct_high : float
         Percentis para episodio BUY (low) e SELL (high). Default 10 / 90.
+    optimizer_stats : dict, optional
+        Estatisticas de teste do otimizador (extrair_stats_otimizador). Se None,
+        tenta o cache em dados/optimizer_cache (so se best_params coincidir);
+        ausentes => sinal do otimizador sem suporte (nao vota).
+    data_ref_mercado : date, optional
+        Data de referencia do mercado/snapshot para elegibilidade de compra
+        (liquidacao vigente, preco desatualizado). Default: ultima data com
+        preco no banco.
     """
     rationale: list[str] = []
 
@@ -318,6 +348,7 @@ def decidir_ticker(
     # -------------------------------------------------------------------------
     sinal_episodio = _sinal_episodio_atual(pvp_pct_atual, pvp_pct_low, pvp_pct_high)
 
+    eps_summary: Optional[dict] = None
     n_buy_hist = 0
     win_rate_buy = None
     retorno_medio_buy = None
@@ -329,6 +360,7 @@ def decidir_ticker(
             pvp_pct_high=pvp_pct_high,
             forward_days=forward_days,
         )
+        eps_summary = eps["summary"]
         eps_buy_summary = eps["summary"]["buy"]
         n_buy_hist = int(eps_buy_summary.get("n", 0) or 0)
         win_rate_buy = eps_buy_summary.get("win_rate")
@@ -343,12 +375,14 @@ def decidir_ticker(
     sinal_wf = "INDISPONIVEL"
     p_value_wf_buy: Optional[float] = None
     n_steps_wf = 0
+    wf_summary: Optional[dict] = None
     try:
         wf = walk_forward_roll(ticker, session, forward_days=forward_days)
         if "error" in wf:
             rationale.append(f"WalkForward: {wf['error']}")
         else:
             n_steps_wf = int(wf.get("n_steps", 0) or 0)
+            wf_summary = wf.get("summary")
             p_value_wf_buy = wf.get("summary", {}).get("BUY", {}).get("p_value")
             # Preferir sinal_hoje (extrapolado do threshold mais recente) sobre ultimo OOS
             sh = wf.get("sinal_hoje", {})
@@ -375,7 +409,7 @@ def decidir_ticker(
     motivo_destr: Optional[str] = None
     gravidade_destr: Optional[str] = None
     try:
-        destr = flag_destruicao_capital(ticker, session)
+        destr = flag_destruicao_capital(ticker, session, t=data_ref)
         flag_destr = bool(destr.get("destruicao", False))
         motivo_destr = destr.get("motivo")
         gravidade_destr = destr.get("gravidade")
@@ -400,7 +434,7 @@ def decidir_ticker(
 
     flag_emiss = False
     try:
-        emiss = emissoes_recentes(ticker, session=session)
+        emiss = emissoes_recentes(ticker, session=session, t=data_ref)
         flag_emiss = bool(emiss)
     except Exception as exc:
         rationale.append(f"Emissoes erro: {exc}")
@@ -455,7 +489,7 @@ def decidir_ticker(
     try:
         flag_rentab_div, rentab_div_val = get_rentab_divergencia(ticker, data_ref, session)
         if flag_rentab_div:
-            rationale.append('Rentab efetiva sistematicamente acima da patrimonial (armadilha de dividendo)')
+            rationale.append(f'Rentab efetiva - patrimonial medio {rentab_div_val:+.2f} p.p./mes (= rendimento distribuido; nao indica distribuicao acima da geracao)')
     except Exception as exc:
         rationale.append(f'Rentab divergencia erro: {exc}')
 
@@ -501,13 +535,45 @@ def decidir_ticker(
     # -------------------------------------------------------------------------
     # 6. Combinacao Sinal -> Acao (com veto)
     # -------------------------------------------------------------------------
-    sinais = [sinal_otimizador, sinal_episodio, sinal_wf]
-    sinais_validos = [s for s in sinais if s in VALID_SIGNALS]
-    n_buy = sum(1 for s in sinais_validos if s == "BUY")
-    n_sell = sum(1 for s in sinais_validos if s == "SELL")
+    sinais = {
+        "otimizador": sinal_otimizador,
+        "episodio": sinal_episodio,
+        "walkforward": sinal_wf,
+    }
+    sinais_validos = [s for s in sinais.values() if s in VALID_SIGNALS]
+
+    # Suporte estatistico: so sinal com n e p corrigido suficientes vota.
+    opt_stats = optimizer_stats
+    if opt_stats is None and optimizer_params:
+        try:
+            opt_stats = load_optimizer_cache_stats(ticker, best_params=optimizer_params)
+        except Exception as exc:
+            rationale.append(f"Otimizador stats erro: {exc}")
+    suporte_sinais = {
+        "otimizador": suporte_otimizador(sinal_otimizador, opt_stats),
+        "episodio": suporte_episodio(sinal_episodio, eps_summary),
+        "walkforward": suporte_walkforward(sinal_wf, wf_summary),
+    }
+    votos = [sinais[k] for k in sinais if conta_no_voto(suporte_sinais[k])]
+    n_buy = sum(1 for s in votos if s == "BUY")
+    n_sell = sum(1 for s in votos if s == "SELL")
 
     has_critical = flag_destr or (flag_vol_drop and n_buy > 0)  # veto absoluto
     acao, nivel = _derivar_acao(n_buy, n_sell, len(sinais_validos), has_critical)
+
+    # Elegibilidade de compra: liquidacao/encerramento vigente ou preco defasado
+    bloqueio_compra: Optional[str] = None
+    try:
+        ref_mercado = data_ref_mercado or data_referencia_mercado(session) or data_ref
+        bloqueio_compra = motivo_bloqueio_compra(ticker, ref_mercado, session)
+    except Exception as exc:
+        rationale.append(f"Elegibilidade de compra erro: {exc}")
+    if bloqueio_compra:
+        if acao == "COMPRAR":
+            acao, nivel = "AGUARDAR", "BAIXA"
+            rationale.append(f"COMPRA BLOQUEADA ({bloqueio_compra}): COMPRAR rebaixado para AGUARDAR")
+        else:
+            rationale.append(f"Compra bloqueada: {bloqueio_compra}")
 
     if flag_destr and n_buy > 0:
         rationale.append(f"VETO: BUY presente mas destruicao de capital ({motivo_destr})")
@@ -627,6 +693,8 @@ def decidir_ticker(
     except Exception:
         classif = None
 
+    rationale.extend(linhas_rationale(suporte_sinais, bloqueio_compra))
+
     return TickerDecision(
         ticker=ticker,
         data_referencia=data_ref,
@@ -669,6 +737,8 @@ def decidir_ticker(
         drawdown_tipico_buy=drawdown_tipico_buy,
         p_value_wf_buy=p_value_wf_buy,
         n_steps_wf=n_steps_wf,
+        suporte_sinais=suporte_sinais,
+        bloqueio_compra=bloqueio_compra,
         episodio_eh_novo=episodio_novo,
         pregoes_desde_ultimo_episodio=pregoes_desde,
         janela_captura_aberta=janela_captura_aberta,
@@ -694,6 +764,8 @@ def decidir_universo(
     cdi_sensitivity_por_ticker: Optional[dict[str, dict]] = None,
     focus_explanation_por_ticker: Optional[dict[str, dict]] = None,
     forward_days: int = 20,
+    optimizer_stats_por_ticker: Optional[dict[str, dict]] = None,
+    data_ref_mercado: Optional[date] = None,
 ) -> list[TickerDecision]:
     """Aplica decidir_ticker em todos os tickers ativos (ou lista informada).
 
@@ -708,9 +780,18 @@ def decidir_universo(
     focus_explanation_por_ticker : dict[ticker, dict], optional
         Mapa de resultado build_cdi_focus_explanation() por ticker.
         NÃO altera a ação final — é puramente informativo.
+    optimizer_stats_por_ticker : dict[ticker, dict], optional
+        Estatisticas de teste do otimizador (n/p) por ticker; define se o sinal
+        do otimizador tem suporte para votar. Ausente => cache em disco.
+    data_ref_mercado : date, optional
+        Data de referencia do snapshot para elegibilidade de compra.
+        Default: ultima data com preco no banco.
     """
     if tickers is None:
         tickers = tickers_ativos(session)
+    if data_ref_mercado is None:
+        data_ref_mercado = data_referencia_mercado(session)
+    stats_map = optimizer_stats_por_ticker or {}
 
     params_map = optimizer_params_por_ticker or {}
     cdi_map = cdi_sensitivity_por_ticker or {}
@@ -724,7 +805,9 @@ def decidir_universo(
             d = decidir_ticker(ticker, session, optimizer_params=params,
                                cdi_sensitivity=cdi,
                                focus_explanation=focus,
-                               forward_days=forward_days)
+                               forward_days=forward_days,
+                               optimizer_stats=stats_map.get(ticker),
+                               data_ref_mercado=data_ref_mercado)
         except Exception as exc:
             d = _decisao_indisponivel(ticker, f"erro inesperado: {exc}")
         decisoes.append(d)

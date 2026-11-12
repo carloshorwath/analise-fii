@@ -78,3 +78,19 @@ oportunidades:
   # (anti value-trap: barato e pior nao e troca, e downgrade)
   delta_score_min: 0
 
+
+# Saude do fundo: limiares sobre a variacao PERCENTUAL do VP/cota por mes
+# (slope da regressao / VP medio da janela * 100). Calibrados originalmente
+# para cota ~R$100 (0,1 e -0,5 R$/mes) e convertidos para % do VP.
+saude:
+  vp_pct_mes_saudavel: 0.1      # acima disso: sem destruicao (score 0)
+  vp_pct_mes_severo: -0.5       # abaixo disso: destruicao severa (score 100)
+  tendencia_delta_pct_mes: 0.1  # diferenca slope 3m vs 6m (p.p./mes) p/ melhorando/piorando
+
+# Voto dos sinais (recommender): sinal so conta se tiver suporte estatistico.
+decisao:
+  suporte_n_min: 30             # n minimo de eventos independentes fora da amostra
+  suporte_p_max: 0.05           # p-valor corrigido (Bonferroni) maximo
+  testes_episodio: 2            # familia de testes por ticker nos episodios (BUY, SELL)
+  testes_walkforward: 2         # familia de testes por ticker no walk-forward (BUY, SELL)
+  preco_defasado_dias_uteis: 5  # atraso (pregoes) do ultimo preco vs data de referencia

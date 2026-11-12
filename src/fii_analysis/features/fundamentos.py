@@ -13,7 +13,7 @@ def get_payout_historico(ticker: str, cnpj: str | None = None, meses: int = 24, 
     if cnpj is None:
         cnpj = get_cnpj_by_ticker(ticker, session)
     if not cnpj:
-        return pd.DataFrame(columns=["data_referencia", "rentab_efetiva_pct", "rentab_patrimonial_pct", "distribuindo_mais_que_gera"]), 0
+        return pd.DataFrame(columns=["data_referencia", "rentab_efetiva_pct", "rentab_patrimonial_pct", "patrim_maior_que_efetiva"]), 0
 
     rows = session.execute(
         select(
@@ -32,7 +32,7 @@ def get_payout_historico(ticker: str, cnpj: str | None = None, meses: int = 24, 
     ).all()
 
     if not rows:
-        return pd.DataFrame(columns=["data_referencia", "rentab_efetiva_pct", "rentab_patrimonial_pct", "distribuindo_mais_que_gera"]), 0
+        return pd.DataFrame(columns=["data_referencia", "rentab_efetiva_pct", "rentab_patrimonial_pct", "patrim_maior_que_efetiva"]), 0
 
     records = []
     for r in reversed(rows):
@@ -42,13 +42,14 @@ def get_payout_historico(ticker: str, cnpj: str | None = None, meses: int = 24, 
             "data_referencia": r.data_referencia,
             "rentab_efetiva_pct": ef,
             "rentab_patrimonial_pct": pa,
-            "distribuindo_mais_que_gera": ef is not None and pa is not None and pa > ef,
+            # efetiva - patrimonial == dy_mes_pct (identidade nos dados CVM): pa > ef <=> DY do mes negativo.
+            "patrim_maior_que_efetiva": ef is not None and pa is not None and pa > ef,
         })
 
     df = pd.DataFrame(records)
     meses_consec = 0
     for _, row in df.iloc[::-1].iterrows():
-        if row["distribuindo_mais_que_gera"]:
+        if row["patrim_maior_que_efetiva"]:
             meses_consec += 1
         else:
             break
@@ -120,8 +121,11 @@ def get_dy_medias(ticker: str, cnpj: str | None = None, session=None) -> dict:
         return {"dy_12m_atual": None, "media_dy_2anos": None, "media_dy_5anos": None, "percentil_na_serie_completa": None}
 
     dy_12m = get_dy_n_meses(ticker, ultimo, 12, session)
+    # get_dy_n_meses devolve a SOMA de n meses / preco; media anual = soma / anos.
     dy_24m = get_dy_n_meses(ticker, ultimo, 24, session)
     dy_60m = get_dy_n_meses(ticker, ultimo, 60, session)
+    dy_24m = dy_24m / 2 if dy_24m is not None else None
+    dy_60m = dy_60m / 5 if dy_60m is not None else None
 
     if not cnpj:
         return {
@@ -143,10 +147,11 @@ def get_dy_medias(ticker: str, cnpj: str | None = None, session=None) -> dict:
 
     pct = None
     if relatorios and dy_12m is not None:
+        # dy_mes_pct e fracao (0.007 = 0,7%) e dy_12m tambem: comparar fracao com fracao.
         dy_mensal = [float(d) for d in relatorios]
         dy_mensal_anualizado = [d * 12 for d in dy_mensal if d is not None]
         if dy_mensal_anualizado:
-            dy_anual = dy_12m * 100
+            dy_anual = dy_12m
             pct = float(sum(1 for d in dy_mensal_anualizado if d <= dy_anual) / len(dy_mensal_anualizado) * 100)
 
     return {
@@ -284,8 +289,8 @@ def classificar_alerta_distribuicao(resumo: dict) -> tuple[str, str]:
     total = resumo["total_6m"]
 
     if consec_alerta >= get_threshold("meses_consec_alerta", 3):
-        return ("error", f"Atencao: distribuindo mais que gera ha {consec_alerta} meses seguidos ({saudaveis}/{total})")
+        return ("error", f"Atencao: rentabilidade patrimonial negativa (VP/cota em queda no mes) ha {consec_alerta} meses seguidos ({saudaveis}/{total} meses sem queda)")
     elif saudaveis < 4:
-        return ("warning", f"Tendencia de alerta: {saudaveis} de {total} meses saudaveis")
+        return ("warning", f"Tendencia de alerta: {saudaveis} de {total} meses sem queda de VP/cota")
     else:
-        return ("success", f"Geracao saudavel nos ultimos 6 meses ({saudaveis}/{total})")
+        return ("success", f"VP/cota sem queda recorrente nos ultimos 6 meses ({saudaveis}/{total} meses sem queda)")

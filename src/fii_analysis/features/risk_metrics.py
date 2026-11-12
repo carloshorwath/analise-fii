@@ -113,10 +113,14 @@ def liquidez_media_21d(ticker: str, session=None) -> float | None:
 
 
 def retorno_total_12m(ticker: str, session=None) -> float | None:
-    """Calcula (P_t - P_{t-252} + soma_dividendos_12m) / P_{t-252}."""
+    """Calcula (P_t - P_{t-252} + soma_dividendos_12m) / P_{t-252}.
+
+    Usa o fechamento BRUTO: fechamento_aj (yfinance) ja embute dividendos, e somar
+    os dividendos de novo contaria cada provento 2x.
+    """
     rows = session.execute(
-        select(PrecoDiario.fechamento_aj, PrecoDiario.data)
-        .where(PrecoDiario.ticker == ticker, PrecoDiario.fechamento_aj.isnot(None))
+        select(PrecoDiario.fechamento, PrecoDiario.data)
+        .where(PrecoDiario.ticker == ticker, PrecoDiario.fechamento.isnot(None))
         .order_by(PrecoDiario.data.desc())
         .limit(253)
     ).all()

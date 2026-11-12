@@ -17,9 +17,9 @@ from sqlalchemy import select
 
 from src.fii_analysis.data.database import (
     PrecoDiario,
-    RelatorioMensal,
     get_cnpj_by_ticker,
 )
+from src.fii_analysis.features.indicators import get_relatorios_ajustados
 
 
 def get_pvp_series(ticker, session, rolling_window=504):
@@ -43,19 +43,15 @@ def get_pvp_series(ticker, session, rolling_window=504):
         for p in prices_db if p.fechamento is not None and p.fechamento_aj is not None
     ])
 
-    reports_db = session.execute(
-        select(RelatorioMensal.data_entrega, RelatorioMensal.vp_por_cota)
-        .where(RelatorioMensal.cnpj == cnpj, RelatorioMensal.data_entrega.isnot(None))
-        .order_by(RelatorioMensal.data_entrega.asc())
-    ).all()
-
-    if not reports_db:
+    # VP/cota na base do preco (split-ajustado) — unica fonte: features.indicators
+    rel = get_relatorios_ajustados(ticker, session)
+    if rel.empty:
         return pd.DataFrame()
 
-    reports = pd.DataFrame([
-        {"data_entrega": pd.Timestamp(r.data_entrega), "vp_por_cota": float(r.vp_por_cota) if r.vp_por_cota else None}
-        for r in reports_db
-    ]).dropna(subset=["vp_por_cota"]).sort_values("data_entrega")
+    reports = pd.DataFrame({
+        "data_entrega": pd.to_datetime(rel["data_entrega"]),
+        "vp_por_cota": rel["vp_aj"],
+    }).dropna(subset=["vp_por_cota"]).sort_values("data_entrega")
 
     df = pd.merge_asof(
         prices,

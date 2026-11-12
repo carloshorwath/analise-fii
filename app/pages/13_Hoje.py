@@ -26,8 +26,9 @@ from src.fii_analysis.decision import (
     export_daily_report_md,
 )
 from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown
-from src.fii_analysis.data.database import SnapshotRun
+from src.fii_analysis.data.database import SnapshotRun, get_session_ctx
 from sqlalchemy import select
+from src.fii_analysis.decision.suporte import rationale_legivel, rotulo_sinal
 
 safe_set_page_config(page_title="Hoje", page_icon="compass", layout="wide")
 
@@ -98,7 +99,7 @@ def main():
     if report is None:
         st.info(
             "Nenhum snapshot disponivel para hoje. "
-            "Execute `python scripts/daily_update.py` para atualizar precos e gerar o snapshot do dia."
+            "Execute `fii update-prices` para atualizar precos e gerar o snapshot do dia."
         )
         render_footer()
         return
@@ -206,6 +207,11 @@ def main():
     render_footer()
 
 
+def _rot(d, chave: str, sinal) -> str:
+    """Sinal com rotulo "(info)" quando sem suporte estatistico (nao vota)."""
+    return rotulo_sinal(sinal, (getattr(d, "suporte_sinais", None) or {}).get(chave))
+
+
 def _sig_icon(sinal: str, acao: str) -> str:
     """Ícone do sinal de cada motor vs ação do dia."""
     s = (sinal or "").upper()
@@ -255,16 +261,19 @@ def _render_action_card(d, scores: dict | None) -> None:
     metrics_html = " &nbsp;·&nbsp; ".join(metrics_parts) if metrics_parts else ""
     flags = _flags_text(d)
     flags_html = f'<div class="hoje-flags">⚠️ {flags}</div>' if flags != "-" else ""
-    rationale_line = d.rationale[0] if d.rationale else ""
+    if getattr(d, "bloqueio_compra", None):
+        flags_html += f'<div class="hoje-flags">🚫 Compra bloqueada: {d.bloqueio_compra}</div>'
+    rat_legivel = rationale_legivel(d.rationale)
+    rationale_line = rat_legivel[0] if rat_legivel else ""
     rat_html = f'<div class="hoje-rationale">{rationale_line}</div>' if rationale_line else ""
     badge_cls = f"badge-{d.acao}"
     card_cls  = f"hoje-card-{d.acao}"
     sig_html = (
-        f'{_sig_icon(d.sinal_otimizador, d.acao)} Otim <strong>{d.sinal_otimizador or "n/d"}</strong>'
+        f'{_sig_icon(d.sinal_otimizador, d.acao)} Otim <strong>{_rot(d, "otimizador", d.sinal_otimizador)}</strong>'
         f' &nbsp;·&nbsp; '
-        f'{_sig_icon(d.sinal_episodio, d.acao)} Epi <strong>{d.sinal_episodio or "n/d"}</strong>'
+        f'{_sig_icon(d.sinal_episodio, d.acao)} Epi <strong>{_rot(d, "episodio", d.sinal_episodio)}</strong>'
         f' &nbsp;·&nbsp; '
-        f'{_sig_icon(d.sinal_walkforward, d.acao)} WF <strong>{d.sinal_walkforward or "n/d"}</strong>'
+        f'{_sig_icon(d.sinal_walkforward, d.acao)} WF <strong>{_rot(d, "walkforward", d.sinal_walkforward)}</strong>'
     )
     html = f"""
 <div class="hoje-card {card_cls}">
@@ -296,8 +305,9 @@ def _render_actions_today(report, scores: dict | None = None):
     df = pd.DataFrame([{
         "Ticker": d.ticker, "Acao": d.acao,
         "Score": _score_badge(d.ticker), "Confianca": d.nivel_concordancia,
-        "Otimizador": d.sinal_otimizador, "Episodios": d.sinal_episodio,
-        "WalkForward": d.sinal_walkforward,
+        "Otimizador": _rot(d, "otimizador", d.sinal_otimizador),
+        "Episodios": _rot(d, "episodio", d.sinal_episodio),
+        "WalkForward": _rot(d, "walkforward", d.sinal_walkforward),
         "P/VP pct": f"{d.pvp_percentil:.1f}%" if d.pvp_percentil is not None else "n/d",
         "DY Gap pct": f"{d.dy_gap_percentil:.1f}%" if d.dy_gap_percentil is not None else "n/d",
         "Sensibilidade Juros": f"{d.cdi_repricing_12m * 100:+.1f}%" if getattr(d, "cdi_repricing_12m", None) is not None else "n/d",
@@ -324,7 +334,7 @@ def _render_actions_today(report, scores: dict | None = None):
             score_val = (scores or {}).get(d.ticker)
             score_txt = f" | Score: {score_val}/100" if score_val is not None else ""
             st.markdown(f"**{d.ticker}** - {d.acao} ({d.nivel_concordancia}){score_txt}")
-            for item in d.rationale:
+            for item in rationale_legivel(d.rationale):
                 st.write(f"- {item}")
             st.markdown("---")
 
@@ -340,9 +350,9 @@ def _render_watchlist(report, scores: dict | None = None):
         "Ticker": d.ticker,
         "Estado": d.acao,
         "Score": f"{scores.get(d.ticker, 'n/d')}/100" if scores and scores.get(d.ticker) is not None else "n/d",
-        "Otimizador": d.sinal_otimizador,
-        "Episodios": d.sinal_episodio,
-        "WalkForward": d.sinal_walkforward,
+        "Otimizador": _rot(d, "otimizador", d.sinal_otimizador),
+        "Episodios": _rot(d, "episodio", d.sinal_episodio),
+        "WalkForward": _rot(d, "walkforward", d.sinal_walkforward),
         "Episodio Hoje": _episode_text(d),
         "Captura Div.": "Aberta" if d.janela_captura_aberta else "Nao",
         "Prox. Data-com": d.proxima_data_com_estimada.isoformat() if d.proxima_data_com_estimada else "n/d",

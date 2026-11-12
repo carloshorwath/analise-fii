@@ -18,6 +18,8 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
+from src.fii_analysis.decision.suporte import restaurar_de_rationale
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -380,6 +382,12 @@ def load_decisions_snapshot(scope: str = "curado") -> tuple[dict | None, pd.Data
                 "sinal_otimizador": r.sinal_otimizador,
                 "sinal_episodio": r.sinal_episodio,
                 "sinal_walkforward": r.sinal_walkforward,
+                "suporte_sinais": restaurar_de_rationale(
+                    json.loads(r.rationale_json) if r.rationale_json else []
+                )[0],
+                "bloqueio_compra": restaurar_de_rationale(
+                    json.loads(r.rationale_json) if r.rationale_json else []
+                )[1],
                 "flag_destruicao_capital": bool(r.flag_destruicao_capital) if r.flag_destruicao_capital is not None else False,
             }
             for r in rows
@@ -442,7 +450,7 @@ def render_snapshot_info(meta: dict | None, *, stale_carteira: bool = False) -> 
     if meta is None:
         st.warning(
             "Nenhum snapshot disponivel. "
-            "Execute: `python scripts/daily_update.py` para gerar os dados do dia."
+            "Execute: `fii update-prices` para gerar os dados do dia."
         )
         return
     ts = meta.get("finalizado_em")
@@ -451,12 +459,12 @@ def render_snapshot_info(meta: dict | None, *, stale_carteira: bool = False) -> 
     if meta.get("is_stale"):
         st.warning(
             f"Snapshot desatualizado — gerado em {ts_str} (scope: {scope}). "
-            "Execute `python scripts/daily_update.py` para atualizar."
+            "Execute `fii update-prices` para atualizar."
         )
     elif stale_carteira:
         st.warning(
             f"Snapshot de {ts_str}: carteira atual nao consta no cache. "
-            "Execute `python scripts/daily_update.py` para incluir a carteira."
+            "Execute `fii update-prices` para incluir a carteira."
         )
     else:
         st.info(f"Dados do snapshot de {ts_str}.")

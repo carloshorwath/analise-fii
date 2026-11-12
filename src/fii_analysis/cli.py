@@ -185,6 +185,7 @@ def update_prices(
     from src.fii_analysis.models.threshold_optimizer_v2 import (
         ThresholdOptimizerV2, load_optimizer_cache, save_optimizer_cache,
     )
+    from src.fii_analysis.decision.suporte import extrair_stats_otimizador
     from src.fii_analysis.evaluation.daily_snapshots import generate_daily_snapshot, resolve_snapshot_universe
 
     logger.remove()
@@ -244,7 +245,9 @@ def update_prices(
                 if load_optimizer_cache(t, max_age_days=7) is None:
                     result = optimizer.optimize(t, session)
                     if result and result.get("best_params"):
-                        save_optimizer_cache(t, result["best_params"])
+                        save_optimizer_cache(
+                            t, result["best_params"], test_stats=extrair_stats_otimizador(result)
+                        )
                         logger.info("{}: cache otimizador salvo", t)
             except Exception as e:
                 logger.error("{} otimizador: {}", t, e)
@@ -288,6 +291,8 @@ def diario(
         SnapshotDecisions, SnapshotTickerMetrics, SnapshotRun,
     )
     from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown
+    from src.fii_analysis.decision.suporte import restaurar_de_rationale, rotulo_sinal
+    import json as _json
     from sqlalchemy import select
 
     console = Console(width=120)
@@ -346,8 +351,14 @@ def diario(
     table.add_column("PVP%ile", min_width=7, no_wrap=True)
     table.add_column("DYGap%ile", min_width=9, no_wrap=True)
 
+    bloqueios: list[str] = []
     for d in decisions:
         m = metrics_map.get(d.ticker)
+        suporte_d, bloqueio_d = restaurar_de_rationale(
+            _json.loads(d.rationale_json) if d.rationale_json else []
+        )
+        if bloqueio_d:
+            bloqueios.append(f"{d.ticker}: compra bloqueada - {bloqueio_d}")
         acao_color = _ACAO_COLOR.get(d.acao or "", "white")
         conc_prefix = _CONC_PREFIX.get(d.nivel_concordancia or "", "   ")
         conc_str = f"{conc_prefix} {d.nivel_concordancia or 'n/d'}"
@@ -358,15 +369,18 @@ def diario(
             d.ticker or "",
             f"[{acao_color}]{d.acao or 'n/d'}[/{acao_color}]",
             conc_str,
-            d.sinal_otimizador or "n/d",
-            d.sinal_episodio or "n/d",
-            d.sinal_walkforward or "n/d",
+            rotulo_sinal(d.sinal_otimizador, suporte_d.get("otimizador")),
+            rotulo_sinal(d.sinal_episodio, suporte_d.get("episodio")),
+            rotulo_sinal(d.sinal_walkforward, suporte_d.get("walkforward")),
             score_str,
             pvp_str,
             dygap_str,
         )
 
     console.print(table)
+    console.print("[dim](info) = sinal sem suporte estatistico (n/p insuficientes): exibido, mas nao vota.[/dim]")
+    for linha in bloqueios:
+        console.print(f"[yellow]{linha}[/yellow]")
     console.print("[dim]Execute 'fii update-prices' para atualizar os dados.[/dim]\n")
 
 

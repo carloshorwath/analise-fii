@@ -47,3 +47,11 @@ def get_oportunidades_param(key: str, default=None):
     opts = get("oportunidades", {})
     return opts.get(key, default)
 
+
+
+def get_saude_param(key: str, default=None):
+    return (get("saude", {}) or {}).get(key, default)
+
+
+def get_decisao_param(key: str, default=None):
+    return (get("decisao", {}) or {}).get(key, default)

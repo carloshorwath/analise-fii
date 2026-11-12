@@ -70,12 +70,12 @@ def render_distribuicao_vs_geracao(ticker: str, *, key_prefix: str = "fund") -> 
         name="Rent. Patrimonial %",
         marker_color="#ef553b",
     ))
-    alert_dates = payout_df[payout_df["distribuindo_mais_que_gera"]]["data_referencia"].tolist()
+    alert_dates = payout_df[payout_df["patrim_maior_que_efetiva"]]["data_referencia"].tolist()
     if alert_dates:
         fig.add_trace(go.Bar(
             x=alert_dates,
             y=[0] * len(alert_dates),
-            name="Efetiva > Patrimonial",
+            name="Patrimonial > Efetiva (DY do mes negativo)",
             marker_color="rgba(255,0,0,0.3)",
             showlegend=True,
         ))
@@ -104,9 +104,9 @@ def render_dy_historico(ticker: str, *, key_prefix: str = "fund") -> None:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("DY 12m Atual",
                 format_pct(dy_data["dy_12m_atual"]) if dy_data["dy_12m_atual"] else "n/d")
-    col2.metric("DY 24m",
+    col2.metric("DY medio a.a. (24m)",
                 format_pct(dy_data["media_dy_2anos"]) if dy_data["media_dy_2anos"] else "n/d")
-    col3.metric("DY 60m",
+    col3.metric("DY medio a.a. (60m)",
                 format_pct(dy_data["media_dy_5anos"]) if dy_data["media_dy_5anos"] else "n/d")
     col4.metric("Percentil na Serie",
                 f"{dy_data['percentil_na_serie_completa']:.1f}%"

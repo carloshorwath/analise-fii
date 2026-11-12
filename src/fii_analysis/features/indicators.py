@@ -4,7 +4,54 @@ import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from src.fii_analysis.data.corporate_actions import ajustar_relatorios, detectar_splits
 from src.fii_analysis.data.database import Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
+
+
+def get_relatorios_ajustados(ticker: str, session: Session, apenas_entregues: bool = True) -> pd.DataFrame:
+    """Informes CVM do fundo com VP/cota e cotas na MESMA BASE do preco `fechamento`
+    (quantidade atual de cotas; ver data/corporate_actions.py).
+
+    Colunas: data_referencia, data_entrega, vp_por_cota (nominal), vp_aj, cotas_emitidas,
+    cotas_aj, patrimonio_liq, fator_split. Ordenado por data_referencia ascendente.
+    Unica fonte de VP/cota para qualquer P/VP do projeto.
+    """
+    cols = ["data_referencia", "data_entrega", "vp_por_cota", "vp_aj", "cotas_emitidas",
+            "cotas_aj", "patrimonio_liq", "fator_split"]
+    cnpj = get_cnpj_by_ticker(ticker, session)
+    if cnpj is None:
+        return pd.DataFrame(columns=cols)
+    q = select(
+        RelatorioMensal.data_referencia, RelatorioMensal.data_entrega, RelatorioMensal.vp_por_cota,
+        RelatorioMensal.cotas_emitidas, RelatorioMensal.patrimonio_liq,
+    ).where(RelatorioMensal.cnpj == cnpj).order_by(RelatorioMensal.data_referencia.asc())
+    rows = session.execute(q).all()
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(rows, columns=["data_referencia", "data_entrega", "vp_por_cota",
+                                     "cotas_emitidas", "patrimonio_liq"])
+    for c in ("vp_por_cota", "cotas_emitidas", "patrimonio_liq"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    eventos, _ = detectar_splits(df)  # detecta com todos os informes (unidade, nao informacao)
+    df = ajustar_relatorios(df, eventos)
+    if apenas_entregues:
+        df = df[df["data_entrega"].notna()]
+    return df[cols].reset_index(drop=True)
+
+
+def get_vp_cotas_pit(ticker: str, data: date, session: Session) -> tuple[float | None, float | None]:
+    """(VP/cota, cotas) point-in-time na base do preco: ultimo informe com
+    data_entrega <= data (ordem data_referencia DESC), dividido/multiplicado pelo
+    fator acumulado dos splits posteriores a data_referencia do informe."""
+    df = get_relatorios_ajustados(ticker, session)
+    if df.empty:
+        return None, None
+    df = df[(pd.to_datetime(df["data_entrega"]) <= pd.Timestamp(data)) & df["vp_aj"].notna()]
+    if df.empty:
+        return None, None
+    ult = df.sort_values("data_referencia").iloc[-1]
+    cotas = float(ult["cotas_aj"]) if pd.notna(ult["cotas_aj"]) else None
+    return float(ult["vp_aj"]), cotas
 
 
 def get_pvp(ticker: str, data: date, session: Session) -> float | None:
@@ -18,21 +65,8 @@ def get_pvp(ticker: str, data: date, session: Session) -> float | None:
     if preco_row is None:
         return None
 
-    cnpj = get_cnpj_by_ticker(ticker, session)
-    if cnpj is None:
-        return None
-
-    vp = session.execute(
-        select(RelatorioMensal.vp_por_cota)
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.data_entrega <= data,
-            RelatorioMensal.vp_por_cota.isnot(None),
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if vp is None:
+    vp, _ = get_vp_cotas_pit(ticker, data, session)
+    if vp is None or vp <= 0:
         return None
 
     return float(preco_row) / float(vp)
@@ -76,21 +110,9 @@ def get_pvp_serie(ticker: str, session: Session) -> pd.DataFrame:
     if not precos:
         return pd.DataFrame(columns=["data", "fechamento", "vp_por_cota", "pvp"])
 
-    relatorios = session.execute(
-        select(
-            RelatorioMensal.data_referencia,
-            RelatorioMensal.data_entrega,
-            RelatorioMensal.vp_por_cota,
-        )
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.vp_por_cota.isnot(None),
-            RelatorioMensal.data_entrega.isnot(None),
-        )
-        .order_by(RelatorioMensal.data_entrega.asc())
-    ).all()
-
-    vp_por_entrega = [(r.data_entrega, float(r.vp_por_cota)) for r in relatorios]
+    rel = get_relatorios_ajustados(ticker, session)
+    rel = rel[rel["vp_aj"].notna()].sort_values("data_entrega")
+    vp_por_entrega = [(pd.Timestamp(r.data_entrega).date(), float(r.vp_aj)) for r in rel.itertuples()]
 
     rows = []
     for d, fech in precos:

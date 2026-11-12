@@ -23,6 +23,7 @@ from src.fii_analysis.decision.portfolio_advisor import (
     alertas_estruturais,
 )
 from src.fii_analysis.decision.recommender import TickerDecision, decidir_universo
+from src.fii_analysis.decision.suporte import extrair_stats_otimizador
 from src.fii_analysis.features.portfolio import carteira_panorama
 from src.fii_analysis.models.threshold_optimizer_v2 import ThresholdOptimizerV2
 
@@ -41,8 +42,14 @@ class DailyCommandCenter:
     structural_alerts: list[AlertaEstrutural]
 
 
-def _build_optimizer_params_map(session, tickers: list[str]) -> dict[str, dict]:
-    """Roda o otimizador por ticker e extrai best_params quando houver dados."""
+def _build_optimizer_params_map(
+    session, tickers: list[str], stats_map: Optional[dict[str, dict]] = None
+) -> dict[str, dict]:
+    """Roda o otimizador por ticker e extrai best_params quando houver dados.
+
+    Se ``stats_map`` for passado, recebe as estatisticas de teste (n/p) de cada
+    ticker para o criterio de suporte do voto.
+    """
     optimizer = ThresholdOptimizerV2()
     params_map: dict[str, dict] = {}
     for ticker in tickers:
@@ -52,6 +59,9 @@ def _build_optimizer_params_map(session, tickers: list[str]) -> dict[str, dict]:
             continue
         if "error" not in result and result.get("best_params"):
             params_map[ticker] = result["best_params"]
+            stats = extrair_stats_otimizador(result)
+            if stats and stats_map is not None:
+                stats_map[ticker] = stats
     return params_map
 
 
@@ -118,11 +128,13 @@ def build_daily_command_center(
     """Monta a camada operacional unica do dia."""
     holdings = holdings or []
     monitored = tickers or tickers_ativos(session)
-    params_map = _build_optimizer_params_map(session, monitored)
+    stats_map: dict[str, dict] = {}
+    params_map = _build_optimizer_params_map(session, monitored, stats_map)
     decisions = decidir_universo(
         session,
         tickers=monitored,
         optimizer_params_por_ticker=params_map,
+        optimizer_stats_por_ticker=stats_map,
         forward_days=forward_days,
     )
     decisions.sort(key=_action_rank)

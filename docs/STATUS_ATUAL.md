@@ -1,6 +1,6 @@
 # STATUS_ATUAL.md — Estado Factual do Projeto FII
 
-> Gerado em: 2026-06-11. Regenerar sempre que houver mudança estrutural.
+> Gerado em: 2026-11-12 (código); contagens de dados em "Volume de dados" são de 2026-06-11. Regenerar sempre que houver mudança estrutural.
 > Não editar manualmente — descreve o que **existe agora**, não o que está planejado.
 
 ---
@@ -28,7 +28,8 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 |---|---|
 | `database.py` | SQLAlchemy 2.0: ORM declarativo (16 tabelas: 10 operacionais + 6 snapshot), `get_session_ctx`, `get_session`, `get_cnpj_by_ticker`, `get_ultima_coleta`, `get_ultimo_preco_date`, `get_latest_ready_snapshot_run`. |
 | `migrations.py` | Migrações idempotentes (sem Alembic): 8 migrações (001: CDI sensitivity; 002: Focus BCB; 003: risk_metrics; 004: score 0-100; 005: universo; 006: snapshot_opportunities; 007: llm_journal; 008: decisoes_log). |
-| `ingestion.py` | CVM (ZIP → complemento/geral/ativo_passivo), yfinance (preços + dividendos, com throttle e lista de exclusões em `dados/yfinance_exclusoes.json`), brapi, BCB SGS série 12 (CDI), conversão ex-date → data-com via calendário B3. `refresh_cvm_current_year()` re-baixa o ZIP CVM do ano corrente quando > 7 dias e reingere (chamado pelo `update-prices`). `load_benchmark_yfinance()` usa `XFIX11`. |
+| `ingestion.py` | CVM (ZIP → complemento/geral/ativo_passivo), yfinance (preços + dividendos, com throttle e lista de exclusões em `dados/yfinance_exclusoes.json`), brapi, BCB SGS série 12 (CDI), conversão ex-date → data-com via calendário B3. `refresh_cvm_current_year()` re-baixa o ZIP CVM do ano corrente quando > 7 dias e reingere (chamado pelo `update-prices`). `load_benchmark_yfinance()` usa `XFIX11`. Carga de preços reabre linhas vazias/provisórias (janela de 400 dias; `_linha_precisa_revisao`) e nunca reescreve linhas com `fonte = 'yfinance:invalido'`. Carga de dividendos não insere duplicatas (≤ 7 dias, mesmo valor) e reconcilia base de split; `limpar_dividendos_duplicados()`. `recalcular_fechamento_aj()` reconstrói `fechamento_aj` (retorno total) ao fim de cada carga de preços/dividendos. `calcular_ativo_total()` + `load_ativo_passivo_to_db(..., atualizar_existentes=False)`: `ativo_total` = `Valor_Ativo` do `complemento`, fallback sem dupla contagem. |
+| `corporate_actions.py` | Lógica pura (sem I/O): `detectar_splits`, `ajustar_relatorios` (VP/cota e cotas na base atual), `deduplicar_proximos`, `calcular_retorno_total`. Regras em PROJETO.md §4.9. |
 | `ifix.py` | `get_ifix_composition()` — composição teórica do IFIX via B3 (GetPortfolioDay) com fallback `dados/ifix_composicao.csv` (self-healing preserva mapeamentos); resolução de CNPJ via tickers → universo → CSV → StatusInvest; persiste na tabela `universo`. |
 | `cdi.py` | `get_cdi_acumulado_12m(t, session)` — lê apenas `cdi_diario`, desacoplado de `ingestion.py` |
 | `focus_bcb.py` | `fetch_focus_selic()` — busca expectativas Focus BCB (Selic 3m/6m/12m), cache diário em `dados/cache/focus_selic.json`. Retorna `FocusSelicResult` com status `OK`/`SEM_DADOS`/`ERRO_API`. |
@@ -38,17 +39,17 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | Arquivo | Conteúdo |
 |---|---|
 | `dividend_window.py` | Janela ±10 pregões com retornos e retornos anormais vs benchmark |
-| `indicators.py` | P/VP point-in-time, DY trailing (série e valor) |
-| `valuation.py` | Percentil rolling P/VP (504d), DY N-meses (12/24/36), DY Gap vs CDI, percentil DY Gap (252d), z-score P/VP (504d), cap rate anualizado + spread vs CDI |
+| `indicators.py` | P/VP point-in-time, DY trailing (série e valor). `get_relatorios_ajustados` / `get_vp_cotas_pit`: VP/cota e cotas na base do preço (split-ajustados) — única fonte de VP/cota para P/VP (`get_pvp`, `get_pvp_serie`, otimizador, episódios, `portfolio`). |
+| `valuation.py` | Percentil rolling P/VP (504d), DY N-meses (12/24/36; janela semiaberta `(t−N, t]`), DY Gap vs CDI, percentil DY Gap (252d; dividendos buscados desde 12 meses antes da data mais antiga da janela), z-score P/VP (504d), cap rate anualizado + spread vs CDI |
 | `portfolio.py` | Panorama carteira, alocação, Herfindahl, retorno vs IFIX |
-| `saude.py` | Tendência PL, saúde graduada (saudável/em_recuperação/alerta/crítica) com score 0–100, skip de meses extraordinários (eventos de capital), análise de emissões, LTV flag |
-| `fundamentos.py` | Rentabilidade efetiva/patrimonial, alavancagem (Ativo/PL), classificação por alerta |
+| `saude.py` | Tendência PL, saúde graduada (saudável/em_recuperação/alerta/crítica) com score 0–100, análise de emissões, LTV flag. Limiares em % do VP/cota por mês (`config.yaml` seção `saude:`); streak = meses consecutivos de queda do VP/cota (`_meses_queda_vp`). `flag_destruicao_capital`, `tendencia_pl` e `emissoes_recentes` aceitam `t` (point-in-time); o `recommender` passa a data de referência. |
+| `fundamentos.py` | Rentabilidade efetiva/patrimonial, alavancagem (Ativo/PL), classificação por alerta. `get_dy_medias`: média anual correta (DY 24m ÷ 2, DY 60m ÷ 5) e percentil em fração. `get_efetiva_vs_patrimonial_resumo` e `get_payout_historico` mantêm o critério efetiva × patrimonial (ver PROJETO.md §5.2). |
 | `composicao.py` | Classificação Tijolo/Papel/Híbrido via `ativo_passivo` CVM |
 | `radar.py` | Matriz booleana (P/VP pct, DY Gap pct, Saúde, Liquidez) |
 | `score.py` | Score composto 0–100 com 4 sub-scores: `ScoreFII` dataclass, `calcular_score()` e `calcular_score_batch()` (Valuation 35% + Risco 30% + Liquidez 20% + Histórico 15%). Pesos adaptativos: 50/30/20 (P/VP/DY/Zscore quando disponível) ou fallback 60/40 (P/VP/DY). |
-| `risk_metrics.py` | `volatilidade_anualizada`, `beta_vs_ifix` (vs XFIX11), `max_drawdown`, `liquidez_media_21d`, `retorno_total_12m`, `dy_3m_anualizado`, `yield_on_cost` — todas com parâmetro `session`. |
+| `risk_metrics.py` | `volatilidade_anualizada`, `beta_vs_ifix` (vs XFIX11), `max_drawdown`, `liquidez_media_21d`, `retorno_total_12m` (usa `fechamento` bruto + dividendos), `dy_3m_anualizado`, `yield_on_cost` — todas com parâmetro `session`. |
 | `volume_signals.py` | `get_volume_drop_flag` — flag se volume 21d < volume 63d - threshold%; `get_vol_ratio_21_63` — razão volume 21d / volume 63d; `get_volume_profile` — perfil de distribuição de volume. |
-| `momentum_signals.py` | `get_momentum_relativo_ifix` — retorno FII 21d vs IFIX 21d; `get_dividend_safety` — análise sustentabilidade (payout_vs_caixa, cortes_24m, flag_insustentavel). Contém também: `get_pl_trend`, `get_rentab_divergencia`, `get_dy_momentum`, `get_meses_dy_acima_cdi`. |
+| `momentum_signals.py` | `get_momentum_relativo_ifix` — retorno FII 21d vs IFIX 21d (benchmark `XFIX11` lido de `benchmark_diario`, alinhado nas datas da janela do FII); `get_dividend_safety` — análise sustentabilidade (payout_vs_caixa, cortes_24m, flag_insustentavel). Contém também: `get_pl_trend`, `get_rentab_divergencia`, `get_dy_momentum`, `get_meses_dy_acima_cdi`. |
 | `data_loader.py` | Agregadores de dados para CLI e páginas Streamlit (consultas compostas) |
 
 ### `src/fii_analysis/models/`
@@ -60,7 +61,7 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | `critic.py` | CriticAgent: shuffle/placebo/estabilidade (3 testes de falsificação) |
 | `strategy.py` | Simulação dividend capture, grid search, Sharpe/Sortino/drawdown, buy-and-hold |
 | `trade_simulator.py` | Motor puro de simulação (backtest) que gerencia caixa/CDI, dividendos explícitos (D+1 proxy) e compras pelo preço bruto. |
-| `threshold_optimizer_v2.py` | Otimizador de thresholds P/VP + DY Gap + meses_alerta. Grid expandido de 244 combinações válidas (buy [15–50], sell [55–90], spread≥15); `volume_drop_flag` vetorizado filtra BUYs com queda forte de volume. Cache JSON: `save_optimizer_cache()` e `load_optimizer_cache()`. |
+| `threshold_optimizer_v2.py` | Otimizador de thresholds P/VP + DY Gap + meses_alerta. Grid expandido de 244 combinações válidas (buy [15–50], sell [55–90], spread≥15); `volume_drop_flag` vetorizado filtra BUYs com queda forte de volume. Cache JSON: `save_optimizer_cache(..., test_stats=)`, `load_optimizer_cache()` e `load_optimizer_cache_stats()` — o cache guarda `best_params` e `test_stats` (n thinned e p Bonferroni do split de teste, usados pela trava de significância). `get_signal_hoje` não exige `fwd_ret` (usa o último pregão); o ajuste do grid continua exigindo. Docstring (~linha 385) ainda descreve `meses_alerta` como "rentabilidade efetiva < patrimonial (distribuindo capital)". |
 | `walk_forward_rolling.py` | Validação out-of-sample genuína com janela de treino deslizante (thinned). Retorna `sinal_hoje`: extrapolação do threshold da última janela OOS para P/VP atual. |
 | `episodes.py` | Identificação de episódios independentes de P/VP extremo (thinned). Parâmetro `min_gap`. |
 | `div_capture.py` | Estratégias de captura de dividendo (lógica pura, sem UI): `carregar_dados_ticker`, `analisar_janela_flexivel`, `identificar_dia_minimo_treino`, `estrategia_compra_fixa`, `estrategia_vende_recompra`, `simular_spread_recompra` |
@@ -74,7 +75,9 @@ explicitamente **Sinal** (estatístico) de **Ação** (derivada com veto) de **R
 | Arquivo | Conteúdo |
 |---|---|
 | `__init__.py` | Re-exports: `TickerDecision`, `DailyCommandCenter`, `HoldingAdvice`, `AlertaEstrutural`, e todas as funções públicas. |
-| `recommender.py` | Motor central: dataclass `TickerDecision` (Sinal/Ação/Risco separados) e funções `decidir_ticker(ticker, session, optimizer_params=None)` e `decidir_universo(...)`. Combina 3 modos + 4 flags de risco. Veto absoluto: BUY com `flag_destruicao_capital` → EVITAR/VETADA. Motor V2 F3: campos de momentum, cap rate, dividend safety, LTV. Camada CDI V1 (informativa): não altera `_derivar_acao()`. |
+| `recommender.py` | Motor central: dataclass `TickerDecision` (Sinal/Ação/Risco separados) e funções `decidir_ticker(ticker, session, optimizer_params=None)` e `decidir_universo(...)`. Combina 3 modos + 4 flags de risco. Veto absoluto: BUY com `flag_destruicao_capital` → EVITAR/VETADA. Motor V2 F3: campos de momentum, cap rate, dividend safety, LTV. Camada CDI V1 (informativa): não altera `_derivar_acao()`. Só sinais com suporte estatístico votam (`suporte.py`); `TickerDecision` ganhou `suporte_sinais` e `bloqueio_compra`; COMPRAR bloqueado por `elegibilidade.py` é rebaixado a AGUARDAR/BAIXA. Chama saúde/emissões com `t=data_ref`. |
+| `suporte.py` | Trava de significância: `avaliar_suporte`, `suporte_otimizador/episodio/walkforward`, `conta_no_voto`, `rotulo_sinal` (`BUY (info)` quando sem suporte), `linhas_rationale` / `restaurar_de_rationale` (linhas `SUPORTE_JSON` e `BLOQUEIO_COMPRA` em `rationale_json`), `extrair_stats_otimizador`. Limiares em `config.yaml` seção `decisao:` (PROJETO.md §4.2). |
+| `elegibilidade.py` | `motivo_bloqueio_compra`: evento de liquidação/encerramento vigente em `eventos_corporativos` (tipo contendo "liquid"/"encerr", `data <= data_ref`) ou preço atrasado > `decisao.preco_defasado_dias_uteis` pregões. Consumido por `recommender.py`, `opportunities.py` (candidato de rotação) e `portfolio_advisor.py` (sem AUMENTAR). |
 | `cdi_focus_explainer.py` | Camada de explicação CDI + Focus: `build_cdi_focus_explanation()` → dict com deltas Focus, repricing estimado e linhas de explicação textual. Puramente informativo. |
 | `abertos.py` | Detectores de oportunidades abertas hoje: `detectar_episodio_aberto` (NOVO vs CONTINUAÇÃO); `detectar_janela_captura` (estima próxima data-com pela mediana histórica). |
 | `portfolio_advisor.py` | Cruzamento decisões × posições da carteira. Dataclass `HoldingAdvice` com badge ∈ {HOLD, AUMENTAR, REDUZIR, SAIR, EVITAR_NOVOS_APORTES}. Funções `aconselhar_carteira`, `alertas_estruturais`, `exportar_sugestoes_md/csv`. |
@@ -119,7 +122,7 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `4_Radar.py` | sim (Diário) | Heatmap booleano, tabela detalhada, exportação CSV. Error boundary via `@safe_page`. |
 | `5_Event_Study.py` | sim (Investigação) | Event Study agregado do universo: CAR, testes pré/pós, dia 0, CriticAgent. |
 | `6_Alertas.py` | sim (Investigação) | Geração sob demanda, listagem de Markdowns salvos por data. |
-| `13_Hoje.py` | sim (Diário) | Cockpit operacional que lê snapshot por padrão: recomendações diárias, watchlist, carteira cruzada e riscos. Tab contexto de juros. |
+| `13_Hoje.py` | sim (Diário) | Cockpit operacional que lê snapshot por padrão: recomendações diárias, watchlist, carteira cruzada e riscos. Tab contexto de juros. Sinais sem suporte estatístico exibidos como `(info)`; `rationale_legivel` oculta a linha `SUPORTE_JSON`. |
 | `14_Dossie_FII.py` | sim (Investigação) | Visão consolidada por ticker — abas internas Análise FII / Fundamentos / Eventos CVM. Ticker selecionado compartilhado via `st.session_state.dossie_ticker`. |
 | `15_Laboratorio.py` | sim (Técnico) | Tela de auditoria/backtest com abas Otimizador V2 / Episódios / Walk-Forward. |
 | `16_Oportunidades.py` | sim (Diário) | Cards de rotação intra-segmento (DESCRITIVOS — sem validação estatística de retorno), geração de prompts e registro de decisão. |
@@ -161,7 +164,7 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 | `daily_report.py` | CLI do relatório diário (Fase 2): MD+CSV em `dados/alertas/`. Flags: `--tickers`, `--com-otimizador`, `--output-dir`. |
 | `generate_daily_snapshots.py` | CLI para gerar snapshot diário: `--scope {curado,carteira,db_ativos,ifix}`, `--force`. Scope `ifix` = IFIX ∪ curado ∪ carteira (métricas/radar para todos; decisões/advices só para curado ∪ carteira). |
 | `load_ifix_universe.py` | Carga inicial do universo IFIX: composição B3 → `universo`, reingestão CVM dos ZIPs locais, preços+dividendos yfinance (~6 min para 107 tickers). |
-| `refresh_optimizer_cache.py` | Renova cache de params do otimizador para todos os tickers ativos. Executar semanalmente. |
+| `refresh_optimizer_cache.py` | Renova cache de params do otimizador para todos os tickers ativos, gravando também `test_stats` (necessário para a trava de significância). Executar semanalmente. |
 | `test_recommender.py` | Sanity check ad-hoc do motor de decisão (KNIP11). |
 | `test_saude_score.py` | Diagnóstico de saúde financeira — roda `flag_destruicao_capital` para todos os tickers ativos com tabela comparativa (score, gravidade, tendência, streaks, VP slope). |
 | `compare_cvm_headers.py` | Utilidade de debug: compara headers de colunas CVM entre anos. |
@@ -189,7 +192,11 @@ As páginas autônomas `2_Analise_FII.py`, `7_Fundamentos.py`, `8_Fund_EventStud
 
 | Arquivo/Pasta | Conteúdo / Função |
 |---|---|
-| `conftest.py` | Fixture do SQLite em memória populado com dados sintéticos (MOCK11/MOCK12, 600 pregões, 24 dividendos/relatórios) e isolamento por função. |
+| `conftest.py` | Fixture do SQLite em memória populado com dados sintéticos (MOCK11/MOCK12, 600 pregões, 24 dividendos/relatórios) e isolamento por função. Fixture autouse `isolar_diretorios_de_saida` redireciona para `tmp_path` os diretórios de saída (alertas, prompts do gateway LLM, cache do otimizador, `yfinance_exclusoes.json`): testes não escrevem mais em `dados/`. |
+| `test_audit_calculos.py` | Regressão dos erros de cálculo da auditoria: percentil DY Gap, janela DY 12m semiaberta, `retorno_total_12m` com `fechamento` bruto, `sinal_hoje` do otimizador, momentum relativo (XFIX11), `get_dy_medias`, contagem `vistos` do radar. |
+| `test_base_integridade.py` | Regressão da base: dedup de dividendos, reconciliação de base de split, detecção de split/grupamento e VP/cota point-in-time, retorno total / `fechamento_aj` próprio, reabertura de linhas de preço. |
+| `test_ingestion_ativo_passivo.py` | Regressão de `ativo_total` (`Valor_Ativo`, fallback sem dupla contagem, recarga de linhas existentes). |
+| `test_metodo_audit.py` | Regressão de método: saúde em % do VP/cota, point-in-time de saúde/emissões, trava de significância (suporte, Bonferroni, cache com `test_stats`) e elegibilidade (liquidação, preço defasado, advisor, rotação). |
 | `test_indicators.py` | Testes do cálculo do P/VP point-in-time e DY trailing. |
 | `test_walk_forward.py` | Testes de make_splits, validate_no_leakage e descarte de eventos sobrepostos (<21d). |
 | `test_calculation.py` | Testes de percentil rolling (P/VP e DY Gap), z-score e propagação de NaN. |
@@ -239,6 +246,18 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 | ~~Panorama CLI/web~~ | ~~Paridade incompleta~~ (**Corrigido**) |
 | ~~`recommender.py`: get_pvp_zscore~~ | ~~**Corrigido** — `session=session` como keyword arg~~ |
 | ~~`episodes.py`: `min_hold_days`~~ | ~~**Corrigido** — renomeado para `min_gap`~~ |
+| ~~`13_Hoje.py`, `3_Carteira.py`~~ | ~~**Corrigido** — `NameError` por imports faltando; mensagens que apontavam o removido `scripts/daily_update.py` agora apontam `fii update-prices`~~ |
+| ~~`pyproject.toml`~~ | ~~**Corrigido** — `pandas-market-calendars` declarado em `dependencies`; extra `scripts` (matplotlib, beautifulsoup4) criado~~ |
+| ~~`valuation.get_dy_gap_percentil`~~ | ~~**Corrigido** — dividendos buscados desde 12 meses antes da data mais antiga da janela~~ |
+| ~~DY 12/24/36m~~ | ~~**Corrigido** — janela semiaberta `(t−N, t]`~~ |
+| ~~`risk_metrics.retorno_total_12m`~~ | ~~**Corrigido** — usa `fechamento` bruto (antes dividendos eram contados 2×)~~ |
+| ~~`threshold_optimizer_v2.get_signal_hoje`~~ | ~~**Corrigido** — não exige `fwd_ret` (usa o último pregão)~~ |
+| ~~`momentum_signals.get_momentum_relativo_ifix`~~ | ~~**Corrigido** — lê `benchmark_diario`/`XFIX11`~~ |
+| ~~`fundamentos.get_dy_medias`~~ | ~~**Corrigido** — unidades (fração) e médias anuais~~ |
+| ~~`ativo_passivo.ativo_total`~~ | ~~**Corrigido** — `Valor_Ativo` do `complemento`, sem dupla contagem~~ |
+| ~~Saúde~~ | ~~**Corrigido** — limiares em % do VP/cota; streak por queda real do VP/cota; chamadas point-in-time~~ |
+
+Cobertura de regressão dessas correções: `tests/test_audit_calculos.py`, `tests/test_base_integridade.py`, `tests/test_ingestion_ativo_passivo.py`, `tests/test_metodo_audit.py`.
 
 ---
 
@@ -341,12 +360,28 @@ Sistema de cache pré-calculado para as páginas `13_Hoje.py`, `3_Carteira.py`, 
 
 ## Pendentes conhecidos
 
-1. ~~Falso positivo em eventos de capital~~ — **Mitigado**: `flag_destruicao_capital` agora ignora
-   meses extraordinários (rent_efetiva > 3× mediana 12m) e usa gravidade graduada
-   (saudável/em_recuperação/alerta/crítica); "em recuperação" não veta (vira TURNAROUND rotulado).
-   Cobertura em `tests/test_saude.py`. Monitorar casos reais no universo IFIX.
+1. ~~Falso positivo em eventos de capital~~ — **Mitigado**: `flag_destruicao_capital` usa gravidade
+   graduada (saudável/em_recuperação/alerta/crítica); "em recuperação" não veta (vira TURNAROUND
+   rotulado). O critério agora é a queda do VP/cota (limiares em % ao mês), não mais
+   `rent_efetiva > 3× mediana` (o skip de "meses extraordinários" não existe mais em `saude.py`).
+   Cobertura em `tests/test_saude.py` e `tests/test_metodo_audit.py`. Monitorar casos reais no universo IFIX.
 2. **Backtest point-in-time do motor de rotação**: `opportunities_backtest.py` é [PESQUISA]
    (usa decisões de hoje em datas passadas). Enquanto não houver `decidir_ticker(t)` com corte
    temporal, as oportunidades permanecem DESCRITIVAS.
 3. Snapshots reprodutíveis do `fii_data.db` com hash SHA-256
 4. Reconciliar `config.py` ↔ `config.yaml`
+
+**Abertas após a rodada de correções de 2026-11-12** (não resolvidas):
+
+5. **HSRE11 sem preço desde 2026-06-11** (informado: Yahoo sem dados; o CNPJ segue reportando à CVM com outro nome; novo ticker não identificado). Pelo código, preço atrasado > 5 pregões bloqueia COMPRAR/AUMENTAR (`elegibilidade.py`), mas o ticker segue na lista curada (PROJETO.md §7 e `sinais` do `config.yaml`).
+6. **57 ticker-meses com dividendo faltante** (contagem informada, não reproduzida aqui).
+7. **Cotas/VP nominais ainda em uso:** `momentum_signals.get_pl_trend` (PL ÷ `cotas_emitidas` nominal; o nome citado como `get_vp_trend` não existe no código) e o sinal `emissao_cotas` de `models/event_study_cvm.py` (variação de `cotas_emitidas` nominal) — um split vira falsa emissão. Lido no código ao documentar (não listado na entrada original): `saude.emissoes_recentes` e `saude.flag_destruicao_capital`/`tendencia_pl` também leem `cotas_emitidas`/`vp_por_cota` nominais de `relatorios_mensais` (não passam por `get_relatorios_ajustados`), então um split também pode aparecer como emissão "prejudicial" ou queda de VP; efeito em dados reais não medido.
+8. **`features/composicao.py` soma parcelas sobrepostas:** `pct_valores_receber` soma `valores_receber` + `contas_receber_aluguel`, e a documentação de `calcular_ativo_total` registra que `Valores_Receber` já contém `Contas_Receber_*`; `pct_caixa` soma `disponibilidades` + `total_necessidades_liquidez` (sobreposição não confirmada no código, depende do layout CVM).
+9. **`features/portfolio.py` (~linha 115) divide `dy_mes_pct` por 100** embora `fundamentos.get_dy_medias` trate o campo como fração — **suspeita, não verificada** contra os dados.
+10. **Correção de RBVA11 pré-2019** apoiada em evidência indireta (informado; não verificável pelo código).
+11. **Docstring do otimizador** (`threshold_optimizer_v2.py`, ~linha 385) ainda descreve `meses_alerta` como "rentabilidade efetiva < patrimonial (distribuindo capital)".
+12. **Trava de significância vs. desenho do otimizador:** o desenho atual não atinge 30 eventos independentes no split de teste (afirmação informada; não reproduzida aqui). Efeito medido pelo operador numa cópia do banco: 25 de 26 decisões viram AGUARDAR — sinais do otimizador, episódios e walk-forward aparecem como `(info)`. Enquanto isso, a camada de decisão tende a AGUARDAR.
+13. **Percentil de DY Gap continua concentrado no topo** (janela de 252 pregões).
+14. **Backtest de rotação não é point-in-time** (ver item 2).
+
+**Dados alterados na rodada (informado, não verificável pelo código):** tabela `ativo_passivo` recarregada com a regra nova de `ativo_total`; linhas de preço inválidas marcadas com `fonte = 'yfinance:invalido'`; dividendos deduplicados e `fechamento_aj` reconstruído. O código só garante que a carga respeita essas marcas e que `recalcular_fechamento_aj` é determinístico e idempotente (`tests/test_base_integridade.py`).

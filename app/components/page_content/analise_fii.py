@@ -52,6 +52,7 @@ from src.fii_analysis.features.risk_metrics import (
     max_drawdown,
     volatilidade_anualizada,
 )
+from src.fii_analysis.config_yaml import get_saude_param
 from src.fii_analysis.features.saude import emissoes_recentes, flag_destruicao_capital, tendencia_pl
 from src.fii_analysis.features.score import ScoreFII, calcular_score
 from src.fii_analysis.features.valuation import (
@@ -345,18 +346,18 @@ def render_saude(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
         consec_label = f"**{current_consec}** (ativo)"
         if max_consec > current_consec:
             consec_label += f" | Máx. histórico: **{max_consec}**"
-        st.write(f"  - Meses consecutivos (rent.efet > patrim): {consec_label}")
+        st.write(f"  - Meses consecutivos de queda do VP/cota: {consec_label}")
         if slope_3m is not None:
-            st.write(f"  - Inclinação VP 3m (peso 60%): **{slope_3m:+.4f}** ({pct_3m:+.2f}%/mês) — score destruição: {score_vp_3m:.0f}/100")
+            st.write(f"  - Inclinação VP 3m (peso 60%): **{pct_3m:+.2f}%/mês** (R$ {slope_3m:+.4f}/mês) — score destruição: {score_vp_3m:.0f}/100")
         if slope_6m is not None:
-            st.write(f"  - Inclinação VP 6m (peso 30%): **{slope_6m:+.4f}** ({pct_6m:+.2f}%/mês) — score destruição: {score_vp_6m:.0f}/100")
+            st.write(f"  - Inclinação VP 6m (peso 30%): **{pct_6m:+.2f}%/mês** (R$ {slope_6m:+.4f}/mês) — score destruição: {score_vp_6m:.0f}/100")
 
         # Streak score display
-        if slope_3m is not None and slope_3m < -0.1 and current_consec > 0:
+        if pct_3m < -float(get_saude_param("vp_pct_mes_saudavel", 0.1)) and current_consec > 0:
             streak_score = min(current_consec / 6.0, 1.0) * 100
-            st.write(f"  - Streak ativo (peso 10%): **{current_consec}** meses → score: {streak_score:.0f}/100")
+            st.write(f"  - Queda consecutiva do VP (peso 10%): **{current_consec}** meses → score: {streak_score:.0f}/100")
         else:
-            st.write(f"  - Streak ativo (peso 10%): **desconsiderado** (VP estável ou subindo)")
+            st.write(f"  - Queda consecutiva do VP (peso 10%): **desconsiderada** (VP estável ou subindo)")
 
         st.markdown("---")
 
@@ -393,10 +394,10 @@ def render_saude(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
 
         # Condições originais
         st.markdown("**Condições originais:**")
-        cond1 = destruicao.get("cond1_efetiva_gt_patrim", False)
+        cond1 = destruicao.get("cond1_queda_vp_consecutiva", False)
         cond2 = destruicao.get("cond2_cotas_estaveis", True)
         cond3 = destruicao.get("cond3_vp_tendencia_negativa", False)
-        st.write(f"  - cond1 (rent.efetiva > patrim ≥ 3m): {'✅' if cond1 else '❌'}")
+        st.write(f"  - cond1 (queda do VP/cota em meses consecutivos): {'✅' if cond1 else '❌'}")
         st.write(f"  - cond2 (cotas estáveis ≤ 1%): {'✅' if cond2 else '❌'}")
         st.write(f"  - cond3 (VP/cota tendencia negativa): {'✅' if cond3 else '❌'}")
 

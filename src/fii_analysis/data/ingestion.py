@@ -48,6 +48,11 @@ def _ex_to_data_com(ex_date: date) -> date:
     return pregoes[-2] if len(pregoes) >= 2 else ex_date
 from sqlalchemy import select
 
+from src.fii_analysis.data.corporate_actions import (
+    DEDUP_DIAS,
+    calcular_retorno_total,
+    deduplicar_proximos,
+)
 from src.fii_analysis.data.database import (
     AtivoPassivo,
     BenchmarkDiario,
@@ -159,6 +164,65 @@ def load_cvm_to_db(zip_path: Path, year: int, session) -> None:
     logger.info("CVM {}: {} inseridos, {} ja existiam (ignorados)", year, inseridos, ignorados)
 
 
+FONTE_INVALIDA = "yfinance:invalido"   # linha neutralizada (glitch comprovado); a carga nao a reescreve
+JANELA_REVISAO_DIAS = 400              # linhas vazias/provisorias reabertas na carga incremental
+
+
+def _linha_precisa_revisao(row: PrecoDiario) -> bool:
+    """True se a linha gravada esta vazia (O/H/L/volume = 0/None) ou foi coletada
+    no proprio pregao (fechamento possivelmente provisorio)."""
+    vazia = any(not (x or 0) for x in (row.abertura, row.maxima, row.minima, row.volume))
+    provisoria = row.coletado_em is not None and row.coletado_em.date() <= row.data
+    return (vazia or provisoria) and row.fonte != FONTE_INVALIDA
+
+
+def recalcular_fechamento_aj(ticker: str, session) -> int:
+    """Reconstroi `fechamento_aj` do ticker POR INTEIRO como serie de retorno total
+    (dividendo reinvestido na data-ex; ultimo dia com fator 1), a partir de
+    `fechamento` + tabela `dividendos`. Nao usa o Adj Close do Yahoo. Retorna linhas
+    alteradas. Chamar ao fim de qualquer carga de precos/dividendos."""
+    rows = session.execute(
+        select(PrecoDiario).where(PrecoDiario.ticker == ticker).order_by(PrecoDiario.data.asc())
+    ).scalars().all()
+    if not rows:
+        return 0
+    precos = pd.Series(
+        [float(r.fechamento) if r.fechamento is not None else float("nan") for r in rows],
+        index=pd.DatetimeIndex([r.data for r in rows]),
+    )
+    divs = [
+        (d.data_com, float(d.valor_cota))
+        for d in session.execute(select(Dividendo).where(Dividendo.ticker == ticker)).scalars()
+        if d.valor_cota is not None
+    ]
+    novo = calcular_retorno_total(precos, divs)
+    alteradas = 0
+    for r, v in zip(rows, novo.to_numpy()):
+        nv = None if pd.isna(v) else float(v)
+        antigo = float(r.fechamento_aj) if r.fechamento_aj is not None else None
+        if (nv is None) != (antigo is None) or (nv is not None and abs(nv - antigo) > 1e-9 * max(1.0, abs(nv))):
+            r.fechamento_aj = nv
+            alteradas += 1
+    session.commit()
+    return alteradas
+
+
+def limpar_dividendos_duplicados(ticker: str, session, preferidas: set[date] | None = None) -> int:
+    """Remove dividendos duplicados do ticker: mesmo valor por cota e data-com a
+    <= DEDUP_DIAS dias (mantem a data em `preferidas`, senao a mais antiga)."""
+    rows = session.execute(select(Dividendo).where(Dividendo.ticker == ticker)).scalars().all()
+    alvo = set(deduplicar_proximos(
+        [(r.data_com, float(r.valor_cota)) for r in rows if r.valor_cota is not None], preferidas
+    ))
+    n = 0
+    for r in rows:
+        if r.data_com in alvo:
+            session.delete(r)
+            n += 1
+    session.commit()
+    return n
+
+
 def load_prices_yfinance(ticker: str, session) -> None:
     if ticker in _get_yf_exclusoes():
         logger.info("{}: ignorado (exclusoes yfinance)", ticker)
@@ -176,6 +240,16 @@ def load_prices_yfinance(ticker: str, session) -> None:
     symbol = f"{ticker}.SA"
     if ultimo:
         start = ultimo + timedelta(days=1)
+        # reabre linhas vazias/provisorias recentes (a carga antes as pulava para sempre)
+        recentes = session.execute(
+            select(PrecoDiario).where(
+                PrecoDiario.ticker == ticker,
+                PrecoDiario.data >= ultimo - timedelta(days=JANELA_REVISAO_DIAS),
+            )
+        ).scalars().all()
+        revisar = [r.data for r in recentes if _linha_precisa_revisao(r)]
+        if revisar:
+            start = min(start, min(revisar))
         logger.info("{}: buscando a partir de {}", ticker, start)
     else:
         start = None
@@ -198,6 +272,7 @@ def load_prices_yfinance(ticker: str, session) -> None:
 
     agora = datetime.now()
     inseridos = 0
+    atualizados = 0
     for dt_idx, row in hist.iterrows():
         d = dt_idx.date()
         exists = session.execute(
@@ -207,6 +282,15 @@ def load_prices_yfinance(ticker: str, session) -> None:
             )
         ).scalar_one_or_none()
         if exists:
+            close = row.get("Close")
+            if _linha_precisa_revisao(exists) and close is not None and pd.notna(close) and close > 0:
+                exists.abertura = row.get("Open")
+                exists.maxima = row.get("High")
+                exists.minima = row.get("Low")
+                exists.fechamento = close
+                exists.volume = row.get("Volume")
+                exists.coletado_em = agora
+                atualizados += 1
             continue
         registro = PrecoDiario(
             ticker=ticker,
@@ -215,7 +299,7 @@ def load_prices_yfinance(ticker: str, session) -> None:
             maxima=row.get("High"),
             minima=row.get("Low"),
             fechamento=row.get("Close"),
-            fechamento_aj=row.get("Adj Close"),
+            fechamento_aj=row.get("Close"),  # provisorio; recalcular_fechamento_aj reescreve (retorno total proprio)
             volume=row.get("Volume"),
             fonte="yfinance",
             coletado_em=agora,
@@ -223,7 +307,24 @@ def load_prices_yfinance(ticker: str, session) -> None:
         session.add(registro)
         inseridos += 1
     session.commit()
-    logger.info("{}: {} precos inseridos", ticker, inseridos)
+    n_aj = recalcular_fechamento_aj(ticker, session)
+    logger.info("{}: {} precos inseridos, {} revisados, fechamento_aj recalculado ({} linhas)",
+                ticker, inseridos, atualizados, n_aj)
+
+
+def _reconciliar_base_split(registro: Dividendo, valor_yf: float) -> bool:
+    """Mantem o dividendo na base de cotas ATUAL. O yfinance devolve dividendos ja
+    ajustados por split; se a linha gravada e um multiplo "de split" do valor atual
+    (razao a <= 5% de um fator redondo >= 2, ou o inverso), regrava com o valor do Yahoo.
+    Diferencas pequenas (ajustes de subscricao, < 1,8x) sao preservadas."""
+    if registro.valor_cota is None or valor_yf <= 0:
+        return False
+    r = float(registro.valor_cota) / valor_yf
+    for n in (2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 20, 25, 50, 100):
+        if abs(r / n - 1) <= 0.05 or abs(r * n - 1) <= 0.05:
+            registro.valor_cota = valor_yf
+            return True
+    return False
 
 
 def load_dividends_yfinance(ticker: str, session) -> None:
@@ -245,17 +346,28 @@ def load_dividends_yfinance(ticker: str, session) -> None:
         return
 
     inseridos = 0
+    existentes = {
+        r.data_com: r
+        for r in session.execute(select(Dividendo).where(Dividendo.ticker == ticker)).scalars()
+    }
     for dt_idx, valor in divs.items():
         # yfinance retorna ex-date; data-com na B3 é sempre 1 pregão antes (calendário B3)
         ex_date = dt_idx.date()
         d = _ex_to_data_com(ex_date)
-        exists = session.execute(
-            select(Dividendo).where(
-                Dividendo.ticker == ticker,
-                Dividendo.data_com == d,
-            )
-        ).scalar_one_or_none()
+        valor = float(valor)
+        if valor <= 0:
+            continue
+        exists = existentes.get(d)
         if exists:
+            _reconciliar_base_split(exists, valor)
+            continue
+        # duplicata: mesmo valor, data-com a <= DEDUP_DIAS dias de outra linha (o Yahoo
+        # revisa ex-dates e a chave exata data_com nao detectava o mesmo evento)
+        if any(
+            abs((d - dd).days) <= DEDUP_DIAS and r.valor_cota is not None
+            and abs(float(r.valor_cota) - valor) <= max(1e-9, 1e-6 * valor)
+            for dd, r in existentes.items()
+        ):
             continue
         registro = Dividendo(
             ticker=ticker,
@@ -264,13 +376,48 @@ def load_dividends_yfinance(ticker: str, session) -> None:
             fonte="yfinance",
         )
         session.add(registro)
+        existentes[d] = registro
         inseridos += 1
     session.commit()
-    logger.info("{}: {} dividendos inseridos", ticker, inseridos)
+    n_aj = recalcular_fechamento_aj(ticker, session)
+    logger.info("{}: {} dividendos inseridos, fechamento_aj recalculado ({} linhas)", ticker, inseridos, n_aj)
 
 
-def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
-    dados = load_cvm_zip(zip_path, year, keys_to_extract=["ativo_passivo", "geral"])
+def _safe_float(val) -> float | None:
+    if val is None:
+        return None
+    try:
+        f = float(val)
+        return f if pd.notna(f) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def calcular_ativo_total(row, valor_ativo: float | None = None) -> float | None:
+    """Ativo total do informe mensal CVM, sem dupla contagem.
+
+    Preferencia: Valor_Ativo informado pelo fundo (arquivo complemento).
+    Fallback (Valor_Ativo ausente/<=0): Total_Investido + Total_Necessidades_Liquidez
+    + Valores_Receber. Total_Investido ja CONTEM Direitos_Bens_Imoveis, CRI, FII etc.
+    e Valores_Receber ja contem Contas_Receber_*/Outros_Valores_Receber, portanto
+    esses componentes nao podem ser somados de novo. Verificado contra Valor_Ativo
+    nos ZIPs 2021-2026 (diferenca < 0,1% em ~100% das linhas).
+    """
+    if valor_ativo is not None and valor_ativo > 0:
+        return valor_ativo
+    total = sum(
+        _safe_float(row.get(col)) or 0.0
+        for col in ("Total_Investido", "Total_Necessidades_Liquidez", "Valores_Receber")
+    )
+    return total if total > 0 else None
+
+
+def load_ativo_passivo_to_db(
+    zip_path: Path, year: int, session, atualizar_existentes: bool = False
+) -> None:
+    """Carrega ativo_passivo. Com atualizar_existentes=True, regrava as linhas ja
+    existentes (recarga apos correcao de regra); por padrao pula-as."""
+    dados = load_cvm_zip(zip_path, year, keys_to_extract=["ativo_passivo", "geral", "complemento"])
     ap = dados.get("ativo_passivo")
     if ap is None or ap.empty:
         logger.warning("ativo_passivo vazio para {}, ano {}", zip_path, year)
@@ -300,25 +447,25 @@ def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
         geral_f["Data_Entrega"] = pd.to_datetime(geral_f["Data_Entrega"]).dt.date
         entrega_map = geral_f.set_index([col_cnpj_geral, "Data_Referencia"])["Data_Entrega"].to_dict()
 
+    # Valor_Ativo informado pelo fundo (complemento), chaveado por (cnpj, data_ref, versao)
+    valor_ativo_map: dict[tuple, float] = {}
+    comp = dados.get("complemento", pd.DataFrame())
+    if not comp.empty and "Valor_Ativo" in comp.columns:
+        col_cnpj_comp = "CNPJ_Fundo_Classe" if "CNPJ_Fundo_Classe" in comp.columns else "CNPJ_Fundo"
+        comp = comp[comp[col_cnpj_comp].isin(cnpts_monitorados)].copy()
+        comp["Data_Referencia"] = pd.to_datetime(comp["Data_Referencia"]).dt.date
+        versoes = comp["Versao"] if "Versao" in comp.columns else [None] * len(comp)
+        for c, d, v, va in zip(comp[col_cnpj_comp], comp["Data_Referencia"], versoes, comp["Valor_Ativo"]):
+            fva = _safe_float(va)
+            if fva is not None:
+                valor_ativo_map[(c, d, v)] = fva
+    else:
+        logger.warning("Valor_Ativo indisponivel para ano {}: usando soma sem dupla contagem", year)
+
     ap["Data_Referencia"] = pd.to_datetime(ap["Data_Referencia"]).dt.date
 
-    # A CVM não expõe coluna Total_Ativo no arquivo ativo_passivo.
-    # Ativo total é calculado somando os componentes relevantes.
-    # Direitos_Bens_Imoveis é o principal componente para FIIs de tijolo e
-    # deve ser incluído — estava ausente na versão anterior (bug).
-    ativo_cols_for_total = [
-        "Direitos_Bens_Imoveis",
-        "Total_Investido",
-        "Total_Necessidades_Liquidez",
-        "Valores_Receber",
-        "Outros_Valores_Mobliarios",
-        "Outros_Direitos_Reais",
-        "Outros_Valores_Receber",
-        "Contas_Receber_Aluguel",
-        "Contas_Receber_Venda_Imoveis",
-    ]
-
     inseridos = 0
+    atualizados = 0
     ignorados = 0
     for _, row in ap.iterrows():
         cnpj = row[col_cnpj]
@@ -329,31 +476,14 @@ def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
                 AtivoPassivo.data_referencia == data_ref,
             )
         ).scalar_one_or_none()
-        if exists:
+        if exists and not atualizar_existentes:
             ignorados += 1
             continue
 
         data_entrega = entrega_map.get((cnpj, data_ref))
-
-        def _safe_float(val):
-            if val is None:
-                return None
-            try:
-                f = float(val)
-                return f if pd.notna(f) else None
-            except (ValueError, TypeError):
-                return None
-
-        ativo_total = 0.0
-        for col in ativo_cols_for_total:
-            if col in row.index:
-                v = _safe_float(row[col])
-                if v is not None:
-                    ativo_total += v
-
-        registro = AtivoPassivo(
-            cnpj=cnpj,
-            data_referencia=data_ref,
+        versao = row.get("Versao") if "Versao" in row.index else None
+        valor_ativo = valor_ativo_map.get((cnpj, data_ref, versao))
+        campos = dict(
             data_entrega=data_entrega,
             direitos_bens_imoveis=_safe_float(row.get("Direitos_Bens_Imoveis")),
             cri=_safe_float(row.get("CRI")),
@@ -366,12 +496,20 @@ def load_ativo_passivo_to_db(zip_path: Path, year: int, session) -> None:
             valores_receber=_safe_float(row.get("Valores_Receber")),
             contas_receber_aluguel=_safe_float(row.get("Contas_Receber_Aluguel")),
             outros_valores_mobliarios=_safe_float(row.get("Outros_Valores_Mobliarios")),
-            ativo_total=ativo_total if ativo_total > 0 else None,
+            ativo_total=calcular_ativo_total(row, valor_ativo),
         )
-        session.add(registro)
+        if exists:
+            for k, v in campos.items():
+                setattr(exists, k, v)
+            atualizados += 1
+            continue
+        session.add(AtivoPassivo(cnpj=cnpj, data_referencia=data_ref, **campos))
         inseridos += 1
     session.commit()
-    logger.info("ativo_passivo {}: {} inseridos, {} ja existiam", year, inseridos, ignorados)
+    logger.info(
+        "ativo_passivo {}: {} inseridos, {} atualizados, {} ja existiam",
+        year, inseridos, atualizados, ignorados,
+    )
 
 
 # ---------------------------------------------------------------------------

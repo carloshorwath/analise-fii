@@ -99,6 +99,8 @@ def _flags_resumo(d: TickerDecision) -> str:
         flags.append("P/VP>p95")
     if d.flag_dy_gap_baixo:
         flags.append("DYgap<p5")
+    if d.bloqueio_compra:
+        flags.append("compra bloqueada")
     return ", ".join(flags) if flags else "—"
 
 
@@ -166,6 +168,15 @@ def _derivar_badge(
         prioridade = "ALTA" if decisao.nivel_concordancia == "ALTA" else "MEDIA"
         return "REDUZIR", racional, prioridade
 
+    # Compra bloqueada (fundo em liquidacao/encerrado, preco desatualizado):
+    # a posicao continua listada, mas nunca vira AUMENTAR.
+    if decisao.bloqueio_compra and decisao.acao == "COMPRAR":
+        racional = (
+            f"Compra bloqueada: {decisao.bloqueio_compra}. Manter a posicao sob observacao; "
+            "nao aumentar."
+        )
+        return "HOLD", racional, "MEDIA"
+
     # Sinal de compra: AUMENTAR ou HOLD (se ja concentrado)
     if decisao.acao == "COMPRAR":
         if peso >= peso_max_ticker:
@@ -184,6 +195,9 @@ def _derivar_badge(
         return "AUMENTAR", racional, prioridade
 
     # Sinal AGUARDAR: HOLD com flags informativos
+    if decisao.bloqueio_compra:
+        racional = f"Sem sinal de acao. Compra bloqueada: {decisao.bloqueio_compra}."
+        return "HOLD", racional, "MEDIA"
     if flags != "—":
         racional = f"Sem sinal de acao. Atencao: {flags}."
         return "HOLD", racional, "BAIXA"

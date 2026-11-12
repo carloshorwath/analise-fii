@@ -3,8 +3,9 @@ from datetime import date
 import numpy as np
 from scipy import stats as sp_stats
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from src.fii_analysis.config_yaml import get_threshold
+from src.fii_analysis.config_yaml import get_saude_param, get_threshold
 from src.fii_analysis.data.database import AtivoPassivo, RelatorioMensal, get_cnpj_by_ticker
 
 
@@ -58,11 +59,71 @@ def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t
     return resultado
 
 
+def _limiares_vp_pct() -> tuple[float, float, float]:
+    """Limiares de saúde em % do VP/cota por mês (config.yaml, seção ``saude``).
+
+    Defaults preservam a calibração original para cota ~R$100: +0,1 / -0,5 por mês.
+    Retorna (saudavel, severo, delta_tendencia).
+    """
+    return (
+        float(get_saude_param("vp_pct_mes_saudavel", 0.1)),
+        float(get_saude_param("vp_pct_mes_severo", -0.5)),
+        float(get_saude_param("tendencia_delta_pct_mes", 0.1)),
+    )
+
+
+def _score_destruicao_pct(pct_mes: float, saudavel: float, severo: float) -> float:
+    """Converte a variação %/mês do VP/cota em score de destruição (0=saudável, 100=severo).
+
+    pct > saudavel -> 0 | pct = 0 -> 10 (neutro) | pct <= severo -> 100.
+    Faixas intermediárias lineares (mesmo desenho da versão em R$ absolutos).
+    """
+    if pct_mes > saudavel:
+        return 0.0
+    if pct_mes > 0:
+        return (saudavel - pct_mes) / saudavel * 10.0
+    if pct_mes > severo:
+        return 10.0 + (pct_mes / severo) * 90.0
+    return 100.0
+
+
+def _meses_queda_vp(vps_desc: list[float], limiar_pct: float) -> tuple[int, int]:
+    """Meses consecutivos em que o VP/cota CAIU mais que ``limiar_pct`` (% no mês).
+
+    ``vps_desc``: VP/cota do mais recente para o mais antigo. Retorna
+    (streak ativo contado a partir do mais recente, maior streak da janela).
+    Mede queda real do VP/cota — substitui o antigo critério
+    "rent. efetiva > patrimonial", que é identicamente ``dy_mes_pct > 0``
+    (efetiva - patrimonial == dy_mes_pct nos dados da CVM).
+    """
+    quedas: list[bool] = []
+    for i in range(len(vps_desc) - 1):
+        ant = vps_desc[i + 1]
+        var = (vps_desc[i] - ant) / ant * 100.0 if ant > 0 else 0.0
+        quedas.append(var < -limiar_pct)
+
+    atual = 0
+    for q in quedas:
+        if not q:
+            break
+        atual += 1
+
+    maximo = corrente = 0
+    for q in reversed(quedas):
+        corrente = corrente + 1 if q else 0
+        maximo = max(maximo, corrente)
+    return atual, maximo
+
+
 def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None) -> dict:
     """Detecta destruição de capital com score de gravidade + tendência.
 
     Parâmetro ``t`` define o ponto de corte point-in-time: só são usados
     relatórios com ``data_entrega <= t``. Default: hoje.
+
+    Os limiares são aplicados à variação PERCENTUAL do VP/cota por mês
+    (inclinação da regressão / VP médio da janela), não a R$ absolutos —
+    assim fundo de cota cara e de cota barata são julgados na mesma régua.
 
     Retorna um dict com:
         - destruicao (bool): True se gravidade for 'critica' ou 'alerta'
@@ -70,7 +131,8 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
         - tendencia: 'piorando' | 'estavel' | 'melhorando'
         - score_saude (0–100): 100 = saudável, 0 = destruição severa
         - score_vp_6m, score_vp_3m: componentes do score
-        - meses_consecutivos: meses consecutivos com rent_efetiva > rent_patrim
+        - pct_3m, pct_6m: variação do VP/cota em %/mês (3 e 6 relatórios)
+        - meses_consecutivos: meses consecutivos de queda do VP/cota
         - n_emissoes_ruins: emissões prejudiciais recentes
         - motivo: texto explicativo
         - cond1/2/3: condições originais (retrocompatibilidade)
@@ -86,15 +148,12 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     relatorios = session.execute(
         select(
             RelatorioMensal.data_referencia,
-            RelatorioMensal.rentab_efetiva,
-            RelatorioMensal.rentab_patrim,
             RelatorioMensal.cotas_emitidas,
             RelatorioMensal.vp_por_cota,
         )
         .where(
             RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.rentab_efetiva.isnot(None),
-            RelatorioMensal.rentab_patrim.isnot(None),
+            RelatorioMensal.vp_por_cota.isnot(None),
             RelatorioMensal.data_entrega <= t,
         )
         .order_by(RelatorioMensal.data_referencia.desc())
@@ -104,100 +163,43 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     if len(relatorios) < 3:
         return _destruicao_result(False, "saudavel", "estavel", 100, "dados insuficientes")
 
-    ef_vals = [float(r.rentab_efetiva) for r in relatorios if r.rentab_efetiva is not None]
-    median_ef = float(np.median(ef_vals)) if ef_vals else 0.0
+    pct_saudavel, pct_severo, delta_tendencia = _limiares_vp_pct()
 
-    # --- Consecutividade rent_efetiva > rent_patrim ---
-    # max_consec: maior streak histórico (display). current_consec: streak ativo (score).
-    # relatorios is DESCENDING (most recent first). We iterate ASCENDING to find max_consec.
-    consec = 0
-    max_consec = 0
-    streak_end_idx = 0
-    for i, r in enumerate(reversed(relatorios)):
-        ef = float(r.rentab_efetiva) if r.rentab_efetiva is not None else None
-        pa = float(r.rentab_patrim) if r.rentab_patrim is not None else None
-        
-        if ef is not None and pa is not None:
-            is_extraordinario = (ef > 3 * median_ef) and (median_ef > 0)
-            if is_extraordinario:
-                continue  # Skip extraordinary events
-                
-            if ef > pa:
-                consec += 1
-                if consec > max_consec:
-                    max_consec = consec
-                    streak_end_idx = len(relatorios) - 1 - i
-            else:
-                consec = 0
-
-    # current_consec: streak ativo (contando retroativamente do mais recente)
-    current_consec = 0
-    for r in relatorios:
-        ef = float(r.rentab_efetiva) if r.rentab_efetiva is not None else None
-        pa = float(r.rentab_patrim) if r.rentab_patrim is not None else None
-        
-        if ef is not None and pa is not None:
-            is_extraordinario = (ef > 3 * median_ef) and (median_ef > 0)
-            if is_extraordinario:
-                continue
-                
-            if ef > pa:
-                current_consec += 1
-            else:
-                break
+    # --- Meses consecutivos de queda do VP/cota (relatorios é DESC) ---
+    vps_desc = [float(r.vp_por_cota) for r in relatorios]
+    current_consec, max_consec = _meses_queda_vp(vps_desc, pct_saudavel)
 
     cond1 = max_consec >= get_threshold("meses_consec_alerta", 2)
-    cond1_current = current_consec >= get_threshold("meses_consec_alerta", 2)
 
-    janela_streak = relatorios[:streak_end_idx + 1]
-
-    cotas = [float(r.cotas_emitidas) for r in janela_streak if r.cotas_emitidas is not None]
+    cotas = [float(r.cotas_emitidas) for r in relatorios if r.cotas_emitidas is not None]
     cond2 = True
     if len(cotas) >= 2:
         crescimento = (cotas[0] - cotas[-1]) / cotas[-1] if cotas[-1] > 0 else 0
         cond2 = crescimento <= 0.01
 
-    # --- Slopes VP/cota ---
-    vp_6m = [float(r.vp_por_cota) for r in reversed(relatorios[:min(6, len(relatorios))])
-             if r.vp_por_cota is not None]
+    # --- Slopes VP/cota (R$/mês) ---
+    vp_6m = list(reversed(vps_desc[:6]))
     slope_6m = 0.0
     if len(vp_6m) >= 2:
-        x6 = np.arange(len(vp_6m), dtype=float)
-        y6 = np.array(vp_6m)
-        slope_6m, _, _, _, _ = sp_stats.linregress(x6, y6)
+        slope_6m, _, _, _, _ = sp_stats.linregress(np.arange(len(vp_6m), dtype=float), np.array(vp_6m))
 
-    vp_3m = [float(r.vp_por_cota) for r in reversed(relatorios[:min(3, len(relatorios))])
-             if r.vp_por_cota is not None]
+    vp_3m = list(reversed(vps_desc[:3]))
     slope_3m = 0.0
     if len(vp_3m) >= 2:
-        x3 = np.arange(len(vp_3m), dtype=float)
-        y3 = np.array(vp_3m)
-        slope_3m, _, _, _, _ = sp_stats.linregress(x3, y3)
+        slope_3m, _, _, _, _ = sp_stats.linregress(np.arange(len(vp_3m), dtype=float), np.array(vp_3m))
 
-    # --- Score VP: converte slope em score de destruição (0=saudável, 100=severo) ---
-    # slope > 0.1 → 0 (saudável) | slope = 0 → 10 (neutro) | slope < -0.5 → 100 (severo)
-    def _slope_score(sl: float) -> float:
-        if sl > 0.1:
-            return 0.0
-        elif sl > 0:
-            return (0.1 - sl) / 0.1 * 10.0
-        elif sl > -0.5:
-            return 10.0 + (-sl / 0.5) * 90.0
-        else:
-            return 100.0
-
-    # --- Percentual mensal do VP/cota (slope / média * 100) ---
+    # --- Variação percentual mensal do VP/cota (slope / VP médio da janela * 100) ---
     avg_vp_3m = float(np.mean(vp_3m)) if len(vp_3m) >= 1 else 0.0
     avg_vp_6m = float(np.mean(vp_6m)) if len(vp_6m) >= 1 else 0.0
     pct_3m = (slope_3m / avg_vp_3m * 100) if avg_vp_3m != 0 else 0.0
     pct_6m = (slope_6m / avg_vp_6m * 100) if avg_vp_6m != 0 else 0.0
 
-    score_vp_3m = _slope_score(slope_3m)
-    score_vp_6m = _slope_score(slope_6m)
+    # --- Score VP (0=saudável, 100=severo) sobre %/mês ---
+    score_vp_3m = _score_destruicao_pct(pct_3m, pct_saudavel, pct_severo)
+    score_vp_6m = _score_destruicao_pct(pct_6m, pct_saudavel, pct_severo)
 
-    # --- Score streak: só conta se VP está caindo significativamente ---
-    # Se slope_3m >= -0.1 (VP estável ou subindo), streak é irrelevante
-    if slope_3m < -0.1 and current_consec > 0:
+    # --- Score streak: só conta se o VP está caindo de fato (pct_3m abaixo de -saudavel) ---
+    if pct_3m < -pct_saudavel and current_consec > 0:
         score_meses = min(current_consec / 6.0, 1.0) * 100.0
     else:
         score_meses = 0.0
@@ -205,13 +207,13 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     # --- Emissões ruins como agravante ---
     n_emissoes_ruins = 0
     try:
-        _emissoes_check = emissoes_recentes(ticker, session=session)
+        _emissoes_check = emissoes_recentes(ticker, session=session, t=t)
         n_emissoes_ruins = sum(1 for e in _emissoes_check if e.get("ruim", False))
     except Exception:
         pass
 
     # --- Score composto (destruição, interno) ---
-    # Pesos: VP 3m (60%) + VP 6m (30%) + consecutivos (10%)
+    # Pesos: VP 3m (60%) + VP 6m (30%) + meses consecutivos de queda do VP (10%)
     score_destruicao_raw = round(0.60 * score_vp_3m + 0.30 * score_vp_6m + 0.10 * score_meses)
     # Agravante: +10 pts por emissão ruim recente (max +30)
     score_destruicao_raw = min(100, score_destruicao_raw + n_emissoes_ruins * 10)
@@ -219,22 +221,20 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     # --- Score de SAÚDE (invertido): 100 = saudável, 0 = destruição severa ---
     score_saude = 100 - score_destruicao_raw
 
-    # --- Condição original cond3 (retrocompatibilidade) ---
-    vp_periodo = [float(r.vp_por_cota) for r in reversed(janela_streak)
-                  if r.vp_por_cota is not None]
+    # --- Condição original cond3 (retrocompatibilidade): VP/cota com tendência de queda na janela ---
     cond3 = False
-    if len(vp_periodo) >= 2:
-        x = np.arange(len(vp_periodo), dtype=float)
-        y = np.array(vp_periodo)
-        slope_streak, _, _, _, _ = sp_stats.linregress(x, y)
-        cond3 = slope_streak <= 0
+    if len(vps_desc) >= 2:
+        slope_janela, _, _, _, _ = sp_stats.linregress(
+            np.arange(len(vps_desc), dtype=float), np.array(list(reversed(vps_desc)))
+        )
+        cond3 = slope_janela <= 0
 
-    # --- Tendência: compara slope 3m vs 6m ---
+    # --- Tendência: compara %/mês 3m vs 6m ---
     if len(vp_6m) >= 2 and len(vp_3m) >= 2:
-        diff_slopes = slope_3m - slope_6m
-        if diff_slopes > 0.1:
+        diff_pct = pct_3m - pct_6m
+        if diff_pct > delta_tendencia:
             tendencia = "melhorando"
-        elif diff_slopes < -0.1:
+        elif diff_pct < -delta_tendencia:
             tendencia = "piorando"
         else:
             tendencia = "estavel"
@@ -242,7 +242,7 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
         tendencia = "estavel"
 
     # --- Gravidade (inteligente) ---
-    vp_recebendo = slope_3m > 0
+    vp_recebendo = pct_3m > 0
 
     if score_saude >= 75:
         gravidade = "saudavel"
@@ -262,37 +262,35 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
         diag_class = "SAUDÁVEL"
         diag_emoji = "🟢"
         diag_resumo = "VP/cota estável ou em alta. Sem sinais de destruição de capital."
-        if slope_3m > 0.05:
+        if pct_3m > pct_saudavel / 2:
             diag_resumo = f"VP/cota subindo (+{pct_3m:.2f}% ao mês nos últimos 3m). Gestão eficaz."
     elif gravidade == "em_recuperacao":
         diag_class = "EM RECUPERAÇÃO"
         diag_emoji = "🟡"
         diag_resumo = (
-            f"Destruição detectada no passado ({max_consec}m consec. máx.), "
+            f"Queda do VP/cota detectada no passado ({max_consec}m consec. máx.), "
             f"mas VP/cota em recuperação ({pct_3m:+.2f}% ao mês nos últimos 3m)."
         )
     elif gravidade == "alerta":
         diag_class = "ALERTA"
         diag_emoji = "🟠"
-        diag_resumo = f"VP/cota em queda ({pct_3m:.2f}% ao mês). {current_consec} meses consecutivos com rent. efetiva > patrimonial."
+        diag_resumo = (
+            f"VP/cota em queda ({pct_3m:.2f}% ao mês). "
+            f"{current_consec} meses consecutivos de queda do VP/cota."
+        )
     else:  # critica
         diag_class = "DESTRUIÇÃO ATIVA"
         diag_emoji = "🔴"
-        diag_resumo = f"VP/cota em queda severa ({pct_3m:.2f}% ao mês). {current_consec} meses consecutivos de destruição."
+        diag_resumo = (
+            f"VP/cota em queda severa ({pct_3m:.2f}% ao mês). "
+            f"{current_consec} meses consecutivos de queda do VP/cota."
+        )
 
     if n_emissoes_ruins > 0:
         diag_resumo += f" {n_emissoes_ruins} emissão(ões) prejudicial(es) recente(s)."
 
     # --- Motivo (retrocompatibilidade) ---
     motivo = f"[{diag_class}] {diag_resumo}"
-
-    motivos_det = []
-    if not cond1:
-        motivos_det.append("cond1_fail: rent.efetiva > rent.patrim < 3 meses consecutivos")
-    if not cond2:
-        motivos_det.append("cond2_fail: cotas cresceram > 1% no periodo")
-    if not cond3:
-        motivos_det.append("cond3_fail: VP/cota com tendencia positiva")
 
     return {
         "destruicao": destruicao,
@@ -306,7 +304,7 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
         "max_consec_historico": max_consec,
         "current_consec": current_consec,
         "n_emissoes_ruins": n_emissoes_ruins,
-        "cond1_efetiva_gt_patrim": cond1,
+        "cond1_queda_vp_consecutiva": cond1,
         "cond2_cotas_estaveis": cond2,
         "cond3_vp_tendencia_negativa": cond3,
         "slope_6m": round(float(slope_6m), 4) if slope_6m else None,
@@ -337,7 +335,7 @@ def _destruicao_result(destruicao, gravidade, tendencia, score_saude, motivo, **
         "max_consec_historico": 0,
         "current_consec": 0,
         "n_emissoes_ruins": 0,
-        "cond1_efetiva_gt_patrim": False,
+        "cond1_queda_vp_consecutiva": False,
         "cond2_cotas_estaveis": True,
         "cond3_vp_tendencia_negativa": False,
         "slope_6m": None,
@@ -351,12 +349,17 @@ def _destruicao_result(destruicao, gravidade, tendencia, score_saude, motivo, **
     }
 
 
-def emissoes_recentes(ticker: str, threshold_pct: float = 1.0, session=None) -> list[dict]:
+def emissoes_recentes(
+    ticker: str, threshold_pct: float = 1.0, session=None, *, t: date | None = None
+) -> list[dict]:
     """Detecta emissões recentes e avalia impacto no VP/cota.
 
     Para cada emissão (>threshold_pct cotas), calcula a variação do VP/cota
     entre o mês anterior e o mês da emissão. Se VP/cota caiu > 1%, a emissão
     é classificada como 'prejudicial' (o fundo deu desconto aos novos cotistas).
+
+    Parâmetro t define o ponto de corte point-in-time: só são usados
+    relatórios com data_entrega <= t. Default: hoje.
 
     Returns:
         Lista de dicts com campos:
@@ -364,6 +367,10 @@ def emissoes_recentes(ticker: str, threshold_pct: float = 1.0, session=None) -> 
             vp_antes, vp_depois, impacto_vp_pct,
             ruim (bool), classificacao ('prejudicial'/'neutra'/'benefica')
     """
+    if t is None:
+        t = date.today()
+    elif hasattr(t, "date"):
+        t = t.date()
     cnpj = get_cnpj_by_ticker(ticker, session)
     if cnpj is None:
         return []
@@ -377,6 +384,7 @@ def emissoes_recentes(ticker: str, threshold_pct: float = 1.0, session=None) -> 
         .where(
             RelatorioMensal.cnpj == cnpj,
             RelatorioMensal.cotas_emitidas.isnot(None),
+            RelatorioMensal.data_entrega <= t,
         )
         .order_by(RelatorioMensal.data_referencia.desc())
         .limit(12)

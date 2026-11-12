@@ -27,6 +27,7 @@ from src.fii_analysis.config import CUSTO_POR_TRADE
 from src.fii_analysis.data.database import (
     CdiDiario, Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker,
 )
+from src.fii_analysis.features.indicators import get_relatorios_ajustados
 from src.fii_analysis.models.trade_simulator import simulate_trades, simulate_buy_and_hold
 from src.fii_analysis.models.walk_forward_rolling import _load_cdi_series, _load_dividend_series
 
@@ -34,8 +35,17 @@ from src.fii_analysis.models.walk_forward_rolling import _load_cdi_series, _load
 _OPTIMIZER_CACHE_DIR = Path(__file__).resolve().parents[3] / "dados" / "optimizer_cache"
 
 
-def save_optimizer_cache(ticker: str, best_params: dict, cache_dir: Path | None = None) -> None:
-    """Persiste best_params do otimizador em JSON. Cria diretório se não existir."""
+def save_optimizer_cache(
+    ticker: str,
+    best_params: dict,
+    cache_dir: Path | None = None,
+    test_stats: dict | None = None,
+) -> None:
+    """Persiste best_params do otimizador em JSON. Cria diretório se não existir.
+
+    ``test_stats``: estatísticas JÁ CALCULADAS do split de teste (n thinned e p
+    Bonferroni), usadas pelo recommender para decidir se o sinal tem suporte.
+    """
     d = cache_dir or _OPTIMIZER_CACHE_DIR
     d.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -43,6 +53,8 @@ def save_optimizer_cache(ticker: str, best_params: dict, cache_dir: Path | None 
         "best_params": best_params,
         "saved_at": datetime.now().isoformat(),
     }
+    if test_stats:
+        payload["test_stats"] = test_stats
     (d / f"{ticker}.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -70,6 +82,28 @@ def load_optimizer_cache(
         return None
 
 
+def load_optimizer_cache_stats(
+    ticker: str, best_params: dict | None = None, cache_dir: Path | None = None
+) -> dict | None:
+    """Estatísticas de teste gravadas junto ao cache (None se ausentes).
+
+    Se ``best_params`` for informado, só devolve as stats quando o cache foi
+    gerado com exatamente esses parâmetros (evita casar stats de outro ajuste).
+    Não aplica limite de idade: a idade é decisão de quem carrega os params.
+    """
+    d = cache_dir or _OPTIMIZER_CACHE_DIR
+    path = d / f"{ticker}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if best_params is not None and payload.get("best_params") != best_params:
+        return None
+    return payload.get("test_stats")
+
+
 class ThresholdOptimizerV2:
     """Otimizador de thresholds com robustez estatistica.
 
@@ -89,7 +123,10 @@ class ThresholdOptimizerV2:
     # DATA
     # =========================================================================
 
-    def _get_enriched_daily_data(self, ticker, session):
+    def _get_enriched_daily_data(self, ticker, session, exigir_fwd_ret: bool = True):
+        """Serie diaria com features. exigir_fwd_ret=False mantem as ultimas
+        forward_days linhas (sem retorno futuro) — usado so no sinal de hoje;
+        treino/validacao/teste seguem exigindo fwd_ret."""
         cnpj = get_cnpj_by_ticker(ticker, session)
         if not cnpj:
             return pd.DataFrame()
@@ -125,6 +162,7 @@ class ThresholdOptimizerV2:
         reports_df = pd.DataFrame([
             {
                 "data_entrega": r.data_entrega,
+                "data_referencia": r.data_referencia,
                 "vp_por_cota": float(r.vp_por_cota) if r.vp_por_cota else None,
                 "rentab_efetiva": float(r.rentab_efetiva) if r.rentab_efetiva else None,
                 "rentab_patrim": float(r.rentab_patrim) if r.rentab_patrim else None,
@@ -133,6 +171,10 @@ class ThresholdOptimizerV2:
         ])
         reports_df["data_entrega"] = pd.to_datetime(reports_df["data_entrega"])
         reports_df = reports_df.sort_values("data_entrega")
+        # VP/cota na base do preco (split-ajustado): unica fonte = indicators.get_relatorios_ajustados
+        rel_aj = get_relatorios_ajustados(ticker, session)
+        vp_aj_map = dict(zip(pd.to_datetime(rel_aj["data_referencia"]), rel_aj["vp_aj"]))
+        reports_df["vp_por_cota"] = pd.to_datetime(reports_df["data_referencia"]).map(vp_aj_map)
 
         consec = 0
         meses_alerta_list = []
@@ -169,7 +211,8 @@ class ThresholdOptimizerV2:
         else:
             df["volume_drop_flag"] = False
 
-        return df.dropna(subset=["pvp_pct", "meses_alerta", "fwd_ret"])
+        obrigatorias = ["pvp_pct", "meses_alerta"] + (["fwd_ret"] if exigir_fwd_ret else [])
+        return df.dropna(subset=obrigatorias)
 
     def _add_dy_gap_pct(self, df, ticker, session):
         """DY Gap percentil rolling para todos os dias em batch."""
@@ -511,7 +554,7 @@ class ThresholdOptimizerV2:
         }
 
     def get_signal_hoje(self, ticker, session, params):
-        df = self._get_enriched_daily_data(ticker, session)
+        df = self._get_enriched_daily_data(ticker, session, exigir_fwd_ret=False)
         if df.empty:
             return {"sinal": "NEUTRO", "details": "Dados insuficientes"}
 
