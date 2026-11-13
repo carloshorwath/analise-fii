@@ -496,6 +496,8 @@ def load_ativo_passivo_to_db(
             valores_receber=_safe_float(row.get("Valores_Receber")),
             contas_receber_aluguel=_safe_float(row.get("Contas_Receber_Aluguel")),
             outros_valores_mobliarios=_safe_float(row.get("Outros_Valores_Mobliarios")),
+            acoes_sociedades_fii=_safe_float(row.get("Acoes_Sociedades_Atividades_FII")),
+            cotas_sociedades_fii=_safe_float(row.get("Cotas_Sociedades_Atividades_FII")),
             ativo_total=calcular_ativo_total(row, valor_ativo),
         )
         if exists:

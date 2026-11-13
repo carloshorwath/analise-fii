@@ -19,9 +19,10 @@ def simulate_strategy(
     ir_ganho_capital: float = 0.20,
 ) -> pd.DataFrame:
     """
-    Simula a estratégia usando fechamento_aj (preço ajustado por dividendos).
+    Simula a estratégia usando fechamento_aj (série de retorno total construída pelo
+    projeto: dividendo reinvestido na data-ex; data/corporate_actions.py).
 
-    Com preços ajustados:
+    Com a série de retorno total:
     - O efeito mecânico do ex-dividend está removido da série de preços.
     - O retorno (preco_venda_aj / preco_compra_aj - 1) já inclui o dividendo
       proporcional ao período de holding, sem necessidade de somar manualmente.
@@ -223,7 +224,8 @@ def buy_and_hold_return(
     """
     Retorno buy-and-hold usando fechamento_aj.
 
-    fechamento_aj é o preço ajustado retroativamente por todos os dividendos.
+    fechamento_aj é a série de retorno total (dividendo reinvestido na data-ex) construída
+    pelo projeto em data/corporate_actions.py, não o Adj Close do Yahoo.
     O retorno (p_fim_aj / p_ini_aj - 1) é o retorno total (preço + dividendos)
     sem precisar somar dividendos manualmente — eles já estão na série ajustada.
     """

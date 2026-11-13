@@ -24,10 +24,12 @@ from scipy import stats
 from sqlalchemy import select
 
 from src.fii_analysis.config import CUSTO_POR_TRADE
+from src.fii_analysis.data import corporate_actions as ca
 from src.fii_analysis.data.database import (
     CdiDiario, Dividendo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker,
 )
 from src.fii_analysis.features.indicators import get_relatorios_ajustados
+from src.fii_analysis.models.teste_excesso import excesso_vs_deriva
 from src.fii_analysis.models.trade_simulator import simulate_trades, simulate_buy_and_hold
 from src.fii_analysis.models.walk_forward_rolling import _load_cdi_series, _load_dividend_series
 
@@ -43,8 +45,9 @@ def save_optimizer_cache(
 ) -> None:
     """Persiste best_params do otimizador em JSON. Cria diretório se não existir.
 
-    ``test_stats``: estatísticas JÁ CALCULADAS do split de teste (n thinned e p
-    Bonferroni), usadas pelo recommender para decidir se o sinal tem suporte.
+    ``test_stats``: estatísticas JÁ CALCULADAS do split de teste (n thinned, média
+    bruta, deriva, excesso e p unicaudal do excesso — sem correção pelo grid),
+    usadas pelo recommender para decidir se o sinal tem suporte.
     """
     d = cache_dir or _OPTIMIZER_CACHE_DIR
     d.mkdir(parents=True, exist_ok=True)
@@ -199,6 +202,10 @@ class ThresholdOptimizerV2:
         df = self._add_dy_gap_pct(df, ticker, session)
 
         df["fwd_ret"] = (df["fechamento_aj"].shift(-self.forward_days) / df["fechamento_aj"]) - 1.0
+        # Retorno total so valido a partir de INICIO_RETORNO_TOTAL: antes, fechamento_aj e preco.
+        inicio_rt = ca.get_inicio_retorno_total(session)
+        if inicio_rt is not None:
+            df.loc[df["data"] < pd.Timestamp(inicio_rt), "fwd_ret"] = np.nan
 
         # Filtro de sell-off qualificado: queda >= 2% com volume >= 1.5x media 21d
         if "volume" in df.columns and df["volume"].notna().any():
@@ -258,7 +265,7 @@ class ThresholdOptimizerV2:
         for i, d in enumerate(df["data"]):
             inicio_12m = d - pd.DateOffset(months=12)
 
-            div_mask = (div_dates > inicio_12m) & (div_dates <= d)
+            div_mask = (div_dates > inicio_12m) & (div_dates < d)  # data_com == d so entra no pregao seguinte
             soma = div_vals[div_mask].sum()
             if soma == 0:
                 continue
@@ -373,16 +380,25 @@ class ThresholdOptimizerV2:
     def _evaluate(self, df, params):
         """Avalia um conjunto de parametros em um split.
 
-        BUY: H0 mean=0 bicaudal, ttest_1samp sobre retornos thinned.
-        SELL: H0 E[r_sell - r_mkt] >= 0, H1 < 0, unicaudal esquerda, thinned.
+        Hipotese (a mesma de episodios e walk-forward; definicao completa em
+        decision/suporte.py): H0 = o retorno forward apos o sinal e igual ao
+        retorno forward INCONDICIONAL do mesmo ativo no mesmo split (media de
+        todos os dias do split). Estatistica: t de 1 amostra do excesso
+        (retorno do evento thinned - deriva). Unicaudal na direcao do sinal:
+        BUY H1 excesso > 0; SELL H1 excesso < 0.
 
         Thinning (forward_days gap entre observacoes) garante independencia
         serial diretamente na amostra inferencial, evitando tratar uma serie
         filtrada irregular como se tivesse espacamento temporal uniforme.
 
+        O p-valor NAO e corrigido pelo tamanho do grid: a selecao de parametros
+        usa treino/validacao; o split de teste e holdout (um teste por direcao).
+
         Justificativa SELL unicaudal (pre-especificado, nao post-hoc):
           pvp_pct alto  → fundo precificado acima do VP historico (caro)
-          meses_alerta  → rentabilidade efetiva < patrimonial (distribuindo capital)
+          meses_alerta  → meses consecutivos com rentabilidade patrimonial
+                          negativa (VP/cota em queda) ou efetiva abaixo da
+                          patrimonial; NAO mede "distribuindo mais que gera"
           dy_gap_pct baixo → DY caiu abaixo do CDI (spread negativo)
         Essas condicoes precedem subperformance por mecanismo economico. A direcao
         H1 < 0 foi fixada antes do grid search.
@@ -401,29 +417,31 @@ class ThresholdOptimizerV2:
         sell_thinned = self._thin_returns(df, sell_mask)
         avg_buy_indep = float(np.mean(buy_thinned)) if buy_thinned else 0.0
         avg_sell_indep = float(np.mean(sell_thinned)) if sell_thinned else 0.0
+        buy_excess_thinned = [r - unconditional_mean for r in buy_thinned]
         sell_excess_thinned = [r - unconditional_mean for r in sell_thinned]
 
-        # BUY: t-test bicaudal H0: mean=0
-        buy_degenerate = self._is_degenerate(buy_thinned) if len(buy_thinned) >= 2 else True
+        # BUY: t-test unicaudal direita, H0: E[excess] <= 0 (excesso sobre a deriva)
+        buy_degenerate = self._is_degenerate(buy_excess_thinned) if len(buy_excess_thinned) >= 2 else True
+        # p None = NAO CALCULAVEL (n < 4 ou variancia degenerada). Nunca o sentinela 1.0,
+        # que se confundiria com um p real; decision/suporte.py trata None como sem
+        # suporte (e como p=1 so dentro da familia BH).
+        p_buy = None
         if len(buy_thinned) >= 4 and not buy_degenerate:
-            _, p_buy = stats.ttest_1samp(buy_thinned, 0.0)
-            p_buy = float(p_buy)
-        else:
-            p_buy = 1.0
+            p_buy = excesso_vs_deriva(buy_thinned, unconditional_mean, "BUY", n_min=4)["p_value"]
 
-        # SELL: t-test unicaudal esquerda H0: E[excess] >= 0
+        # SELL: t-test unicaudal esquerda, H0: E[excess] >= 0
         sell_degenerate = self._is_degenerate(sell_excess_thinned) if len(sell_excess_thinned) >= 2 else True
-        if len(sell_excess_thinned) >= 4 and not sell_degenerate:
-            _, p_sell = stats.ttest_1samp(sell_excess_thinned, 0.0, alternative="less")
-            p_sell = float(p_sell)
-        else:
-            p_sell = 1.0
+        p_sell = None
+        if len(sell_thinned) >= 4 and not sell_degenerate:
+            p_sell = excesso_vs_deriva(sell_thinned, unconditional_mean, "SELL", n_min=4)["p_value"]
 
         return {
             "n_buy": len(buy_returns_all),
             "n_buy_thinned": len(buy_thinned),
             "avg_return_buy": avg_buy,
             "avg_return_buy_independent": avg_buy_indep,
+            "buy_excess_vs_market": avg_buy - unconditional_mean,
+            "buy_excess_vs_market_independent": avg_buy_indep - unconditional_mean,
             "p_value_buy": p_buy,
             "buy_se_degenerate": buy_degenerate,
             "n_sell": len(sell_returns_all),
@@ -529,16 +547,33 @@ class ThresholdOptimizerV2:
         if not best_params:
             return {"error": "Nenhuma combinacao valida encontrada no grid"}
 
+        # Holdout: UM teste por direcao. Sem correcao pelo tamanho do grid — a
+        # selecao dos parametros ocorreu em treino/validacao (n_combinations so
+        # informa o tamanho do grid).
         test_result = self._evaluate(splits["test"], best_params)
-        test_result["p_value_buy_bonferroni"] = min(1.0, test_result["p_value_buy"] * n_combinations)
-        test_result["p_value_sell_bonferroni"] = min(1.0, test_result["p_value_sell"] * n_combinations)
 
         placebo = self._run_placebo(splits["test"], best_params, df)
         train_score = next(r["train"] for r in results_grid if r["params"] == best_params)
         val_score = next(r["val"] for r in results_grid if r["params"] == best_params)
 
+        # Deriva/excesso no mesmo formato de episodios (summary[buy|sell]: n, mean, drift,
+        # excess, p_value), sobre o split de TESTE (eventos independentes/thinned).
+        deriva_teste = test_result["unconditional_mean"]
+        summary = {
+            lado: {
+                "n": test_result[f"n_{lado}_thinned"],
+                "mean": test_result[f"avg_return_{lado}_independent"],
+                "drift": deriva_teste,
+                "excess": test_result[f"{lado}_excess_vs_market_independent"],
+                "p_value": test_result[f"p_value_{lado}"],
+            }
+            for lado in ("buy", "sell")
+        }
+
         return {
             "best_params": best_params,
+            "summary": summary,
+            "deriva": deriva_teste,
             "train_score": train_score,
             "val_score": val_score,
             "test_result": test_result,

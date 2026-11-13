@@ -7,7 +7,7 @@ from loguru import logger
 from sqlalchemy import func, select
 
 from src.fii_analysis.data.database import (
-    BenchmarkDiario, Dividendo, PrecoDiario, RelatorioMensal, Ticker,
+    BenchmarkDiario, Carteira, Dividendo, PrecoDiario, RelatorioMensal, Ticker,
     get_cnpj_by_ticker, volume_medio_21d,
 )
 from src.fii_analysis.features.indicators import get_pvp, get_dy_trailing, get_vp_cotas_pit
@@ -71,6 +71,31 @@ def _get_return_n_months(ticker: str, fim: date, n_meses: int, session) -> float
     return preco_fim / preco_inicio - 1.0
 
 
+def posicoes_carteira(session) -> pd.DataFrame:
+    """Posicoes REAIS da tabela carteira (varias linhas do mesmo ticker somadas) a mercado.
+
+    Colunas: ticker, quantidade, preco (ultimo fechamento), valor_mercado
+    (= quantidade x preco; None se o ticker nao tem preco). Peso/Herfindahl da
+    carteira saem DESTA tabela — nunca do preco por cota dos tickers do universo.
+    """
+    qtds = session.execute(
+        select(Carteira.ticker, func.sum(Carteira.quantidade)).group_by(Carteira.ticker)
+    ).all()
+    rows = []
+    for ticker, qtd in sorted(qtds):
+        preco = session.execute(
+            select(PrecoDiario.fechamento).where(PrecoDiario.ticker == ticker)
+            .order_by(PrecoDiario.data.desc()).limit(1)
+        ).scalar_one_or_none()
+        preco = float(preco) if preco else None
+        qtd = int(qtd)
+        rows.append({
+            "ticker": ticker, "quantidade": qtd, "preco": preco,
+            "valor_mercado": qtd * preco if preco is not None else None,
+        })
+    return pd.DataFrame(rows, columns=["ticker", "quantidade", "preco", "valor_mercado"])
+
+
 def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
     rows = []
     for ticker in tickers:
@@ -112,7 +137,8 @@ def carteira_panorama(tickers: list[str], session) -> pd.DataFrame:
                 .order_by(RelatorioMensal.data_referencia.desc())
                 .limit(1)
             ).scalar_one_or_none()
-        dy_mes = float(dy_mes_row) / 100.0 if dy_mes_row is not None else None
+        # dy_mes_pct da CVM ja e FRACAO (0.0064 = 0,64%); a UI formata com .2%
+        dy_mes = float(dy_mes_row) if dy_mes_row is not None else None
 
         rent_12m = _get_return_n_months(ticker, data_ultimo, 12, session)
         rent_24m = _get_return_n_months(ticker, data_ultimo, 24, session)

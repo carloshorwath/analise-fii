@@ -19,7 +19,35 @@ from src.fii_analysis.data.database import (
     PrecoDiario,
     get_cnpj_by_ticker,
 )
+from src.fii_analysis.data import corporate_actions as ca
 from src.fii_analysis.features.indicators import get_relatorios_ajustados
+from src.fii_analysis.models.teste_excesso import excesso_vs_deriva
+
+
+def pvp_percentil_ate_t_menos_1(valores, janela=504, min_periods=63):
+    """Percentil (0-100) de cada valor contra os ``janela`` valores ANTERIORES.
+
+    Mesma definicao de ``features.valuation.get_pvp_percentil``: a janela e
+    [i-janela, i) (nao inclui o dia i), exige >= ``min_periods`` valores
+    anteriores, percentil = % da janela estritamente abaixo do valor, e 100
+    quando o valor >= maximo da janela. Sem look-ahead e sem o proprio dia.
+    """
+    v = np.asarray(valores, dtype=float)
+    out = np.full(len(v), np.nan)
+    # janela <= 0 = "sem percentil" (semantica anterior: rolling(0) -> NaN);
+    # get_pvp_series(rolling_window=0) so quer pvp, nao pvp_pct.
+    for i in range(len(v) if janela > 0 else 0):
+        if np.isnan(v[i]):
+            continue
+        w = v[max(0, i - janela):i]
+        w = w[~np.isnan(w)]
+        n = len(w)
+        if n < min_periods:
+            continue
+        out[i] = 100.0 if v[i] >= w.max() else float(np.sum(w < v[i])) / n * 100.0
+    if isinstance(valores, pd.Series):
+        return pd.Series(out, index=valores.index)
+    return out
 
 
 def get_pvp_series(ticker, session, rolling_window=504):
@@ -64,7 +92,13 @@ def get_pvp_series(ticker, session, rolling_window=504):
 
     df["pvp"] = df["fechamento"] / df["vp_por_cota"]
     min_periods = min(63, rolling_window)
-    df["pvp_pct"] = df["pvp"].rolling(rolling_window, min_periods=min_periods).rank(pct=True) * 100
+    df["pvp_pct"] = pvp_percentil_ate_t_menos_1(df["pvp"], rolling_window, min_periods)
+
+    # Retorno total so e valido a partir de INICIO_RETORNO_TOTAL (ver corporate_actions):
+    # modelos de retorno forward ignoram fwd_ret onde ret_total_ok e False.
+    inicio = ca.get_inicio_retorno_total(session)
+    df["ret_total_ok"] = True if inicio is None else df["data"] >= pd.Timestamp(inicio)
+    df.attrs["inicio_retorno_total"] = inicio
 
     return df
 
@@ -108,7 +142,7 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
     # Recalcular percentil rolling APENAS se pct_col='pvp_pct' e não existir
     if pct_col not in df.columns or (pct_col == "pvp_pct" and value_col == "pvp"):
         min_periods = min(63, rolling_window)
-        df["pvp_pct"] = df["pvp"].rolling(rolling_window, min_periods=min_periods).rank(pct=True) * 100
+        df["pvp_pct"] = pvp_percentil_ate_t_menos_1(df["pvp"], rolling_window, min_periods)
         pct_col = "pvp_pct"
 
     df = df.dropna(subset=[pct_col]).copy()
@@ -116,6 +150,11 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
 
     # Forward return
     df["fwd_ret"] = df["fechamento_aj"].shift(-forward_days) / df["fechamento_aj"] - 1.0
+    n_fora_janela = 0
+    if "ret_total_ok" in df.columns:
+        fora = ~df["ret_total_ok"].astype(bool) & df["fwd_ret"].notna()
+        n_fora_janela = int(fora.sum())
+        df.loc[fora, "fwd_ret"] = np.nan  # retorno de preco (pre-INICIO_RETORNO_TOTAL), nao total
 
     # Build index of trading days for gap calculation
     date_to_idx = {d: i for i, d in enumerate(df["data"])}
@@ -161,7 +200,20 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
     buy_df = pd.DataFrame(episodes_buy) if episodes_buy else pd.DataFrame()
     sell_df = pd.DataFrame(episodes_sell) if episodes_sell else pd.DataFrame()
 
-    summary = _compute_summary(buy_df, sell_df, forward_days, date_to_idx)
+    # Deriva = media incondicional do fwd_ret sobre TODOS os dias elegiveis do
+    # periodo de avaliacao (dias com percentil e retorno forward definidos).
+    fwd_validos = df["fwd_ret"].dropna()
+    deriva = float(fwd_validos.mean()) if len(fwd_validos) else 0.0
+
+    summary = _compute_summary(buy_df, sell_df, forward_days, date_to_idx, deriva=deriva)
+
+    aviso = None
+    if n_fora_janela:
+        n_b, n_s = int(summary["buy"].get("n", 0) or 0), int(summary["sell"].get("n", 0) or 0)
+        aviso = (
+            f"{n_fora_janela} dias com retorno forward anterior a INICIO_RETORNO_TOTAL "
+            f"excluidos (retorno de preco, nao total); amostra apos a restricao: BUY n={n_b}, SELL n={n_s}."
+        )
 
     return {
         "buy": buy_df,
@@ -173,6 +225,10 @@ def identify_episodes(df, pvp_pct_low=10, pvp_pct_high=90, forward_days=30,
             "forward_days": forward_days,
             "min_gap": min_gap,
             "rolling_window": rolling_window,
+            "deriva": deriva,
+            "n_dias_deriva": int(len(fwd_validos)),
+            "n_dias_fora_janela_retorno_total": n_fora_janela,
+            "aviso_janela": aviso,
         },
     }
 
@@ -207,13 +263,19 @@ def _thin_global(buy_df, sell_df, forward_days, date_to_idx):
     return buy_g, sell_g
 
 
-def _compute_summary(buy_df, sell_df, forward_days, date_to_idx=None):
-    """Calcula estatisticas descritivas dos episodios."""
+def _compute_summary(buy_df, sell_df, forward_days, date_to_idx=None, deriva=0.0):
+    """Calcula estatisticas dos episodios.
+
+    ``mean`` e a media BRUTA do retorno forward; ``drift`` a deriva incondicional
+    do periodo; ``excess`` = mean - drift. ``p_value`` e o p do teste do EXCESSO
+    unicaudal na direcao do sinal (BUY: > 0; SELL: < 0) — ver decision/suporte.py.
+    """
     result = {"buy": {}, "sell": {}}
 
     for label, df in [("buy", buy_df), ("sell", sell_df)]:
         if df.empty:
-            result[label] = {"n": 0, "mean": None, "median": None, "std": None,
+            result[label] = {"n": 0, "mean": None, "drift": float(deriva), "excess": None,
+                             "p_value": None, "t_stat": None, "median": None, "std": None,
                              "win_rate": None, "ci_lower": None, "ci_upper": None,
                              "min": None, "max": None}
             continue
@@ -237,14 +299,15 @@ def _compute_summary(buy_df, sell_df, forward_days, date_to_idx=None):
             ci_lower = float(np.percentile(boot_means, 2.5))
             ci_upper = float(np.percentile(boot_means, 97.5))
 
-        # t-test (valido pq observacoes sao independentes)
-        t_stat, p_value = None, None
-        if n >= 5:
-            t_stat, p_value = float(stats.ttest_1samp(rets, 0.0)[0]), float(stats.ttest_1samp(rets, 0.0)[1])
+        # t-test do excesso sobre a deriva (valido pq observacoes sao independentes)
+        teste = excesso_vs_deriva(rets, deriva, label.upper())
+        t_stat, p_value = teste["t_stat"], teste["p_value"]
 
         result[label] = {
             "n": n,
             "mean": mean_r,
+            "drift": float(deriva),
+            "excess": mean_r - float(deriva),
             "median": median_r,
             "std": std_r,
             "win_rate": win_rate,

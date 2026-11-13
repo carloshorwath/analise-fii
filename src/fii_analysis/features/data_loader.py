@@ -18,7 +18,7 @@ from src.fii_analysis.data.database import (
     get_ultimo_preco_date,
     volume_medio_21d,
 )
-from src.fii_analysis.features.indicators import get_pvp
+from src.fii_analysis.features.indicators import get_pvp, get_relatorios_ajustados
 from src.fii_analysis.features.valuation import get_dy_gap
 
 
@@ -75,6 +75,15 @@ def get_historico_pl(ticker: str, session: Session, meses: int = 24) -> pd.DataF
     df = df.sort_values("data_ref").reset_index(drop=True)
     df["patrimonio_liq"] = df["patrimonio_liq"].astype(float)
     df["vp_por_cota"] = df["vp_por_cota"].astype(float)
+    # Serie historica (grafico): VP/cota na base da quantidade atual de cotas, para um
+    # split nao virar degrau. O valor nominal do informe fica em `vp_nominal`.
+    aj = get_relatorios_ajustados(ticker, session, apenas_entregues=False)
+    vp_aj = {pd.Timestamp(r.data_referencia): r.vp_aj for r in aj.itertuples(index=False)}
+    df["vp_nominal"] = df["vp_por_cota"]
+    df["vp_por_cota"] = [
+        float(vp_aj[pd.Timestamp(d)]) if pd.Timestamp(d) in vp_aj and pd.notna(vp_aj[pd.Timestamp(d)]) else v
+        for d, v in zip(df["data_ref"], df["vp_por_cota"])
+    ]
     return df
 
 

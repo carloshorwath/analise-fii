@@ -64,14 +64,14 @@ def test_dy_gap_percentil_busca_dividendos_ate_12m_antes_da_data_mais_antiga(db_
 
     t = date(2025, 12, 31)
     # DY 12m (gap, pois CDI=0) em t = (6*2.0 + 6*1.0)/100 = 0.18 (jan..dez/2025).
-    # Janela = 251 pregoes ate 2025-12-30. O gap de cada data d e a soma dos 12 ultimos
+    # Janela = 252 pregoes anteriores a t (ate 2025-12-30). O gap de cada data d e a soma dos 12 ultimos
     # pagamentos / 100; fica == 0.18 somente de 15/dez a 30/dez (12 dias uteis: 15-19, 22-26, 29-30)
     # e e > 0.18 antes (ex.: 12/dez inclui o pagamento de 15/12/2024 => 0.19).
-    # Percentil correto = 12 / 251 * 100 = 4.78.
+    # Percentil correto = 12 / 252 * 100 = 4.76.
     # Bug antigo: dividendos so desde (data_max - 12m) => DY das datas antigas
     # subestimado => quase todos os gaps historicos < 0.18 => percentil ~ topo.
     pct = get_dy_gap_percentil(ticker, t, 252, db_session)
-    assert pct == pytest.approx(12 / 251 * 100)
+    assert pct == pytest.approx(12 / 252 * 100)
 
 
 # ---------------------------------------------------------------------------
@@ -83,22 +83,29 @@ def test_dy_12m_janela_semiaberta_e_dy_gap_herda(db_session):
     ticker = "JAN11"
     t = date(2025, 6, 30)
     _add_precos(db_session, ticker, [t], 100.0)
-    # 2024-06-30 esta EXATAMENTE em t-12m: fora da janela (2024-06-30, 2025-06-30].
+    # 2024-06-30 esta EXATAMENTE em t-12m: fora da janela (2024-06-30, t).
+    # MUDANCA POR DECISAO (convencao conservadora, estudo 2026-11-12): dividendo so entra
+    # no DY a partir do pregao SEGUINTE a data-com (data-ex); data_com == t fica de fora.
     _add_divs(db_session, ticker, [
-        (date(2024, 6, 30), 1.0),   # fora (borda)
+        (date(2024, 6, 30), 1.0),   # fora (borda inicial)
         (date(2024, 7, 30), 1.0),
         (date(2024, 12, 30), 1.0),
-        (date(2025, 6, 30), 1.0),   # dentro (borda final inclusiva)
+        (date(2025, 6, 30), 1.0),   # fora em t (data_com == t); entra em t+1
     ])
     db_session.commit()
 
-    # soma correta = 3.0 / preco 100 = 0.03 (bug antigo: 4.0 / 100 = 0.04)
-    assert get_dy_n_meses(ticker, t, 12, db_session) == pytest.approx(0.03)
+    # soma correta em t = 2.0 / preco 100 = 0.02 (antes da decisao: 3.0/100 = 0.03)
+    assert get_dy_n_meses(ticker, t, 12, db_session) == pytest.approx(0.02)
+    # no pregao seguinte (t+1) o dividendo de t ja conta: janela (2024-07-01, 2025-07-01) = 3.0
+    t1 = date(2025, 7, 1)
+    _add_precos(db_session, ticker, [t1], 100.0)
+    db_session.commit()
+    assert get_dy_n_meses(ticker, t1, 12, db_session) == pytest.approx(0.03)
 
     # CDI do conftest: 0.04%/dia em dias uteis; registros em [2024-06-30, 2025-06-30]
     n = int(np.busday_count("2024-06-30", "2025-07-01"))
     cdi = 1.0004 ** n - 1.0
-    assert get_dy_gap(ticker, t, db_session) == pytest.approx(0.03 - cdi)
+    assert get_dy_gap(ticker, t, db_session) == pytest.approx(0.02 - cdi)
 
 
 # ---------------------------------------------------------------------------
@@ -222,4 +229,6 @@ def test_radar_vistos_conta_exatamente_os_criterios_atendidos(db_session, monkey
     df = radar.radar_matriz(["MOCK11"], db_session)
     row = df.iloc[0]
     assert (row.pvp_baixo, row.dy_gap_alto, row.saude_ok, row.liquidez_ok) == (True, False, True, True)
-    assert row.vistos == 3   # 3 de 4 criterios, nao 4
+    # MUDANCA POR DECISAO: dy_gap_alto (indicador de regime) saiu de ``vistos``; sao 3 criterios
+    # (pvp_baixo, saude_ok, liquidez_ok) e os 3 estao atendidos aqui -> vistos == 3 == RADAR_N_CRITERIOS.
+    assert row.vistos == radar.RADAR_N_CRITERIOS == 3

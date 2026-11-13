@@ -48,6 +48,25 @@ def _add_column(conn, table: str, column: str, col_type: str) -> None:
     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
 
 
+def corrigir_pregoes_blob(conn) -> int:
+    """Migracao 010: snapshot_decisions.pregoes_desde_ultimo_episodio gravado como BLOB
+    (numpy.int64 de 8 bytes little-endian) -> INTEGER. Idempotente; devolve n corrigidas."""
+    if not _table_exists(conn, "snapshot_decisions"):
+        return 0
+    rows = conn.execute(text(
+        "SELECT id, pregoes_desde_ultimo_episodio FROM snapshot_decisions "
+        "WHERE typeof(pregoes_desde_ultimo_episodio) = 'blob'"
+    )).all()
+    for rid, blob in rows:
+        conn.execute(
+            text("UPDATE snapshot_decisions SET pregoes_desde_ultimo_episodio = :v WHERE id = :i"),
+            {"v": int.from_bytes(bytes(blob), "little", signed=True), "i": rid},
+        )
+    if rows:
+        logger.info("Migracao: {} pregoes_desde_ultimo_episodio BLOB -> INTEGER", len(rows))
+    return len(rows)
+
+
 def run_migrations(db_path: Path | None = None) -> None:
     """Executa todas as migrações pendentes (idempotente).
 
@@ -174,6 +193,15 @@ def run_migrations(db_path: Path | None = None) -> None:
                 )
             """))
             conn.commit()
+
+        # Migração 009: participacoes em sociedades de atividade FII (classificacao Tijolo)
+        _add_column(conn, "ativo_passivo", "acoes_sociedades_fii", "NUMERIC")
+        _add_column(conn, "ativo_passivo", "cotas_sociedades_fii", "NUMERIC")
+        conn.commit()
+
+        # Migração 010: BLOB numpy em pregoes_desde_ultimo_episodio -> INTEGER
+        corrigir_pregoes_blob(conn)
+        conn.commit()
 
     logger.info("Migracoes aplicadas em {}", db_path)
 

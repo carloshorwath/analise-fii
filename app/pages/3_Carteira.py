@@ -15,24 +15,38 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 from datetime import date as _date_today
 
 from app.components.charts import carteira_alocacao_pie, carteira_segmento_pie
+from app.components.aviso_ui import (
+    csv_sem_comentarios,
+    render_aviso_evidencia,
+    rotulo_acao,
+    rotulo_flags,
+)
 from app.components.carteira_ui import (
+    calcular_sinais_carteira_ao_vivo,
+    decisao_ja_registrada,
     delete_carteira_posicao,
     load_carteira_db,
-    load_tickers_ativos,
+    load_seletor_info,
+    load_tickers_existentes,
     normalize_carteira_csv,
+    rotulo_seletor,
     save_carteira_posicao,
+    validar_posicao,
+    validar_registros,
 )
-from app.components.snapshot_ui import load_carteira_advices_snapshot
+from app.components.snapshot_ui import (
+    load_carteira_advices_snapshot,
+    load_latest_snapshot_meta,
+    render_carteira_alterada,
+    ultima_data_preco_global,
+)
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from src.fii_analysis.evaluation.daily_snapshots import compute_carteira_hash
 from app.components.tables import format_currency
-from app.state import render_footer, safe_page, safe_set_page_config
+from app.state import render_footer, safe_page, safe_set_page_config, set_flash, show_flash
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.data.database import create_tables, get_session_ctx
 from src.fii_analysis.decision import (
-    aconselhar_carteira,
-    alertas_estruturais,
-    decidir_universo,
     exportar_sugestoes_csv,
     exportar_sugestoes_md,
 )
@@ -171,9 +185,9 @@ _PRI_LABEL = {
 }
 
 _PRI_SECTION = {
-    "ALTA":  "⚡ Ação Imediata",
-    "MEDIA": "👀 Observar",
-    "BAIXA": "💤 Manter",
+    "ALTA":  "⚡ Maior destaque dos indicadores",
+    "MEDIA": "👀 Destaque moderado",
+    "BAIXA": "💤 Sem destaque",
 }
 
 
@@ -181,7 +195,7 @@ def _badge(acao: str) -> str:
     cls = f"badge-{acao}" if acao in (
         "AUMENTAR", "HOLD", "REDUZIR", "SAIR", "EVITAR_NOVOS_APORTES"
     ) else "badge-HOLD"
-    return f'<span class="badge {cls}">{acao}</span>'
+    return f'<span class="badge {cls}">{rotulo_acao(acao)}</span>'
 
 
 def _kpi(label: str, value: str, sub: str = "", cls: str = "") -> str:
@@ -222,7 +236,7 @@ def _render_advice_card(a) -> None:
     # Flags (destaque vermelho se há alguma)
     has_flags = a.flags_resumo and a.flags_resumo != "—"
     flags_html = (
-        f"<span style='color:#c62828;font-weight:600'>{a.flags_resumo}</span>"
+        f"<span style='color:#c62828;font-weight:600'>{rotulo_flags(a.flags_resumo)}</span>"
         if has_flags
         else "<span style='color:#999'>nenhuma</span>"
     )
@@ -275,16 +289,18 @@ def main():
     render_sidebar_guide("Carteira", "Operar")
     render_page_header(
         "Carteira",
-        "Central de posicoes com consolidado patrimonial, sugestoes operacionais e alertas estruturais.",
+        "Central de posicoes com consolidado patrimonial, leitura dos indicadores por posicao e alertas estruturais.",
         "Operar",
     )
     render_inline_note(
         "Comece pela aba Visão Geral para entender o patrimônio consolidado. "
-        "Depois acesse Sugestões para as orientações táticas por posição."
+        "Depois acesse Indicadores para a leitura descritiva por posição."
     )
+    render_aviso_evidencia()
+    show_flash()
 
     create_tables()
-    tickers = load_tickers_ativos()
+    tickers, notas_ticker = load_seletor_info()
     posicoes = load_carteira_db()
 
     # ── Pré-computação compartilhada ─────────────────────────────────────────
@@ -323,17 +339,18 @@ def main():
         snap_used = adv_meta is not None and bool(advices)
 
         if not snap_used:
-            with st.spinner("Calculando sinais (snapshot de carteira nao disponivel)..."):
-                from src.fii_analysis.models.threshold_optimizer_v2 import load_optimizer_cache
-                with get_session_ctx() as session:
-                    tickers_dec = list(set(consol["ticker"].tolist() + tickers_ativos(session)))
-                    opt_params = {t: cached for t in tickers_dec if (cached := load_optimizer_cache(t)) is not None}
-                    decisoes = decidir_universo(
-                        session, tickers=tickers_dec,
-                        optimizer_params_por_ticker=opt_params or None,
-                    )
-                advices = aconselhar_carteira(decisoes, posicoes, precos_atuais=precos_map)
-                alertas = alertas_estruturais(advices)
+            render_carteira_alterada(
+                load_latest_snapshot_meta("curado"), posicoes, ao_vivo=True
+            )
+            with st.spinner("Calculando sinais ao vivo (cache por carteira + data do ultimo preco)..."):
+                advices, alertas = calcular_sinais_carteira_ao_vivo(
+                    tuple(
+                        (p["ticker"], p["quantidade"], p["preco_medio"], p["data_compra"])
+                        for p in posicoes
+                    ),
+                    tuple(sorted(precos_map.items())),
+                    ultima_data_preco_global(),
+                )
 
         # Segmento para pie chart
         with get_session_ctx() as session:
@@ -346,7 +363,7 @@ def main():
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tab_visao, tab_sugestoes, tab_alertas, tab_diario, tab_gerenciar = st.tabs([
-        "📊 Visão Geral", "💡 Sugestões", "⚠️ Alertas", "📝 Diário & Performance", "⚙️ Gerenciar",
+        "📊 Visão Geral", "📋 Indicadores", "⚠️ Alertas", "📝 Diário & Performance", "⚙️ Gerenciar",
     ])
 
     # ── TAB 1: Visão Geral ────────────────────────────────────────────────────
@@ -428,7 +445,7 @@ def main():
         if consol is None:
             st.info("Nenhuma posição na carteira. Adicione posições na aba Gerenciar.")
         elif not advices:
-            st.info("Nenhuma sugestão gerada. Execute o snapshot diário ou aguarde o cálculo automático.")
+            st.info("Nenhuma leitura gerada. Execute o snapshot diário ou aguarde o cálculo automático.")
         else:
             if snap_used:
                 st.caption(
@@ -436,10 +453,11 @@ def main():
                     "Acesse a página 'Hoje' para detalhes técnicos completos."
                 )
             st.caption(
-                "Sugestões baseadas em regras estatísticas. "
-                "**Não são ordens executáveis** — validar com julgamento próprio antes de operar."
+                "Leitura descritiva dos indicadores por posição. "
+                "**Não é recomendação de compra ou venda.**"
             )
 
+            st.caption("O CSV exportado traz so a tabela (sem linhas de aviso antes do cabecalho).")
             _render_advices_grouped(advices)
 
             st.divider()
@@ -447,16 +465,16 @@ def main():
             c1, c2 = st.columns(2)
             with c1:
                 st.download_button(
-                    "⬇️ Baixar sugestões (MD)",
+                    "⬇️ Baixar leitura (MD)",
                     data=exportar_sugestoes_md(advices, data_ref),
-                    file_name=f"{data_ref.isoformat()}_sugestoes_carteira.md",
+                    file_name=f"{data_ref.isoformat()}_leitura_carteira.md",
                     mime="text/markdown",
                 )
             with c2:
                 st.download_button(
-                    "⬇️ Baixar sugestões (CSV)",
-                    data=exportar_sugestoes_csv(advices),
-                    file_name=f"{data_ref.isoformat()}_sugestoes_carteira.csv",
+                    "⬇️ Baixar leitura (CSV)",
+                    data=csv_sem_comentarios(exportar_sugestoes_csv(advices)),
+                    file_name=f"{data_ref.isoformat()}_leitura_carteira.csv",
                     mime="text/csv",
                 )
 
@@ -504,11 +522,11 @@ def main():
                         select(SnapshotOpportunities).where(SnapshotOpportunities.run_id == run.id)
                     ).scalars().all()
                     for o in opps:
-                        label = f"ID {o.id}: VENDER {o.vender} ➔ COMPRAR {o.comprar} (Spread: {o.spread_liquido_pct:+.1f} pp)"
+                        label = f"ID {o.id}: {o.vender} ➔ {o.comprar} (Spread: {o.spread_liquido_pct:+.1f} pp)"
                         opp_options.append(label)
                         opp_map[label] = o
 
-            vincular_opp = st.selectbox("Vincular a uma recomendação ativa de hoje", opp_options)
+            vincular_opp = st.selectbox("Vincular a um par de rotação de hoje", opp_options)
             opp_selecionada = opp_map.get(vincular_opp)
             
             with st.form("form_decisao"):
@@ -529,14 +547,26 @@ def main():
                     dec_preco = st.number_input("Preço Executado (R$, Opcional)", min_value=0.0, value=0.0, step=0.01)
                     dec_data = st.date_input("Data do Sinal/Operação", value=opp_selecionada.data_referencia if opp_selecionada else date.today())
                 
-                dec_racional = st.text_area("Racional / Notas do Investidor", placeholder="Escreva o motivo da operação ou por que decidiu ignorar a oportunidade...")
+                dec_racional = st.text_area("Racional / Notas do Investidor", placeholder="Escreva o motivo da operação ou por que decidiu ignorar o par...")
                 
                 submitted = st.form_submit_button("Gravar Decisão no Diário", type="primary")
                 if submitted:
+                    existentes = set(load_tickers_existentes())
+                    opp_id_sel = opp_selecionada.id if opp_selecionada else None
+                    ja = decisao_ja_registrada(
+                        opp_id_sel, dec_tipo, dec_vender or None, dec_comprar or None,
+                        dec_qtd if dec_qtd > 0 else None, dec_data, dec_racional or None,
+                    )
                     if dec_tipo in ["ROTACAO", "VENDA"] and not dec_vender:
                         st.error("Para rotação ou venda, informe o Ticker Vendido.")
                     elif dec_tipo in ["ROTACAO", "COMPRA"] and not dec_comprar:
                         st.error("Para rotação ou compra, informe o Ticker Comprado.")
+                    elif dec_vender and dec_vender not in existentes:
+                        st.error(f"Ticker vendido inexistente: {dec_vender}. Nada foi gravado.")
+                    elif dec_comprar and dec_comprar not in existentes:
+                        st.error(f"Ticker comprado inexistente: {dec_comprar}. Nada foi gravado.")
+                    elif ja:
+                        st.warning(f"Ja existe registro igual: {ja}. Nada foi gravado.")
                     else:
                         with get_session_ctx() as session:
                             from src.fii_analysis.decision.decision_journal import registrar_decisao, get_fechamento_on_or_before
@@ -549,7 +579,7 @@ def main():
                                 if t_preco:
                                     final_preco = get_fechamento_on_or_before(session, t_preco, dec_data)
                             
-                            registrar_decisao(
+                            _dec, _avisos = registrar_decisao(
                                 session=session,
                                 tipo=dec_tipo,
                                 ticker_vendido=dec_vender if dec_vender else None,
@@ -560,8 +590,11 @@ def main():
                                 racional_usuario=dec_racional if dec_racional else None,
                                 data=dec_data
                             )
-                            st.success("Decisão gravada com sucesso!")
-                            st.rerun()
+                            if _dec is None:
+                                st.warning("Nada foi gravado: " + "; ".join(_avisos))
+                            else:
+                                set_flash("Decisão gravada com sucesso!")
+                                st.rerun()
 
         with tab_historico:
             st.markdown("##### Histórico de Decisões Registradas")
@@ -582,12 +615,15 @@ def main():
                         "Tipo": l.tipo,
                         "Vendido": l.ticker_vendido or "—",
                         "Comprado": l.ticker_comprado or "—",
-                        "Qtd": l.quantidade or "—",
+                        "Qtd": l.quantidade,
                         "Preço (R$)": f"R$ {l.preco:.2f}" if l.preco else "—",
                         "Racional": l.racional_usuario or "—"
                     })
                 df_logs = pd.DataFrame(log_data)
-                st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df_logs, use_container_width=True, hide_index=True,
+                    column_config={"Qtd": st.column_config.NumberColumn("Qtd", format="%d")},
+                )
                 
                 col_del1, col_del2 = st.columns([3, 1])
                 with col_del1:
@@ -601,7 +637,7 @@ def main():
                             if to_del:
                                 session.delete(to_del)
                                 session.commit()
-                                st.success(f"Log {to_del_id} removido com sucesso!")
+                                set_flash(f"Log {to_del_id} removido com sucesso!")
                                 st.rerun()
 
         with tab_review:
@@ -631,7 +667,7 @@ def main():
                     + _kpi("Hit-Rate vs XFIX11", f"{hit_rt * 100:.1f}%", f"{sum(1 for r in res_review if r['bateu_xfix11'])} de {n_tot} batem o índice")
                     + _kpi("Retorno Médio Par", f"{avg_par * 100:+.2f}%", f"Benchmark XFIX11: {avg_bench * 100:+.2f}%", "pos" if avg_par >= 0 else "neg")
                     + _kpi("Rotas Efetuadas", f"{n_act}", f"Ignoradas: {n_ign}")
-                    + _kpi("Custo de Oportunidade", f"{cust_oport * 100:+.2f}%", "Média dos pares ignorados", "warn" if cust_oport > 0 else "")
+                    + _kpi("Retorno dos pares ignorados", f"{cust_oport * 100:+.2f}%", "Média dos pares ignorados", "warn" if cust_oport > 0 else "")
                     + "</div>",
                     unsafe_allow_html=True,
                 )
@@ -675,7 +711,9 @@ def main():
         with st.form("add_posicao"):
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                novo_ticker = st.selectbox("Ticker", tickers)
+                novo_ticker = st.selectbox(
+                    "Ticker", tickers, format_func=lambda t: rotulo_seletor(t, notas_ticker)
+                )
             with col2:
                 novo_qty = st.number_input("Quantidade", min_value=1, value=10, step=1)
             with col3:
@@ -683,10 +721,14 @@ def main():
             with col4:
                 novo_data = st.date_input("Data Compra", value=date.today())
             if st.form_submit_button("Adicionar", type="primary"):
-                save_carteira_posicao(novo_ticker, novo_qty, novo_preco, novo_data)
-                load_carteira_db.clear()
-                st.success(f"Posição adicionada: {novo_qty}x {novo_ticker} a R$ {novo_preco:.2f}")
-                st.rerun()
+                erros = validar_posicao(novo_ticker, novo_qty, novo_preco, load_tickers_existentes())
+                if erros:
+                    st.error("Posição não gravada: " + "; ".join(erros))
+                else:
+                    save_carteira_posicao(novo_ticker, int(novo_qty), novo_preco, novo_data)
+                    load_carteira_db.clear()
+                    set_flash(f"Posição adicionada: {novo_qty}x {novo_ticker} a R$ {novo_preco:.2f}")
+                    st.rerun()
 
         st.divider()
 
@@ -700,18 +742,27 @@ def main():
             try:
                 df_csv = pd.read_csv(csv_file)
                 records, source = normalize_carteira_csv(df_csv, default_date=date.today())
-                for row in records:
-                    save_carteira_posicao(
-                        row["ticker"], row["quantidade"],
-                        row["preco_medio"], row["data_compra"],
-                    )
-                if source == "broker_export":
-                    st.warning("CSV sem data de compra original: foi usada a data de hoje como placeholder.")
-                st.success(f"{len(records)} posições importadas com sucesso!")
-                load_carteira_db.clear()
-                st.rerun()
+                erros = validar_registros(records, load_tickers_existentes())
+                if not records:
+                    erros = ["arquivo sem posicoes"]
             except Exception as e:
-                st.error(f"Erro ao processar CSV: {e}")
+                records, source, erros = [], None, [str(e)]
+            if erros:
+                st.error("CSV rejeitado (nenhuma posição foi gravada):\n\n" + "\n".join(f"- {e}" for e in erros))
+            else:
+                if source == "broker_export":
+                    st.warning("CSV sem data de compra original: será usada a data de hoje como placeholder.")
+                st.caption(f"{len(records)} posições válidas no arquivo.")
+                # Botao evita reimportar a cada rerun (o arquivo continua no uploader).
+                if st.button("Importar posições do CSV", type="primary"):
+                    for row in records:
+                        save_carteira_posicao(
+                            row["ticker"], row["quantidade"],
+                            row["preco_medio"], row["data_compra"],
+                        )
+                    load_carteira_db.clear()
+                    set_flash(f"{len(records)} posições importadas com sucesso!")
+                    st.rerun()
 
         st.divider()
 
@@ -729,7 +780,7 @@ def main():
                 pos_id = int(to_delete.split(":")[0].replace("ID ", ""))
                 delete_carteira_posicao(pos_id)
                 load_carteira_db.clear()
-                st.success("Posição removida!")
+                set_flash("Posição removida!")
                 st.rerun()
         else:
             st.info("Nenhuma posição para remover.")

@@ -1,0 +1,85 @@
+=== E1. FM multivariado (EXPLORATORIO), alvo ex_h, preditores = rank cs ===
+h=1 (sem dygap_pct)
+       x  coef_pct   t_nw  p_prim  T
+x_pvp_cs    -0.662 -0.976   0.334 51
+  x_dvp6     0.347  1.276   0.208 51
+   x_vol    -1.437 -5.121   0.000 51
+   x_liq    -0.446 -2.059   0.045 51
+  x_mom3    -0.557 -1.514   0.136 51
+ x_saude    -0.235 -1.046   0.301 51
+h=3 (sem dygap_pct)
+       x  coef_pct   t_nw  p_prim  T
+x_pvp_cs    -0.773 -0.546   0.593 49
+  x_dvp6     1.433  2.908   0.011 49
+   x_vol    -3.680 -4.889   0.000 49
+   x_liq    -1.971 -3.779   0.002 49
+  x_mom3    -1.704 -2.187   0.045 49
+ x_saude    -0.200 -0.304   0.765 49
+h=6 (sem dygap_pct)
+       x  coef_pct   t_nw  p_prim  T
+x_pvp_cs    -1.782 -0.898   0.404 46
+  x_dvp6     2.968  1.914   0.104 46
+   x_vol    -6.673 -4.655   0.003 46
+   x_liq    -4.282 -3.080   0.022 46
+  x_mom3    -1.412 -1.294   0.243 46
+ x_saude     0.222  0.143   0.891 46
+h=1 com dygap_pct + dy12 + base
+          x  coef_pct   t_nw  p_prim  T
+   x_pvp_cs    -0.157 -0.348   0.730 40
+     x_dvp6     0.440  1.155   0.255 40
+      x_vol    -1.498 -3.723   0.001 40
+      x_liq    -0.593 -1.990   0.054 40
+     x_mom3    -0.366 -1.195   0.239 40
+    x_saude     0.146  0.437   0.665 40
+x_dygap_pct     1.322  5.093   0.000 40
+     x_dy12    -0.310 -0.665   0.510 40
+
+=== E2. pvp_pct com minimo 63 obs (sistema) em vez de 252 ===
+1 coef -0.35% t -0.99 p_prim 0.327 T 54
+3 coef -0.72% t -0.77 p_prim 0.453 T 52
+6 coef -0.30% t -0.24 p_prim 0.817 T 49
+12 coef 1.00% t 0.43 p_prim 0.711 T 43
+
+=== E3. FM com log(P/VP) padronizado cross-section (nivel) ===
+1 coef por 1 DP: 0.09% t 0.42 p_prim 0.674
+3 coef por 1 DP: 0.23% t 0.41 p_prim 0.685
+6 coef por 1 DP: 0.56% t 0.76 p_prim 0.470
+12 coef por 1 DP: 0.23% t 0.22 p_prim 0.845
+
+=== E4. dy12 (nivel bruto, por 1 pp de DY) ===
+1 coef por +1pp DY12m: -0.036% t -0.64 p_prim 0.524 T 43
+3 coef por +1pp DY12m: -0.195% t -1.25 p_prim 0.236 T 41
+6 coef por +1pp DY12m: -0.436% t -1.50 p_prim 0.193 T 38
+12 coef por +1pp DY12m: -0.677% t -1.30 p_prim 0.416 T 32
+
+=== E5. composicao: iliquidos (<500k) e idade ===
+share iliquido por ano: {2022: 0.217, 2023: 0.185, 2024: 0.128, 2025: 0.191, 2026: 0.154}  tickers distintos iliquidos: 54  obs: 901
+iliquidos: share com idade<730d: 0.437  | liquidos: 0.278
+top tickers iliquidos: {'GAME11': 53, 'RBFM11': 37, 'XPIN11': 34, 'SNFF11': 33, 'RPRI11': 33, 'VRTM11': 33, 'WHGR11': 32, 'KCRE11': 32, 'SPXS11': 31, 'HSAF11': 31}
+h=3 iliq: excesso medio 0.82% t_nw 4.05 (T=52)
+h=3 jovem<730d: excesso medio -0.32% t_nw -1.91 (T=52)
+h=3 velho>=730d: excesso medio 0.10% t_nw 1.47 (T=44)
+h=6 iliq: excesso medio 1.90% t_nw 4.30 (T=49)
+h=6 jovem<730d: excesso medio -0.85% t_nw -2.65 (T=49)
+h=6 velho>=730d: excesso medio 0.28% t_nw 2.41 (T=41)
+
+=== E6. Vies de sobrevivencia: o que o banco mostra ===
+tickers com preco: 110  com ultimo preco antes de 2026-11-01: 1 ['HSRE11']
+tickers por ano de entrada (1o preco): {2007: 1, 2009: 1, 2011: 1, 2012: 1, 2014: 10, 2015: 1, 2017: 7, 2018: 8, 2019: 16, 2020: 15, 2021: 4, 2022: 12, 2023: 10, 2024: 22, 2025: 1}
+              t        r1        r3  r6  ex6
+1824 2026-01-30 -0.052540 -0.202211 NaN  NaN
+1825 2026-02-27 -0.041212 -0.139518 NaN  NaN
+1826 2026-03-31 -0.121778       NaN NaN  NaN
+1827 2026-04-30  0.021915       NaN NaN  NaN
+HSRE11 ultimas linhas com r6 valido: 40 de 46
+universo (IFIX 2026-06-11) = 107; tickers no painel que nao estao no universo: ['GAME11', 'HREC11', 'HSRE11']
+
+=== E7. Dispersao cross-section (para dimensionar efeito) ===
+h=1: DP cross-section medio do retorno = 3.68% ; media EW por periodo = 0.54% ; CDI = 1.03%
+h=3: DP cross-section medio do retorno = 6.27% ; media EW por periodo = 1.89% ; CDI = 3.13%
+h=6: DP cross-section medio do retorno = 8.59% ; media EW por periodo = 3.96% ; CDI = 6.33%
+h=12: DP cross-section medio do retorno = 12.74% ; media EW por periodo = 9.54% ; CDI = 12.95%
+
+=== E8. Nivel de mercado (NAO inferencial): P/VP medio EW em t vs retorno EW futuro ===
+{'pvp': 1.0, 'r6': -0.53, 'r12': -0.63, 'r3': -0.29}  n meses: 43  (6m: ~8 periodos independentes; 12m: ~3,6)
+P/VP medio por ano: {2022: 0.923, 2023: 0.917, 2024: 0.908, 2025: 0.839, 2026: 0.831}

@@ -6,6 +6,7 @@ from loguru import logger
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
+from src.fii_analysis.decision.carteira_validacao import tickers_conhecidos
 from src.fii_analysis.data.database import (
     DecisaoLog,
     SnapshotOpportunities,
@@ -24,10 +25,35 @@ def registrar_decisao(
     opportunity_id: int | None = None,
     racional_usuario: str | None = None,
     data: date | None = None,
-) -> DecisaoLog:
-    """Registra uma decisão real tomada pelo investidor na base de dados."""
+) -> tuple[DecisaoLog | None, list[str]]:
+    """Registra uma decisão real tomada pelo investidor na base de dados.
+
+    Devolve ``(decisao, avisos)``. Nao levanta excecao por dado ruim: se o ticker nao
+    existe (tickers/universo) ou se ja ha decisao com o mesmo ``opportunity_id`` na mesma
+    ``data``, NADA e gravado e vem ``(None, [aviso])``.
+    """
     if data is None:
         data = date.today()
+
+    avisos: list[str] = []
+    conhecidos = tickers_conhecidos(session)
+    for t in (ticker_vendido, ticker_comprado):
+        if t and t.strip().upper() not in conhecidos:
+            avisos.append(f"Ticker {t} nao existe na base (tickers/universo) — decisao NAO registrada.")
+    if opportunity_id is not None:
+        ja = session.execute(
+            select(func.count()).select_from(DecisaoLog)
+            .where(DecisaoLog.opportunity_id == opportunity_id, DecisaoLog.data == data)
+        ).scalar_one()
+        if ja:
+            avisos.append(
+                f"Oportunidade {opportunity_id} ja registrada em {data.isoformat()} "
+                "(duplicata?) — decisao NAO registrada."
+            )
+    if avisos:
+        for a in avisos:
+            logger.warning(a)
+        return None, avisos
 
     tipo_upper = tipo.upper()
     if tipo_upper not in ["COMPRA", "VENDA", "ROTACAO", "IGNORADA"]:
@@ -48,7 +74,7 @@ def registrar_decisao(
     logger.info(
         f"Decisão registrada: {tipo_upper} | Vendido: {ticker_vendido} | Comprado: {ticker_comprado} | Qtd: {quantidade} | Preço: {preco}"
     )
-    return decisao
+    return decisao, avisos
 
 
 def get_fechamento_on_or_before(session: Session, ticker: str, dt: date) -> float | None:
@@ -81,7 +107,7 @@ def calcular_retornos_ex_post(
     dias_horizonte: int = 90,
     data_base: date | None = None,
 ) -> list[dict[str, Any]]:
-    """Calcula o retorno acumulado das rotações recomendadas em snapshot_opportunities
+    """Calcula o retorno acumulado das rotações listadas (descritivas) em snapshot_opportunities
 
     no período [T, T + dias_horizonte] comparado ao XFIX11.
     """

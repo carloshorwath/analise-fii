@@ -9,7 +9,8 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.aviso_ui import render_aviso_evidencia
+from app.components.carteira_ui import load_seletor_info, rotulo_seletor
 from app.components.page_content import analise_fii, fund_eventstudy, fundamentos
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
@@ -31,10 +32,11 @@ def main():
         "Selecione o ticker no topo. As 5 abas cobrem todo o ciclo de investigacao "
         "sem sub-abas aninhadas — cada aba abre diretamente no conteudo."
     )
+    render_aviso_evidencia()
 
-    tickers = load_tickers_ativos()
+    tickers, notas = load_seletor_info()
     if not tickers:
-        st.warning("Nenhum ticker ativo encontrado.")
+        st.warning("Nenhum ticker encontrado.")
         st.stop()
 
     # — Ticker persistente no session_state —
@@ -46,8 +48,11 @@ def main():
         tickers,
         index=tickers.index(st.session_state.dossie_ticker),
         key="dossie_ticker_select",
+        format_func=lambda t: rotulo_seletor(t, notas),
     )
     st.session_state.dossie_ticker = ticker
+    if ticker in notas:
+        st.warning(f"{ticker}: {notas[ticker]}. Os indicadores abaixo podem estar defasados.")
 
     # — Seletor de período (afeta Valuation e Preço & Volume) —
     PERIODOS = ["1m", "6m", "1a", "YTD", "2a", "3a", "Max"]

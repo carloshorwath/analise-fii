@@ -137,8 +137,9 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
 
     # — Sinal do dia (snapshot) —
     try:
-        from app.components.snapshot_ui import load_decisions_snapshot
-        snap_meta, dec_df = load_decisions_snapshot("curado")
+        from app.components.aviso_ui import rotulo_acao
+        from app.components.snapshot_ui import load_universo_snapshot
+        snap_meta, _, _, dec_df = load_universo_snapshot(None)
         if not dec_df.empty and "ticker" in dec_df.columns:
             row = dec_df[dec_df["ticker"] == ticker]
             if not row.empty:
@@ -170,8 +171,8 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
                 if snap_meta and snap_meta.get("data_referencia"):
                     snap_data = f" &nbsp;<small style='color:#888'>(ref: {snap_meta['data_referencia'].strftime('%d/%m/%Y')})</small>"
                 st.markdown(
-                    f"**Sinal do dia:** "
-                    f"<span style='color:{cor};font-weight:800;font-size:1.05em'>{acao}</span>"
+                    f"**Leitura do dia (descritiva):** "
+                    f"<span style='color:{cor};font-weight:800;font-size:1.05em'>{rotulo_acao(acao)}</span>"
                     f" &nbsp;·&nbsp; Concordância: {conc_icon} {conc}{nota}{snap_data}",
                     unsafe_allow_html=True,
                 )
@@ -194,7 +195,7 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
     st.markdown("---")
 
     # — Radar 4 critérios —
-    st.subheader("Critérios de Radar")
+    st.subheader("Critérios de Radar (3) e regime de mercado")
     pvp_thr = get_threshold("pvp_percentil_barato", 30)
     dy_gap_thr = get_threshold("dy_gap_percentil_caro", 70)
     piso = get_piso_liquidez()
@@ -204,13 +205,16 @@ def render_visao_geral(ticker: str, dados: dict, *, key_prefix: str = "afii") ->
     _badge(r1, f"P/VP < {pvp_thr}%",
            pvp_pct_val is not None and pvp_pct_val < pvp_thr,
            f"{pvp_pct_val:.1f}%" if pvp_pct_val is not None else "n/d")
-    _badge(r2, f"DY Gap > {dy_gap_thr}%",
-           dy_gap_pct is not None and dy_gap_pct > dy_gap_thr,
-           f"{dy_gap_pct:.1f}%" if dy_gap_pct is not None else "n/d")
-    _badge(r3, "Saude OK",
+    _badge(r2, "Saude OK",
            not saude["destruicao"]["destruicao"], "")
-    _badge(r4, "Liquidez OK",
+    _badge(r3, "Liquidez OK",
            vol_medio is not None and vol_medio >= piso, "")
+    # DY Gap e indicador de regime de mercado, fora da contagem do radar (3 criterios)
+    dy_alto = dy_gap_pct is not None and dy_gap_pct > dy_gap_thr
+    r4.metric(f"Regime de mercado: DY Gap > p{dy_gap_thr}",
+              "ALTO" if dy_alto else "NAO ALTO",
+              delta=f"{dy_gap_pct:.1f}%" if dy_gap_pct is not None else None,
+              delta_color="off")
 
     if preco_info:
         st.caption(
@@ -364,14 +368,13 @@ def render_saude(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
         # Interpretação textual
         if gravidade == "em_recuperacao":
             st.info(
-                "💡 **Possível oportunidade:** A gestão está revertendo a destruição de capital. "
-                "O VP/cota mostra sinais de recuperação nos últimos meses. "
-                "Combine com valuation (P/VP baixo) e liquidez para avaliar entrada."
+                "💡 **Em recuperação:** o VP/cota mostra sinais de recuperação nos últimos meses, "
+                "após período de destruição de capital. Descrição do estado atual, não indica retorno futuro."
             )
         elif gravidade == "critica":
             st.error(
-                "⚠️ **Alto risco:** Destruição de capital ativa e agravante. "
-                "O VP/cota continua em queda severa. Considere evitar ou sair da posição."
+                "⚠️ **Alerta de risco:** destruição de capital ativa — "
+                "o VP/cota continua em queda severa (veja a inclinação em %/mês acima)."
             )
         elif gravidade == "alerta":
             st.warning(
@@ -446,17 +449,20 @@ def render_composicao(ticker: str, dados: dict, *, key_prefix: str = "afii") -> 
         c1a, c1b = st.columns(2)
         c1a.metric("% Imoveis",
                     f"{comp['pct_imoveis']:.1%}" if comp.get("pct_imoveis") is not None else "n/d")
-        c1b.metric("% Recebiveis (Titulos)",
-                    f"{comp['pct_recebiveis']:.1%}" if comp.get("pct_recebiveis") is not None else "n/d")
+        c1b.metric("% Part. em sociedades imob.",
+                    f"{comp['pct_sociedades_imobiliarias']:.1%}" if comp.get("pct_sociedades_imobiliarias") is not None else "n/d")
         c1c, c1d = st.columns(2)
-        c1c.metric("% Caixa e Liquidez",
+        c1c.metric("% Recebiveis (Titulos)",
+                    f"{comp['pct_recebiveis']:.1%}" if comp.get("pct_recebiveis") is not None else "n/d")
+        c1d.metric("% Caixa e Liquidez",
                     f"{comp['pct_caixa']:.1%}" if comp.get("pct_caixa") is not None else "n/d")
-        c1d.metric("% Outros Invest.",
-                    f"{comp['pct_investimentos']:.1%}" if comp.get("pct_investimentos") is not None else "n/d")
         c1e, c1f = st.columns(2)
-        c1e.metric("% Valores a Receber",
+        c1e.metric("% Outros Invest.",
+                    f"{comp['pct_investimentos']:.1%}" if comp.get("pct_investimentos") is not None else "n/d")
+        c1f.metric("% Valores a Receber",
                     f"{comp['pct_valores_receber']:.1%}" if comp.get("pct_valores_receber") is not None else "n/d")
-        c1f.metric("% Outros",
+        c1g, _ = st.columns(2)
+        c1g.metric("% Outros",
                     f"{comp['pct_outros']:.1%}" if comp.get("pct_outros") is not None else "n/d")
         if comp.get("ativo_total"):
             st.metric("Ativo Total", format_currency(comp["ativo_total"]))
@@ -479,6 +485,8 @@ def render_datas_com(ticker: str, dados: dict, *, key_prefix: str = "afii") -> N
     """Tab Datas-Com: próximas datas com e valor por cota."""
     proximas = dados["proximas"]
 
+    ref = str(dados.get("ultimo") or "")
+    proximas = [p for p in (proximas or []) if str(p["data_com"]) >= ref]
     if proximas:
         for p in proximas:
             valor = f"R$ {p['valor_cota']:.4f}" if p["valor_cota"] else "n/d"
@@ -488,7 +496,7 @@ def render_datas_com(ticker: str, dados: dict, *, key_prefix: str = "afii") -> N
 
 
 def render_radar_check(ticker: str, dados: dict, *, key_prefix: str = "afii") -> None:
-    """Tab Radar: 4 critérios booleanos detalhados."""
+    """Tab Radar: critérios booleanos detalhados (DY Gap = regime)."""
     pvp_pct_val = dados["pvp_pct_val"]
     jan_val = dados["jan_val"]
     destruicao = dados["destruicao"]

@@ -184,8 +184,8 @@ def render_pl_cotas(ticker: str, *, key_prefix: str = "fund") -> None:
     ), secondary_y=False)
     fig.add_trace(go.Scatter(
         x=pl_df["data_referencia"],
-        y=pl_df["cotas_emitidas"],
-        mode="lines+markers", name="Cotas Emitidas",
+        y=pl_df["cotas_emitidas"],  # ajustado a splits (base atual)
+        mode="lines+markers", name="Cotas (base atual)",
         line=dict(color="#ef553b"),
     ), secondary_y=True)
     fig.update_layout(
@@ -253,7 +253,7 @@ def render_risco_retorno(ticker: str, *, key_prefix: str = "fund") -> None:
     c2.metric("Beta vs IFIX", f"{beta:.2f}" if beta is not None else "n/d",
               help="Cov(FII, IFIX) / Var(IFIX) nos ultimos 252 pregoes.")
     c3.metric("Max Drawdown", format_pct(mdd) if mdd is not None else "n/d",
-              help="Maior queda pico-a-vale nos ultimos 504 pregoes (preco ajustado)")
+              help="Maior queda pico-a-vale nos ultimos 504 pregoes (fechamento_aj: retorno total, dividendo reinvestido)")
     c4, c5, c6 = st.columns(3)
     liq_fmt = (f"R$ {liq / 1e6:,.1f} mi" if liq is not None and liq >= 1e6
                else f"R$ {liq / 1e3:,.0f} k" if liq is not None and liq >= 1e3
@@ -280,7 +280,7 @@ def _render_risco_from_snapshot(rm: dict) -> None:
               help="Cov(R_FII, R_IFIX) / Var(R_IFIX). Requer dados IFIX no banco (benchmark_diario).")
     mdd = rm.get("max_drawdown")
     c3.metric("Max Drawdown (2a)", f"{mdd:.1%}" if mdd is not None else "n/d",
-              help="Maior queda pico-a-vale nos ultimos 504 pregoes (fechamento ajustado).")
+              help="Maior queda pico-a-vale nos ultimos 504 pregoes (fechamento_aj: retorno total, dividendo reinvestido).")
 
     c4, c5, c6 = st.columns(3)
     liq = rm.get("liquidez_21d_brl")

@@ -66,3 +66,14 @@ def safe_page(func):
             st.caption("Verifique se os dados estao atualizados via CLI: `fii update-prices` (uso diario) ou `python scripts/load_database.py` (carga inicial)")
             render_footer()
     return wrapper
+
+
+def set_flash(msg: str, kind: str = "success") -> None:
+    """Guarda mensagem para ser exibida apos st.rerun() (o st.success direto e descartado)."""
+    st.session_state["_flash"] = (kind, msg)
+
+
+def show_flash() -> None:
+    item = st.session_state.pop("_flash", None)
+    if item:
+        getattr(st, item[0])(item[1])

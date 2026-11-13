@@ -19,11 +19,11 @@ def main():
     render_sidebar_guide("Walk-Forward", "Auditar")
     render_page_header(
         "Walk-Forward",
-        "Validacao out-of-sample com separacao temporal genuina, acompanhada de simulacao operacional coerente com a regra BUY→SELL.",
+        "Validacao out-of-sample com separacao temporal genuina, acompanhada de simulacao historica da regra BUY→SELL.",
         "Auditar",
     )
     render_inline_note(
-        "A leitura prioritaria desta tela e a simulacao operacional. A aba estatistica continua disponivel para validar a qualidade do sinal OOS."
+        "A aba estatistica mostra se o sinal OOS se distingue da deriva do ativo; a simulacao e apenas historica."
     )
 
     render(key_prefix="wf_page")

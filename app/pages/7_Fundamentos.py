@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_seletor_info, rotulo_seletor
 from app.components.page_content.fundamentos import render
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
@@ -29,12 +29,14 @@ def main():
         "A ordem desta pagina foi ajustada para sair de sustentabilidade da distribuicao e avancar para patrimonio, deixando series historicas complementares depois."
     )
 
-    tickers = load_tickers_ativos()
+    tickers, notas = load_seletor_info()
     if not tickers:
-        st.warning("Nenhum ticker ativo encontrado.")
+        st.warning("Nenhum ticker encontrado.")
         st.stop()
 
-    ticker = st.selectbox("Selecione o FII:", tickers)
+    ticker = st.selectbox("Selecione o FII:", tickers, format_func=lambda t: rotulo_seletor(t, notas))
+    if ticker in notas:
+        st.warning(f"{ticker}: {notas[ticker]}. Os indicadores abaixo podem estar defasados.")
     render(ticker, key_prefix="fund_page")
     render_footer()
 

@@ -290,7 +290,9 @@ def diario(
         get_session_ctx, get_latest_ready_snapshot_run,
         SnapshotDecisions, SnapshotTickerMetrics, SnapshotRun,
     )
-    from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown
+    from src.fii_analysis.evaluation.daily_diff import (
+        calcular_diff_diario, precos_desatualizados, render_diff_markdown,
+    )
     from src.fii_analysis.decision.suporte import restaurar_de_rationale, rotulo_sinal
     import json as _json
     from sqlalchemy import select
@@ -330,6 +332,7 @@ def diario(
         ).scalars().all()
         for m in metrics_rows:
             metrics_map[m.ticker] = m
+        defasado = precos_desatualizados(session)
 
     ts = run.finalizado_em.strftime("%d/%m/%Y %H:%M") if run.finalizado_em else "?"
     console.print(f"\n[bold]Cockpit do Dia — snapshot {ts}[/bold]\n")
@@ -381,7 +384,10 @@ def diario(
     console.print("[dim](info) = sinal sem suporte estatistico (n/p insuficientes): exibido, mas nao vota.[/dim]")
     for linha in bloqueios:
         console.print(f"[yellow]{linha}[/yellow]")
-    console.print("[dim]Execute 'fii update-prices' para atualizar os dados.[/dim]\n")
+    if defasado:
+        console.print("[dim]Execute 'fii update-prices' para atualizar os dados.[/dim]\n")
+    else:
+        console.print()
 
 
 @app.command()
@@ -414,7 +420,7 @@ def oportunidades():
     console.print(f"\n[bold]Oportunidades de Rotação — snapshot {ts}[/bold]\n")
 
     if not opps:
-        console.print("[green]Nenhuma oportunidade acionável hoje.[/green]\n")
+        console.print("[green]Nenhum par de rotação (descritivo) hoje.[/green]\n")
         return
 
     table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold green")
@@ -483,7 +489,7 @@ def registrar_decisao_cli(
             if ticker_para_preco:
                 preco = get_fechamento_on_or_before(session, ticker_para_preco, ref_date)
 
-        registrar_decisao(
+        _, avisos = registrar_decisao(
             session=session,
             tipo=tipo,
             ticker_vendido=vender.upper() if vender else None,
@@ -494,6 +500,10 @@ def registrar_decisao_cli(
             racional_usuario=racional,
             data=ref_date,
         )
+        if avisos:
+            for a in avisos:
+                console.print(f"[yellow]{a}[/yellow]")
+            raise typer.Exit(1)
         console.print("[green]Decisão registrada com sucesso![/green]")
 
 
@@ -501,7 +511,7 @@ def registrar_decisao_cli(
 def review(
     periodo: int = typer.Option(90, "--periodo", help="Período de avaliação em dias (ex: 30, 60, 90)"),
 ):
-    """Exibe relatório ex-post de assertividade das rotações recomendadas vs XFIX11."""
+    """Exibe relatório ex-post de desempenho ex-post dos pares de rotação listados (descritivos) vs XFIX11."""
     from rich.console import Console
     from rich.table import Table
     from rich import box

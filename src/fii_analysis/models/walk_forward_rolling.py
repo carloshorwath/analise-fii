@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from src.fii_analysis.data.database import CdiDiario, Dividendo
 from src.fii_analysis.models.episodes import get_pvp_series
+from src.fii_analysis.models.teste_excesso import excesso_vs_deriva
 from src.fii_analysis.models.trade_simulator import simulate_trades, simulate_buy_and_hold
 
 
@@ -66,6 +67,8 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
 
     # Forward return
     df["fwd_ret"] = df["fechamento_aj"].shift(-forward_days) / df["fechamento_aj"] - 1.0
+    if "ret_total_ok" in df.columns:  # retorno total so valido a partir de INICIO_RETORNO_TOTAL
+        df.loc[~df["ret_total_ok"].astype(bool), "fwd_ret"] = np.nan
 
     # Split em janelas
     train_days = train_months * 21  # ~21 uteis/mes
@@ -133,6 +136,10 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
     cdi_df = _load_cdi_series(session, signals_df["data"].min(), signals_df["data"].max())
     div_df = _load_dividend_series(ticker, session, signals_df["data"].min(), signals_df["data"].max())
 
+    # Deriva = media incondicional do fwd_ret sobre TODOS os dias OOS elegiveis
+    # (BUY + SELL + NEUTRO) do periodo de avaliacao — hipotese nula do teste.
+    deriva = float(signals_df["fwd_ret"].dropna().mean())
+
     # Summary por tipo de sinal — thinning REAL para independencia
     summary = {}
     for sig in ["BUY", "SELL", "NEUTRO"]:
@@ -161,16 +168,18 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
             ci_lower = float(np.percentile(boot, 2.5))
             ci_upper = float(np.percentile(boot, 97.5))
 
-        # t-test sobre observacoes independentes
-        t_stat, p_value = None, None
-        if n_eff >= 5:
-            t_stat, p_value = float(stats.ttest_1samp(thinned_rets, 0.0)[0]), float(stats.ttest_1samp(thinned_rets, 0.0)[1])
+        # t-test do EXCESSO sobre a deriva, observacoes independentes, unicaudal
+        # na direcao do sinal (NEUTRO: bicaudal, descritivo) — ver decision/suporte.py
+        teste = excesso_vs_deriva(thinned_rets, deriva, sig)
+        t_stat, p_value = teste["t_stat"], teste["p_value"]
 
         summary[sig] = {
             "n": n_raw,
             "n_effective": n_eff,
             "mean": mean_r,
             "mean_raw": float(np.mean(rets)),
+            "drift": deriva,
+            "excess": (mean_r - deriva) if mean_r is not None else None,
             "median": float(np.median(thinned_rets)) if n_eff > 0 else None,
             "std": float(np.std(thinned_rets, ddof=1)) if n_eff >= 2 else None,
             "win_rate": float(np.mean(thinned_rets > 0)) if n_eff > 0 else None,
@@ -256,7 +265,8 @@ def walk_forward_roll(ticker, session, train_months=18, predict_months=1,
 
     return {
         "signals": signals_df,
-        "summary": summary,
+        "summary": summary,  # por sinal: n_effective, mean, drift (deriva), excess, p_value
+        "deriva": deriva,
         "comparison": comparison,
         "cumulative": {
             "follow_buy": cum_buy,

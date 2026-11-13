@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -72,8 +74,40 @@ def _tickers_do_scope(session, scope: str) -> set[str] | None:
         return None
 
 
+try:
+    from src.fii_analysis.features.radar import RADAR_N_CRITERIOS
+except ImportError:  # backend ainda sem a constante: radar de 3 criterios
+    RADAR_N_CRITERIOS = 3
+
+_TZ_SP = ZoneInfo("America/Sao_Paulo")
+_FECHAMENTO_B3_MIN = 18 * 60 + 30  # depois disso o pregao do dia ja fechou
+
+
+def _utc_para_local(ts: datetime | None) -> datetime | None:
+    """finalizado_em e gravado em UTC (naive); devolve hora de Sao Paulo (naive)."""
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(_TZ_SP).replace(tzinfo=None)
+
+
+def snapshot_desatualizado(data_ref: date) -> bool:
+    """Desatualizado = anterior ao ultimo pregao B3 ja encerrado (nao dia corrido)."""
+    try:
+        from src.fii_analysis.evaluation.daily_diff import ultimo_pregao
+
+        agora = datetime.now(_TZ_SP)
+        depois_fechamento = agora.hour * 60 + agora.minute >= _FECHAMENTO_B3_MIN
+        ref = agora.date() if depois_fechamento else agora.date() - timedelta(days=1)
+        alvo = ultimo_pregao(ref)
+    except Exception:
+        return data_ref < date.today()
+    return alvo is not None and data_ref < alvo
+
+
 def _run_to_meta(run: SnapshotRun) -> dict:
-    ts = run.finalizado_em
+    ts = _utc_para_local(run.finalizado_em)
     return {
         "run_id": run.id,
         "data_referencia": run.data_referencia,
@@ -82,7 +116,7 @@ def _run_to_meta(run: SnapshotRun) -> dict:
         "finalizado_em": ts,
         "carteira_hash": run.carteira_hash,
         "tickers_falhos": json.loads(run.tickers_falhos) if run.tickers_falhos else [],
-        "is_stale": run.data_referencia < date.today(),
+        "is_stale": snapshot_desatualizado(run.data_referencia),
         # Focus BCB
         "focus_data_referencia": getattr(run, "focus_data_referencia", None),
         "focus_coletado_em": getattr(run, "focus_coletado_em", None),
@@ -206,7 +240,13 @@ def load_radar_snapshot(scope: str = "curado") -> tuple[dict | None, pd.DataFram
             }
             for r in rows
         ]
-        return meta, pd.DataFrame(records)
+        df = pd.DataFrame(records)
+        # Radar de 3 criterios: dy_gap_alto e "regime de mercado", fora da contagem.
+        # Recalculado aqui para snapshots antigos (que contavam 4).
+        df["vistos"] = (
+            df["pvp_baixo"].astype(int) + df["saude_ok"].astype(int) + df["liquidez_ok"].astype(int)
+        )
+        return meta, df
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -437,6 +477,89 @@ def load_opportunities_snapshot() -> tuple[dict | None, pd.DataFrame]:
             for r in rows
         ]
         return meta, pd.DataFrame(records)
+
+
+# ---------------------------------------------------------------------------
+# Universo exibido (carteira U curados, ou IFIX inteiro) -- snapshot-first
+# ---------------------------------------------------------------------------
+
+
+def tickers_universo_exibido(carteira_tickers) -> list[str]:
+    """Carteira (inclusive inativos) U curados."""
+    from src.fii_analysis.config import TICKERS
+
+    return sorted(set(TICKERS) | set(carteira_tickers))
+
+
+def load_universo_snapshot(tickers: tuple[str, ...] | None):
+    """(meta, panorama_df, radar_df, decisions_df) do snapshot, sem recalculo ao vivo.
+
+    tickers=None -> universo IFIX inteiro do snapshot; senao filtra para a lista.
+    Le o run 'ifix' (superset) e cai para 'curado' se nao houver.
+    """
+    out = []
+    for loader in (load_panorama_snapshot, load_radar_snapshot, load_decisions_snapshot):
+        meta, df = loader("ifix")
+        if meta is None:
+            meta, df = loader("curado")
+        if tickers is not None and not df.empty:
+            df = df[df["ticker"].isin(tickers)].reset_index(drop=True)
+        out.append((meta, df))
+    return out[0][0], out[0][1], out[1][1], out[2][1]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_ultima_data_preco(tickers: tuple[str, ...]) -> dict[str, date]:
+    """Data do ultimo preco de cada ticker (para sinalizar preco parado)."""
+    from src.fii_analysis.data.database import get_ultimo_preco_date
+
+    with get_session_ctx() as session:
+        return {t: d for t in tickers if (d := get_ultimo_preco_date(t, session)) is not None}
+
+
+def hash_da_carteira(holdings: list[dict]) -> str | None:
+    from src.fii_analysis.evaluation.daily_snapshots import compute_carteira_hash
+
+    return compute_carteira_hash(holdings)
+
+
+def ultima_data_preco_global() -> date | None:
+    from sqlalchemy import func
+    from src.fii_analysis.data.database import PrecoDiario
+
+    with get_session_ctx() as session:
+        return session.execute(select(func.max(PrecoDiario.data))).scalar_one_or_none()
+
+
+def render_carteira_alterada(
+    meta: dict | None, holdings: list[dict], *, ao_vivo: bool = False
+) -> bool:
+    """Avisa se a carteira atual difere da usada no snapshot. True se avisou."""
+    if not holdings or meta is None:
+        return False
+    if hash_da_carteira(holdings) == meta.get("carteira_hash"):
+        return False
+    ts = meta.get("finalizado_em")
+    ts_str = ts.strftime("%d/%m %H:%M") if ts else "?"
+    efeito = (
+        "os sinais abaixo foram calculados ao vivo para a carteira atual (em cache)."
+        if ao_vivo
+        else "os dados por posicao abaixo refletem a carteira ANTIGA."
+    )
+    st.warning(
+        f"Carteira alterada desde o ultimo snapshot (gerado em {ts_str}): {efeito} "
+        "Para regerar o snapshot, rode `fii update-prices --force` "
+        "(ou `python scripts/generate_daily_snapshots.py --scope ifix --force`)."
+    )
+    return True
+
+
+def sufixo_preco_parado(ticker: str, datas: dict, data_ref: date | None) -> str:
+    """' (preco de DD/MM)' se o ultimo preco do ticker nao e o da data do snapshot."""
+    d = datas.get(ticker)
+    if d is None or data_ref is None or d >= data_ref:
+        return ""
+    return f" (preco de {d.strftime('%d/%m')})"
 
 
 # ---------------------------------------------------------------------------

@@ -6,9 +6,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_tickers_modelo
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.models.walk_forward_rolling import walk_forward_roll
+
+try:
+    from src.fii_analysis.models.teste_excesso import N_MIN_TESTE
+except ImportError:
+    N_MIN_TESTE = 5
 
 WALK_FORWARD_RESULT_VERSION = "buy_sell_dividends_cdi_v6"
 STRATEGY_COLOR = "#2ca02c"
@@ -27,11 +32,11 @@ def render(*, key_prefix: str = "wf") -> None:
     """Renderiza walk-forward (sem header/footer)."""
     st.caption(
         "Validacao out-of-sample genuina: treina em janela rolante, "
-        "prediz o periodo seguinte, avanca. Cada previsao usa somente "
-        "dados passados. Nao ha selecao de parametros viciada."
+        "gera o sinal do periodo seguinte, avanca. Cada sinal usa somente "
+        "dados passados. Descreve o historico; nao prova poder de previsao."
     )
 
-    tickers = load_tickers_ativos()
+    tickers = load_tickers_modelo()
     ticker = st.selectbox("Ticker", tickers, key=f"{key_prefix}_ticker")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -89,7 +94,7 @@ def render(*, key_prefix: str = "wf") -> None:
             f"<span style='color:{cor};font-weight:800;font-size:1.1em'>{sinal}</span> &nbsp;·&nbsp; "
             f"P/VP = {pvp_v:.4f}" + (f" (p{pvp_p:.0f}%)" if pvp_p is not None else "") +
             (f" &nbsp;·&nbsp; Limiar BUY < {thr_b:.4f} · SELL > {thr_s:.4f}" if thr_b is not None else "") +
-            f"<br><small style='color:#888'>Último sinal OOS: {ult_oos} · Extrapolado, sem retorno futuro validado</small>",
+            f"<br><small style='color:#888'>Último sinal OOS: {ult_oos} · Extrapolado; estado atual do indicador, sem retorno futuro validado</small>",
             unsafe_allow_html=True,
         )
         st.markdown("---")
@@ -101,6 +106,23 @@ def render(*, key_prefix: str = "wf") -> None:
 
     with tab_sim:
         _render_simulation_tab(ticker, follow_buy, hold)
+
+
+def _caption_excesso(sx: dict, lado: str) -> None:
+    """Deriva, excesso e p do teste; explica quando o p nao e calculavel."""
+    partes = []
+    if sx.get("drift") is not None and sx.get("excess") is not None:
+        partes.append(f"deriva={sx['drift']*100:+.2f}% | excesso={sx['excess']*100:+.2f}%")
+    p = sx.get("p_value")
+    n_eff = sx.get("n_effective") or 0
+    if p is not None:
+        sig = "Sim" if p < 0.05 else "Nao"
+        partes.append(f"p(excesso, unicaudal)={p:.4f} | significativo: {sig}")
+    elif n_eff < N_MIN_TESTE:
+        partes.append(f"p n/d (n_efetivo={n_eff} < {N_MIN_TESTE})")
+    else:
+        partes.append("p n/d (excesso sem variancia)")
+    st.caption(f"{lado}: " + " | ".join(partes))
 
 
 def _render_oos_tab(signals_df, summary, comparison, ticker):
@@ -130,9 +152,7 @@ def _render_oos_tab(signals_df, summary, comparison, ticker):
             c3.metric("Win Rate", f"{sb['win_rate']:.0%}" if sb.get("win_rate") is not None else "n/d")
             if sb.get("ci_lower") is not None:
                 st.caption(f"IC 95%: [{sb['ci_lower']*100:+.2f}%, {sb['ci_upper']*100:+.2f}%]")
-            if sb.get("p_value") is not None:
-                sig = "Sim" if sb["p_value"] < 0.05 else "Nao"
-                st.caption(f"t-test (thinned): p={sb['p_value']:.4f} | significativo: {sig}")
+            _caption_excesso(sb, "BUY")
 
     with col_s:
         st.markdown("### SELL (out-of-sample)")
@@ -148,9 +168,7 @@ def _render_oos_tab(signals_df, summary, comparison, ticker):
             c3.metric("Win Rate", f"{ss['win_rate']:.0%}" if ss.get("win_rate") is not None else "n/d")
             if ss.get("ci_lower") is not None:
                 st.caption(f"IC 95%: [{ss['ci_lower']*100:+.2f}%, {ss['ci_upper']*100:+.2f}%]")
-            if ss.get("p_value") is not None:
-                sig = "Sim" if ss["p_value"] < 0.05 else "Nao"
-                st.caption(f"t-test (thinned): p={ss['p_value']:.4f} | significativo: {sig}")
+            _caption_excesso(ss, "SELL")
 
     if comparison:
         st.markdown("---")
@@ -216,7 +234,7 @@ def _render_simulation_tab(ticker, follow_buy, hold):
     c1, c2, c3 = st.columns(3)
     c1.metric("Retorno Estratégia", f"{ret_strategy*100:+.2f}%")
     c2.metric("Retorno Buy & Hold", f"{ret_hold*100:+.2f}%")
-    c3.metric("Excesso (Alpha)", f"{excess*100:+.2f}%", delta=f"{excess*100:+.2f}%")
+    c3.metric("Excesso vs Buy & Hold", f"{excess*100:+.2f}%", delta=f"{excess*100:+.2f}%")
 
     st.info(SIMULATION_INFO)
 

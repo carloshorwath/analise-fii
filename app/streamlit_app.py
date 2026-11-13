@@ -33,7 +33,7 @@ def render_home():
         "Entrada",
     )
     render_inline_note(
-        "Comece por Hoje para um veredito diario, Carteira para revisar holdings, "
+        "Comece por Hoje para a leitura diaria dos indicadores, Carteira para revisar holdings, "
         "Panorama para comparar o universo, ou Dossie para investigar um FII em profundidade."
     )
 
@@ -42,17 +42,17 @@ def render_home():
     with col1:
         render_home_card(
             "Diario",
-            "Camada de uso diario para decidir o que merece atencao agora e o que fazer com a carteira.",
+            "Camada de uso diario para ler o estado dos fundos e da carteira (descritivo, sem previsao de retorno).",
             [
-                "Hoje: cockpit operacional do dia",
-                "Carteira: sugestoes sobre holdings",
+                "Hoje: painel descritivo do dia",
+                "Carteira: indicadores sobre holdings",
                 "Panorama e Radar: comparacao rapida do universo",
             ],
         )
     with col2:
         render_home_card(
             "Investigacao",
-            "Camada para ler um fundo com profundidade antes de agir.",
+            "Camada para ler um fundo com profundidade.",
             [
                 "Dossie do FII: valuation + fundamentos + eventos por ticker",
                 "Alertas: historico objetivo do que mudou",
@@ -62,7 +62,7 @@ def render_home():
     with col3:
         render_home_card(
             "Tecnico",
-            "Camada para validar robustez dos sinais e interpretar os modelos com mais cuidado.",
+            "Camada para auditar os sinais e interpretar os modelos com cuidado.",
             [
                 "Laboratorio: Otimizador V2, Episodios e Walk-Forward em abas",
                 "Uso principal: investigacao metodologica, baixa frequencia",
@@ -73,11 +73,11 @@ def render_home():
     st.subheader("Jornada sugerida")
     st.markdown(
         """
-        1. `Hoje` para saber o que merece atencao agora.
-        2. `Carteira` para cruzar holdings com os sinais do dia.
+        1. `Hoje` para ver o estado dos indicadores.
+        2. `Carteira` para cruzar holdings com os indicadores do dia.
         3. `Panorama` e `Radar` para comparar o universo curado.
         4. `Dossie do FII` para aprofundar um nome especifico.
-        5. `Laboratorio` para auditar a robustez dos sinais antes de agir.
+        5. `Laboratorio` para auditar a robustez dos sinais.
         """
     )
 
@@ -91,7 +91,7 @@ home_page = st.Page(render_home, title="Inicio", icon=":material/home:", default
 
 # Diario
 hoje_page = st.Page("pages/13_Hoje.py", title="Hoje", icon=":material/today:")
-oportunidades_page = st.Page("pages/16_Oportunidades.py", title="Oportunidades", icon=":material/compare_arrows:")
+oportunidades_page = st.Page("pages/16_Oportunidades.py", title="Pares de Rotacao", icon=":material/compare_arrows:")
 carteira_page = st.Page("pages/3_Carteira.py", title="Carteira", icon=":material/account_balance_wallet:")
 panorama_page = st.Page("pages/1_Panorama.py", title="Panorama", icon=":material/table_chart:")
 radar_page = st.Page("pages/4_Radar.py", title="Radar", icon=":material/radar:")

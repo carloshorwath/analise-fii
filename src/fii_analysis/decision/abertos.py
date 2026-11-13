@@ -25,6 +25,7 @@ import pandas as pd
 from sqlalchemy import select
 
 from src.fii_analysis.data.database import Dividendo
+from src.fii_analysis.evaluation.daily_diff import ultimo_pregao
 
 
 # =============================================================================
@@ -129,6 +130,17 @@ def _estimar_intervalo_mediano(datas_com: list[date]) -> Optional[int]:
     return int(np.median(diffs))
 
 
+def _como_pregao(d: date) -> date:
+    """Data-com cai em pregao: se ``d`` nao for pregao B3 (fim de semana/feriado), recua
+    ao pregao anterior (data-com costuma ser o ultimo pregao do periodo)."""
+    try:
+        return ultimo_pregao(d) or d
+    except Exception:  # calendario indisponivel: ao menos nao cair em fim de semana
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+
+
 def detectar_janela_captura(
     ticker: str,
     session,
@@ -179,10 +191,10 @@ def detectar_janela_captura(
         return base
     base["intervalo_mediano_dias"] = intervalo
 
-    proxima_estimada = ultima + timedelta(days=intervalo)
-    # Se a estimativa ja passou (atrasou), avanca para a proxima ocorrencia
-    while proxima_estimada < hoje:
-        proxima_estimada += timedelta(days=intervalo)
+    proxima_estimada = _como_pregao(ultima + timedelta(days=intervalo))
+    if proxima_estimada < hoje:
+        # estimativa ja passou (data-com nova ainda nao ingerida): nao ha estimativa valida
+        return base
     base["proxima_data_com_estimada"] = proxima_estimada
 
     dias_ate = (proxima_estimada - hoje).days

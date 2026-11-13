@@ -251,8 +251,12 @@ def test_rotation_opportunities_veto_saude(db_session):
     universo_decisoes = {"MOCK11": d_vender, "MOCK13": d_comprar}
     opps = detectar_oportunidades(db_session, hoje, universo_decisoes=universo_decisoes)
     
-    # Deve ser suprimida devido ao veto
-    assert len(opps) == 0
+    # MUDANCA POR DECISAO (estudo em painel 2026-11-12): destruicao de capital nao exclui mais
+    # o candidato (nao ha evidencia de que a flag antecipe retorno pior) — o par aparece
+    # com ALERTA DE RISCO descritivo no racional.
+    assert len(opps) == 1
+    assert opps[0].comprar == "MOCK13"
+    assert any("ALERTA DE RISCO (descritivo)" in r and "Destruicao ativa" in r for r in opps[0].racional)
 
 
 def test_rotation_opportunities_cooldown(db_session):

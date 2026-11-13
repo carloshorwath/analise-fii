@@ -10,7 +10,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from app.components.charts import car_plot
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_tickers_modelo
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
 from src.fii_analysis.data.database import get_session_ctx
@@ -31,10 +31,10 @@ def main():
         "Auditar",
     )
     render_inline_note(
-        "Use esta pagina para validar se existe efeito ao redor da data-com. Se quiser algo mais operacional, priorize Walk-Forward e Otimizador V2."
+        "Use esta pagina para validar se existe efeito ao redor da data-com. Para os sinais de P/VP, veja Walk-Forward e Otimizador V2."
     )
 
-    tickers = load_tickers_ativos()
+    tickers = load_tickers_modelo()
     if not tickers:
         st.warning("Nenhum ticker ativo encontrado.")
         st.stop()

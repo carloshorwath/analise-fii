@@ -90,7 +90,5 @@ saude:
 # Voto dos sinais (recommender): sinal so conta se tiver suporte estatistico.
 decisao:
   suporte_n_min: 30             # n minimo de eventos independentes fora da amostra
-  suporte_p_max: 0.05           # p-valor corrigido (Bonferroni) maximo
-  testes_episodio: 2            # familia de testes por ticker nos episodios (BUY, SELL)
-  testes_walkforward: 2         # familia de testes por ticker no walk-forward (BUY, SELL)
+  fdr_q: 0.05                   # FDR (Benjamini-Hochberg) sobre a familia = sinais BUY/SELL ativos da rodada
   preco_defasado_dias_uteis: 5  # atraso (pregoes) do ultimo preco vs data de referencia

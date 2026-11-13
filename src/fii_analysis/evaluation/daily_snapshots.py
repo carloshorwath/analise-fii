@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 from sqlalchemy import func, select
@@ -481,8 +482,25 @@ def generate_base_snapshots(
 # =============================================================================
 
 
+def _nativo(val):
+    """numpy int/float/bool -> tipo Python (numpy.int64 vira BLOB no SQLite; NaN vira None)."""
+    if isinstance(val, np.generic):
+        val = val.item()
+    if isinstance(val, float) and val != val:
+        return None
+    return val
+
+
 def serialize_ticker_decision(decision: TickerDecision, run_id: int) -> dict:
-    """Serializa TickerDecision para dict compatível com SnapshotDecisions."""
+    """Serializa TickerDecision para dict compatível com SnapshotDecisions.
+
+    Unico ponto de normalizacao antes de persistir: todo valor passa por ``_nativo``.
+    """
+    row = _serialize_ticker_decision_raw(decision, run_id)
+    return {k: _nativo(v) for k, v in row.items()}
+
+
+def _serialize_ticker_decision_raw(decision: TickerDecision, run_id: int) -> dict:
     return {
         "run_id": run_id,
         "ticker": decision.ticker,

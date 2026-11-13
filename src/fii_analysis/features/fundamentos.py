@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from src.fii_analysis.config_yaml import get_threshold
 from src.fii_analysis.data.database import AtivoPassivo, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker, get_ultimo_preco_date
-from src.fii_analysis.features.indicators import get_pvp, get_pvp_serie
+from src.fii_analysis.features.indicators import get_pvp, get_pvp_serie, get_relatorios_ajustados
 from src.fii_analysis.features.valuation import get_dy_n_meses
 
 
@@ -227,7 +227,22 @@ def get_pl_cotas_historico(ticker: str, cnpj: str | None = None, meses: int = 36
             "vp_por_cota": float(r.vp_por_cota) if r.vp_por_cota is not None else None,
         })
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+    # Serie historica (grafico): cotas e VP/cota na base da quantidade atual de cotas
+    # (split nao vira degrau). Nominais do informe ficam em `*_nominal`.
+    aj = get_relatorios_ajustados(ticker, session, apenas_entregues=False)
+    por_ref = {pd.Timestamp(r.data_referencia): r for r in aj.itertuples(index=False)}
+
+    def _aj(d, col, nominal):
+        r = por_ref.get(pd.Timestamp(d))
+        v = getattr(r, col) if r is not None else None
+        return float(v) if v is not None and pd.notna(v) else nominal
+
+    df["cotas_nominal"] = df["cotas_emitidas"]
+    df["vp_nominal"] = df["vp_por_cota"]
+    df["cotas_emitidas"] = [_aj(d, "cotas_aj", n) for d, n in zip(df["data_referencia"], df["cotas_nominal"])]
+    df["vp_por_cota"] = [_aj(d, "vp_aj", n) for d, n in zip(df["data_referencia"], df["vp_nominal"])]
+    return df
 
 
 def get_alavancagem(ticker: str, cnpj: str | None = None, session=None) -> dict:

@@ -40,7 +40,7 @@ PROMPTS = {
         "system": (
             "Você é um analista sênior de FIIs especialista em alocação tática de portfólio. "
             "Sua missão é avaliar uma oportunidade de rotação relativa de ativos (troca intra-segmento). "
-            "A decisão quantitativa do motor de rotação local propôs vender X para comprar Y. "
+            "O motor de rotação local LISTOU, de forma apenas DESCRITIVA (sem evidência estatística de que antecipe retorno melhor), o par vender X / comprar Y. "
             "Avalie criticamente se essa troca faz sentido do ponto de vista fundamentalista e macro."
         ),
         "user_template": (
@@ -63,7 +63,7 @@ PROMPTS = {
             "### Pergunta Extra do Usuário:\n"
             "{pergunta}\n\n"
             "Gere uma resposta estruturada exatamente nas seguintes seções em Markdown:\n"
-            "1. **Tese de Rotação** (Resumo do porquê a troca é sugerida pelo modelo)\n"
+            "1. **Tese de Rotação** (Resumo do que o par mostra descritivamente — não é previsão de retorno)\n"
             "2. **Comparativo Fundamentalista** (Diferenças qualitativas e de risco entre os dois fundos)\n"
             "3. **Riscos Não Capturados** (Riscos específicos do fundo Y que podem desabonar a compra e não estão nos números)\n"
             "4. **Veredito de Alocação** (Confirmação qualitativa da rotação com base nas premissas)"

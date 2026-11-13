@@ -170,10 +170,17 @@ def build_ticker_context(ticker: str, session) -> dict:
                 .limit(6)
             ).scalars().all()
 
+            # VP/cota na base da quantidade atual de cotas (split nao vira degrau);
+            # o nominal do informe segue em `vp_por_cota`.
+            from src.fii_analysis.features.indicators import get_relatorios_ajustados
+            _aj = get_relatorios_ajustados(ticker, session, apenas_entregues=False)
+            _vp_aj = {pd.Timestamp(x.data_referencia).date(): x.vp_aj for x in _aj.itertuples(index=False) if pd.notna(x.vp_aj)}
+
             for r in reports:
                 context["saude_financeira_6m"].append({
                     "data_referencia": r.data_referencia.isoformat(),
                     "vp_por_cota": _serialize_val(r.vp_por_cota),
+                    "vp_por_cota_ajustado": _serialize_val(_vp_aj.get(r.data_referencia)),
                     "patrimonio_liq": _serialize_val(r.patrimonio_liq),
                     "dy_mes_pct": _serialize_val(r.dy_mes_pct),
                     "rentab_efetiva": _serialize_val(r.rentab_efetiva),

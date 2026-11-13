@@ -102,6 +102,10 @@ class AtivoPassivo(Base):
     contas_receber_aluguel: Mapped[float | None] = mapped_column(Numeric)
     outros_valores_mobliarios: Mapped[float | None] = mapped_column(Numeric)
     ativo_total: Mapped[float | None] = mapped_column(Numeric)
+    # Participacoes em sociedades cuja atividade e permitida a FII (imoveis detidos via SPE).
+    # CVM: Acoes_/Cotas_Sociedades_Atividades_FII. NULL ate a recarga do ativo_passivo.
+    acoes_sociedades_fii: Mapped[float | None] = mapped_column(Numeric)
+    cotas_sociedades_fii: Mapped[float | None] = mapped_column(Numeric)
 
 
 class CdiDiario(Base):
@@ -235,7 +239,7 @@ class SnapshotRadar(Base):
     dy_gap_alto: Mapped[bool | None] = mapped_column(Boolean)
     saude_ok: Mapped[bool | None] = mapped_column(Boolean)
     liquidez_ok: Mapped[bool | None] = mapped_column(Boolean)
-    vistos: Mapped[int | None] = mapped_column(Integer)  # contagem de filtros que passam (0-4)
+    vistos: Mapped[int | None] = mapped_column(Integer)  # contagem de filtros que passam (0-3; RADAR_N_CRITERIOS, sem dy_gap_alto)
     saude_motivo: Mapped[str | None] = mapped_column(Text)
 
 

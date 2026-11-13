@@ -75,7 +75,7 @@ def get_ifix_composition(session: Session) -> list[dict[str, Any]]:
                     
     # Resolve CNPJs
     now = datetime.now(timezone.utc)
-    hoje = now.date()
+    hoje = datetime.now().date()  # data local: a referencia e o dia do operador, nao o dia UTC
     novos_cnpjs = False
     
     out_list = []

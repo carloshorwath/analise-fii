@@ -2,12 +2,17 @@
 
 Produz orientacoes DESCRITIVAS, nao prescritivas:
 
-  HOLD                  — manter posicao
-  AUMENTAR              — sinal COMPRAR + posicao com folga (peso < limite)
-  REDUZIR               — sinal VENDER ou flag de risco em posicao existente
-  SAIR                  — sinal VETADO (EVITAR) com posicao significativa
-  EVITAR_NOVOS_APORTES  — sinal VENDER ou risco com posicao pequena (so para
-                          de aportar, nao precisa zerar)
+  HOLD       — manter posicao (default; inclui posicoes com alerta de risco)
+  AUMENTAR   — sinal COMPRAR COM SUPORTE estatistico + posicao com folga
+  REDUZIR    — sinal VENDER COM SUPORTE estatistico
+
+Criterio: so FATO ou sinal com suporte estatistico gera badge de acao. A flag de
+destruicao de capital e um ALERTA DE RISCO descritivo (vai no racional e em
+flags_resumo; badge continua HOLD): o estudo em painel de 2026-11-12 nao achou
+evidencia de que ela antecipe retorno pior (ver decision/evidencia.py). Os badges
+SAIR e EVITAR_NOVOS_APORTES nao sao mais produzidos (existem so em snapshots
+antigos). Bloqueios factuais (liquidacao, preco parado, sem negocios) so impedem
+AUMENTAR; alertas estruturais de carteira (HHI/top-2) seguem em alertas_estruturais.
 
 Tambem produz alertas estruturais da carteira (concentracao via Herfindahl,
 peso do top-N) — separados dos sinais taticos. Nao mistura "estrutura"
@@ -31,7 +36,6 @@ from src.fii_analysis.decision.recommender import TickerDecision
 
 # Limites default — descritivos (alertas), nao bloqueantes.
 DEFAULT_PESO_MAX_TICKER = 0.30   # 30% — acima disso, AUMENTAR vira HOLD
-DEFAULT_PESO_SAIR_MIN = 0.05     # 5% — abaixo disso, vetada vira EVITAR_NOVOS_APORTES (nao SAIR)
 DEFAULT_HHI_ATENCAO = 0.25       # > 0.25 ja eh concentracao alta
 DEFAULT_TOP_2_PESO = 0.50        # top 2 holdings somando >50% = atencao
 
@@ -53,7 +57,7 @@ class HoldingAdvice:
     peso_carteira: Optional[float]   # 0-1
 
     # Conselho derivado da decisao + posicao
-    badge: str       # HOLD / AUMENTAR / REDUZIR / SAIR / EVITAR_NOVOS_APORTES
+    badge: str       # HOLD / AUMENTAR / REDUZIR (SAIR / EVITAR_NOVOS_APORTES so em snapshots antigos)
     racional: str    # 1-2 linhas explicando o badge
     prioridade: str  # ALTA / MEDIA / BAIXA — para ordenacao no relatorio
 
@@ -92,7 +96,7 @@ def _proxima_segunda(hoje: date) -> date:
 def _flags_resumo(d: TickerDecision) -> str:
     flags = []
     if d.flag_destruicao_capital:
-        flags.append("destr.capital")
+        flags.append("destr.capital (alerta descritivo)")
     if d.flag_emissao_recente:
         flags.append("emissao")
     if d.flag_pvp_caro:
@@ -134,29 +138,46 @@ def _consolidar_holdings(holdings: list[dict]) -> dict[str, dict]:
 # =============================================================================
 
 
+def _alerta_risco(d: TickerDecision) -> str:
+    """Texto do alerta descritivo de destruicao de capital ('' se nao ha flag).
+
+    ``motivo_destruicao`` ja traz a gravidade ([ALERTA]/[DESTRUICAO ATIVA]) e o numero
+    (ex.: 'VP/cota em queda (-0.59% ao mes)').
+    """
+    if not d.flag_destruicao_capital:
+        return ""
+    return (
+        f"ALERTA DE RISCO (descritivo): {d.motivo_destruicao or 'destruicao de capital'} "
+        "Sem evidencia de que o alerta antecipe retorno pior."
+    )
+
+
 def _derivar_badge(
     decisao: TickerDecision,
     peso_carteira: Optional[float],
     peso_max_ticker: float,
-    peso_sair_min: float,
 ) -> tuple[str, str, str]:
-    """Mapeia (Acao do recommender + peso atual) para (badge, racional, prioridade)."""
+    """Mapeia (Acao do recommender + peso atual) para (badge, racional, prioridade).
+
+    O alerta de risco (se houver) e anexado ao racional de qualquer badge; nunca
+    muda o badge.
+    """
+    badge, racional, prioridade = _badge_base(decisao, peso_carteira, peso_max_ticker)
+    alerta = _alerta_risco(decisao)
+    if alerta:
+        racional = f"{racional} {alerta}"
+        if prioridade == "BAIXA":
+            prioridade = "MEDIA"
+    return badge, racional, prioridade
+
+
+def _badge_base(
+    decisao: TickerDecision,
+    peso_carteira: Optional[float],
+    peso_max_ticker: float,
+) -> tuple[str, str, str]:
     peso = peso_carteira or 0.0
     flags = _flags_resumo(decisao)
-
-    # Veto absoluto: posicao com flag critica
-    if decisao.acao == "EVITAR" or decisao.has_critical_flag:
-        if peso >= peso_sair_min:
-            racional = (
-                f"VETADO por flag critica ({flags}). Posicao "
-                f"{peso * 100:.1f}% da carteira — considere reduzir gradualmente."
-            )
-            return "SAIR", racional, "ALTA"
-        racional = (
-            f"VETADO por flag critica ({flags}). Posicao pequena "
-            f"({peso * 100:.1f}%) — pare aportes, mas nao precisa zerar agora."
-        )
-        return "EVITAR_NOVOS_APORTES", racional, "MEDIA"
 
     # Sinal de venda: REDUZIR (mais brando que SAIR)
     if decisao.acao == "VENDER":
@@ -216,7 +237,6 @@ def aconselhar_carteira(
     *,
     precos_atuais: Optional[dict[str, float]] = None,
     peso_max_ticker: float = DEFAULT_PESO_MAX_TICKER,
-    peso_sair_min: float = DEFAULT_PESO_SAIR_MIN,
     valida_ate: Optional[date] = None,
 ) -> list[HoldingAdvice]:
     """Cruza decisoes com posicoes da carteira e produz HoldingAdvice por holding.
@@ -233,8 +253,6 @@ def aconselhar_carteira(
         Mapa de preco corrente. Se None, usa preco_referencia da decisao.
     peso_max_ticker : float
         Acima desse peso, AUMENTAR vira HOLD (concentracao no limite).
-    peso_sair_min : float
-        Abaixo desse peso, EVITAR vira EVITAR_NOVOS_APORTES (em vez de SAIR).
     valida_ate : date | None
         Data ate quando a sugestao vale. Default = proxima segunda-feira.
     """
@@ -292,7 +310,7 @@ def aconselhar_carteira(
             continue
 
         badge, racional, prioridade = _derivar_badge(
-            decisao, peso, peso_max_ticker, peso_sair_min
+            decisao, peso, peso_max_ticker
         )
 
         advices.append(HoldingAdvice(
@@ -388,8 +406,9 @@ def alertas_estruturais(
 
 
 _DISCLAIMER = (
-    "AVISO: este arquivo lista SUGESTOES OPERACIONAIS geradas por regras "
-    "estatisticas do sistema, nao ordens de compra/venda. Cada sugestao tem "
+    "AVISO: este arquivo e DESCRITIVO: o estudo em painel de 2026-11-12 nao achou "
+    "indicador do sistema que preveja retorno relativo entre fundos. Nao sao "
+    "ordens de compra/venda. Cada linha tem "
     "prazo de validade — reavaliar a partir desta data. Validar com julgamento "
     "humano antes de executar."
 )

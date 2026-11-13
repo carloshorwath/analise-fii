@@ -12,10 +12,14 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from app.components.charts import radar_heatmap
 from app.components.carteira_ui import load_carteira_db
-from app.components.snapshot_ui import load_panorama_snapshot, load_radar_snapshot
+from app.components.aviso_ui import render_aviso_evidencia
+from app.components.snapshot_ui import (
+    RADAR_N_CRITERIOS,
+    load_universo_snapshot,
+    tickers_universo_exibido,
+)
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
-from src.fii_analysis.config import TICKERS, tickers_ativos
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.features.radar import radar_matriz
 
@@ -37,10 +41,9 @@ _CSS = """
     transition: box-shadow .15s;
 }
 .radar-card:hover { box-shadow: 0 3px 12px rgba(0,0,0,.09); }
-.radar-card-4 { border-top-color: #2e7d32; }
-.radar-card-3 { border-top-color: #558b2f; }
-.radar-card-2 { border-top-color: #f57f17; }
-.radar-card-1 { border-top-color: #e65100; }
+.radar-card-3 { border-top-color: #2e7d32; }
+.radar-card-2 { border-top-color: #558b2f; }
+.radar-card-1 { border-top-color: #f57f17; }
 .radar-card-0 { border-top-color: #c62828; }
 
 .radar-card-header {
@@ -81,8 +84,8 @@ _CSS = """
 
 def _score_dots(vistos: int) -> str:
     filled = "●" * vistos
-    empty  = "○" * (4 - vistos)
-    return f"{filled}{empty} {vistos}/4"
+    empty  = "○" * (RADAR_N_CRITERIOS - vistos)
+    return f"{filled}{empty} {vistos}/{RADAR_N_CRITERIOS}"
 
 
 def _fmt_brl(val) -> str:
@@ -106,7 +109,7 @@ def _clean(v):
 
 
 def _render_radar_card(row: dict) -> None:
-    """Renderiza um card rico com os 4 critérios + valores numéricos."""
+    """Renderiza um card com os critérios do radar + regime (DY Gap) à parte."""
     vistos = int(row.get("vistos", 0))
     ticker = row["ticker"]
 
@@ -160,9 +163,12 @@ def _render_radar_card(row: dict) -> None:
     <span class="radar-score">{_score_dots(vistos)}</span>
   </div>
   {_crit(bool(row.get("pvp_baixo")),  "P/VP baixo", pvp_str)}
-  {_crit(bool(row.get("dy_gap_alto")), "DY Gap alto", dygap_str)}
   {_crit(bool(row.get("saude_ok")),   f"Saúde{saude_extra}", "")}
   {_crit(bool(row.get("liquidez_ok")), "Liquidez", vol_str)}
+  <div class="radar-criterion fail" style="border-top:1px dashed #ddd;margin-top:4px">
+    Regime de mercado: DY Gap {"alto" if row.get("dy_gap_alto") else "não alto"}
+    <span class="val">{dygap_str}</span>
+  </div>
 </div>
 """
     st.markdown(card_html, unsafe_allow_html=True)
@@ -178,74 +184,47 @@ def main():
     render_sidebar_guide("Radar", "Operar")
     render_page_header(
         "Radar",
-        "Matriz booleana — onde vale olhar primeiro, sem score arbitrário.",
+        "Matriz booleana descritiva — estado de cada fundo nos critérios, sem score arbitrário.",
         "Operar",
     )
     render_inline_note(
-        "4 critérios: P/VP ↓ (percentil < 30) · DY Gap ↑ (percentil > 70) · "
-        "Saúde (sem destruição de capital) · Liquidez (vol 21d > R$ 500k). "
-        "Use como filtro inicial — siga para o Dossiê para aprofundar."
+        "3 critérios: P/VP ↓ (percentil < 30) · Saúde (sem destruição de capital) · "
+        "Liquidez (vol 21d > R$ 500k). DY Gap ↑ (percentil > 70) aparece à parte, como regime de mercado. "
+        "Descreve o estado atual — siga para o Dossiê para aprofundar."
     )
+    render_aviso_evidencia()
 
-    # ── Carga de dados ───────────────────────────────────────────────────────
-    meta, df = load_radar_snapshot("curado")
+    # ── Carga de dados (snapshot-first, universo unico: carteira + curados) ──
+    carteira_tickers = [h["ticker"] for h in load_carteira_db()]
+    universo_alvo = tickers_universo_exibido(carteira_tickers)
+    ver_ifix = st.toggle("Ver o universo IFIX inteiro do snapshot", value=False, key="radar_ifix")
+    meta, df_pan, df, _ = load_universo_snapshot(None if ver_ifix else tuple(universo_alvo))
 
-    with get_session_ctx() as session:
-        ativos_set = set(tickers_ativos(session))
-        curado = [t for t in TICKERS if t in ativos_set]
-
-        carteira = load_carteira_db()
-        carteira_tickers = [h["ticker"] for h in carteira if h["ticker"] in ativos_set]
-
-        universo_alvo = sorted(set(curado + carteira_tickers))
-
-        if meta is None or df.empty:
+    if meta is None or df.empty:
+        with get_session_ctx() as session:
             with st.spinner("Calculando dados em tempo real (snapshot nao disponivel)..."):
                 df = radar_matriz(tickers=universo_alvo, session=session)
-            if df.empty:
-                st.warning(
-                    "Nenhum dado disponível. Execute os scripts de ingestaão e gere o snapshot."
-                )
-                st.stop()
-            st.caption("⚡ Calculado em tempo real (snapshot não disponível).")
-            # Ordenar para garantir radar default sorting
-            df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
+        if df.empty:
+            st.warning("Nenhum dado disponível. Execute os scripts de ingestaão e gere o snapshot.")
+            st.stop()
+        st.caption("⚡ Calculado em tempo real (snapshot não disponível).")
+    else:
+        if not df_pan.empty:
+            # Enriquecer flags do radar com dados numéricos do panorama do snapshot
+            num_cols = ["ticker", "pvp", "pvp_percentil", "dy_gap", "dy_gap_percentil", "volume_medio_21d"]
+            df_num = df_pan[[c for c in num_cols if c in df_pan.columns]].rename(columns={
+                "pvp": "pvp_atual",
+                "dy_gap": "dy_gap_valor",
+                "volume_medio_21d": "volume_21d",
+            })
+            df = df.merge(df_num, on="ticker", how="left")
+        ts = meta.get("finalizado_em")
+        ts_str = ts.strftime("%d/%m %H:%M") if ts else "?"
+        if meta.get("is_stale", False):
+            st.warning(f"⚠️ Snapshot desatualizado (gerado em {ts_str}).")
         else:
-            # Enriquecer df do radar (só flags) com dados numéricos do panorama snapshot
-            _, df_pan = load_panorama_snapshot("curado")
-            if not df_pan.empty:
-                # Mapear campos numéricos: pvp → pvp_atual, volume_medio_21d → volume_21d
-                num_cols = ["ticker", "pvp", "pvp_percentil", "dy_gap", "dy_gap_percentil", "volume_medio_21d"]
-                df_num = df_pan[[c for c in num_cols if c in df_pan.columns]].rename(columns={
-                    "pvp": "pvp_atual",
-                    "dy_gap": "dy_gap_valor",
-                    "volume_medio_21d": "volume_21d",
-                })
-                df = df.merge(df_num, on="ticker", how="left")
-
-            tickers_no_snap = set(df["ticker"].tolist())
-            faltantes = [t for t in universo_alvo if t not in tickers_no_snap]
-            if faltantes:
-                with st.spinner("Calculando dados para tickers faltantes..."):
-                    df_falt = radar_matriz(tickers=faltantes, session=session)
-                if not df_falt.empty:
-                    df = pd.concat([df, df_falt], ignore_index=True)
-                st.caption(
-                    f"📦 Snapshot curado carregado. "
-                    f"{len(faltantes)} FII(s) da carteira calculados em tempo real."
-                )
-            else:
-                ts = meta.get("finalizado_em")
-                ts_str = ts.strftime("%d/%m %H:%M") if ts else "?"
-                stale = meta.get("is_stale", False)
-                if stale:
-                    st.warning(f"⚠️ Snapshot desatualizado (gerado em {ts_str}).")
-                else:
-                    st.caption(f"📦 Dados do snapshot de {ts_str}.")
-            
-            # Ordenar em todos os cenários (loaded ou partially loaded)
-            df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
-
+            st.caption(f"📦 Dados do snapshot de {ts_str} (referência {meta['data_referencia']:%d/%m}).")
+    df = df.sort_values(["vistos", "ticker"], ascending=[False, True]).reset_index(drop=True)
 
     if df.empty:
         st.info("Nenhum dado no radar.")
@@ -253,18 +232,19 @@ def main():
         return
 
     # ── KPIs rápidos ─────────────────────────────────────────────────────────
-    n_full  = int((df["vistos"] == 4).sum())
-    n_3     = int((df["vistos"] >= 3).sum())
+    n = RADAR_N_CRITERIOS
+    n_full  = int((df["vistos"] == n).sum())
+    n_2     = int((df["vistos"] >= n - 1).sum())
     n_total = len(df)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("FIIs no radar", n_total)
-    c2.metric("Passou 4/4", n_full,
-              help="Todos os 4 critérios satisfeitos")
-    c3.metric("Passou ≥3/4", n_3,
-              help="Ao menos 3 critérios satisfeitos — candidatos a investigar")
-    c4.metric("Passou 0/4", int((df["vistos"] == 0).sum()),
-              help="Nenhum critério satisfeito — evitar novos aportes")
+    c2.metric(f"Passou {n}/{n}", n_full,
+              help="Todos os critérios satisfeitos")
+    c3.metric(f"Passou ≥{n - 1}/{n}", n_2,
+              help="Ao menos n-1 critérios satisfeitos (descritivo)")
+    c4.metric(f"Passou 0/{n}", int((df["vistos"] == 0).sum()),
+              help="Nenhum critério satisfeito")
 
     st.markdown("---")
 
@@ -288,17 +268,17 @@ def main():
     st.markdown("---")
     st.caption(
         "**P/VP ↓**: percentil histórico < 30% (504 pregões) — "
-        "**DY Gap ↑**: percentil histórico > 70% (252 pregões) — "
         "**Saúde**: sem destruição de capital detectada — "
-        "**Liquidez**: volume médio 21d ≥ R$ 500k"
+        "**Liquidez**: volume médio 21d ≥ R$ 500k — "
+        "**Regime**: DY Gap com percentil histórico > 70% (252 pregões), fora da contagem"
     )
 
     # Export com colunas legíveis
     _export_cols = {
         "ticker": "Ticker",
-        "vistos": "Criterios (0-4)",
+        "vistos": f"Criterios (0-{RADAR_N_CRITERIOS})",
         "pvp_baixo": "P/VP Baixo",
-        "dy_gap_alto": "DY Gap Alto",
+        "dy_gap_alto": "Regime DY Gap Alto",
         "saude_ok": "Saude OK",
         "liquidez_ok": "Liquidez OK",
         "pvp_atual": "P/VP Atual",
@@ -309,7 +289,7 @@ def main():
         "saude_motivo": "Motivo Saude",
     }
     df_exp = df[[c for c in _export_cols if c in df.columns]].rename(columns=_export_cols)
-    for col in ["P/VP Baixo", "DY Gap Alto", "Saude OK", "Liquidez OK"]:
+    for col in ["P/VP Baixo", "Regime DY Gap Alto", "Saude OK", "Liquidez OK"]:
         if col in df_exp.columns:
             df_exp[col] = df_exp[col].map({True: "Sim", False: "Nao"}).fillna("n/d")
     csv = df_exp.to_csv(index=False).encode("utf-8")

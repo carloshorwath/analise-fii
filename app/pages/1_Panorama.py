@@ -10,14 +10,15 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from app.components.aviso_ui import rotulo_acao
+from app.components.carteira_ui import load_carteira_db
 from app.components.snapshot_ui import (
-    load_decisions_snapshot,
-    load_panorama_snapshot,
-    load_radar_snapshot,
+    RADAR_N_CRITERIOS,
+    load_universo_snapshot,
+    tickers_universo_exibido,
 )
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
-from src.fii_analysis.config import TICKERS, tickers_ativos
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.features.data_loader import get_ifix_ytd
 from src.fii_analysis.features.portfolio import carteira_panorama
@@ -29,10 +30,10 @@ safe_set_page_config(page_title="Panorama", page_icon="bar_chart", layout="wide"
 _COLS_DISPLAY = [
     "ticker", "segmento", "acao",
     "preco", "pvp", "pvp_percentil",
-    "dy_12m", "dy_gap", "dy_gap_percentil",
+    "dy_12m", "dy_gap", "dy_gap_percentil", "dy_gap_alto",
     "volume_medio_21d",
     "score_total",
-    "vistos", "pvp_baixo", "dy_gap_alto", "saude_ok", "liquidez_ok",
+    "vistos", "pvp_baixo", "saude_ok", "liquidez_ok",
     "cvm_defasada",
 ]
 
@@ -72,8 +73,10 @@ def _build_display_df(
     if decisions_df is not None and not decisions_df.empty and "ticker" in decisions_df.columns:
         dec_cols = [c for c in ["ticker", "acao"] if c in decisions_df.columns]
         display = display.merge(decisions_df[dec_cols], on="ticker", how="left")
+        if "acao" in display.columns:
+            display["acao"] = display["acao"].map(lambda a: rotulo_acao(a) if isinstance(a, str) else None)
 
-    # Ordenação padrão: DY Gap %ile descendente (maiores oportunidades no topo)
+    # Ordenação padrão: DY Gap %ile descendente
     if "dy_gap_percentil" in display.columns:
         display = display.sort_values(
             "dy_gap_percentil", ascending=False, na_position="last"
@@ -93,8 +96,8 @@ def _column_config() -> dict:
             "Segmento", width="medium"
         ),
         "acao": st.column_config.TextColumn(
-            "Ação Hoje",
-            help="Decisão do sistema para hoje (COMPRAR/VENDER/AGUARDAR/EVITAR). Baseada nos 3 motores estatísticos.",
+            "Leitura do dia",
+            help="Estado descritivo dos indicadores (favoraveis, desfavoraveis, neutro, alerta de risco). Nao e recomendacao.",
             width="small",
         ),
         "preco": st.column_config.NumberColumn(
@@ -119,7 +122,7 @@ def _column_config() -> dict:
         ),
         "dy_gap_percentil": st.column_config.NumberColumn(
             "DY Gap %ile", format="%.0f%%",
-            help="Percentil histórico do DY Gap. Maior = melhor oportunidade relativa de yield."
+            help="Percentil histórico do DY Gap. Maior = DY gap alto em relação à própria história do fundo."
         ),
         "volume_medio_21d": st.column_config.NumberColumn(
             "Vol 21d", format="R$ %.0f",
@@ -130,16 +133,16 @@ def _column_config() -> dict:
             help="Score composto 0–100 (Valuation 35% + Risco 30% + Liquidez 20% + Histórico 15%)"
         ),
         "vistos": st.column_config.ProgressColumn(
-            "Radar", min_value=0, max_value=4, format="%d/4",
-            help="Número de critérios do radar satisfeitos (0–4): P/VP↓, DY Gap↑, Saúde, Liquidez"
+            "Radar", min_value=0, max_value=RADAR_N_CRITERIOS, format=f"%d/{RADAR_N_CRITERIOS}",
+            help="Número de critérios do radar satisfeitos: P/VP↓, Saúde, Liquidez. DY Gap↑ é mostrado à parte (regime)."
         ),
         "pvp_baixo": st.column_config.CheckboxColumn(
             "P/VP ↓",
             help="P/VP no percentil barato (< p30 histórico)"
         ),
         "dy_gap_alto": st.column_config.CheckboxColumn(
-            "DY Gap ↑",
-            help="DY Gap no percentil alto (> p70 histórico)"
+            "Regime (DY Gap ↑)",
+            help="Indicador de regime de mercado (DY Gap > p70 histórico). Fora da contagem do radar."
         ),
         "saude_ok": st.column_config.CheckboxColumn(
             "Saúde ✓",
@@ -161,7 +164,7 @@ def main():
     render_sidebar_guide("Panorama", "Operar")
     render_page_header(
         "Panorama",
-        "Comparacao rapida do universo curado — metricas ponto-no-tempo e radar em uma unica tabela.",
+        "Comparacao rapida do universo exibido (carteira + curados) — metricas ponto-no-tempo e radar em uma unica tabela.",
         "Operar",
     )
     render_inline_note(
@@ -170,16 +173,17 @@ def main():
     )
 
     # ── Carga de dados ───────────────────────────────────────────────────────
-    meta, df = load_panorama_snapshot("curado")
-    _, radar_df = load_radar_snapshot("curado")
-    _, decisions_df = load_decisions_snapshot("curado")
+    carteira_tickers = [h["ticker"] for h in load_carteira_db()]
+    ver_ifix = st.toggle("Ver o universo IFIX inteiro do snapshot", value=False, key="pan_ifix")
+    meta, df, radar_df, decisions_df = load_universo_snapshot(
+        None if ver_ifix else tuple(tickers_universo_exibido(carteira_tickers))
+    )
 
     with get_session_ctx() as session:
         ifix_ytd = get_ifix_ytd(session)
         if meta is None or df.empty:
             with st.spinner("Calculando dados em tempo real (snapshot nao disponivel)..."):
-                ativos_set = set(tickers_ativos(session))
-                curado = [t for t in TICKERS if t in ativos_set]
+                curado = tickers_universo_exibido(carteira_tickers)
                 df = carteira_panorama(curado, session)
                 radar_df = radar_matriz(tickers=curado, session=session)
                 n_tickers = len(curado)
@@ -197,7 +201,10 @@ def main():
                 "Execute `fii update-prices` para atualizar."
             )
         else:
-            st.caption(f"📦 Dados do snapshot de {ts_str} · escopo: curado")
+            st.caption(
+                f"📦 Dados do snapshot de {ts_str} · universo: "
+                + ("IFIX inteiro" if ver_ifix else "carteira + curados")
+            )
         falhos = meta.get("tickers_falhos", [])
         if falhos:
             st.caption(f"Tickers com falha: {', '.join(falhos)}")
@@ -207,10 +214,10 @@ def main():
     # ── KPIs ─────────────────────────────────────────────────────────────────
     radar_ok_count = 0
     if not radar_df.empty and "vistos" in radar_df.columns:
-        radar_ok_count = int((radar_df["vistos"] >= 3).sum())
+        radar_ok_count = int((radar_df["vistos"] >= RADAR_N_CRITERIOS).sum())
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("FIIs Ativos", n_tickers)
+    col1.metric("FIIs no universo", n_tickers)
 
     if not df.empty:
         avg_dy = df["dy_12m"].dropna().mean()
@@ -230,11 +237,11 @@ def main():
         col3.metric("P/VP Médio", "—")
 
     col4.metric(
-        "Radar OK (≥3/4)",
+        f"Radar {RADAR_N_CRITERIOS}/{RADAR_N_CRITERIOS}",
         str(radar_ok_count),
         delta=f"{(radar_ok_count/n_tickers)*100:.1f}% da base" if n_tickers > 0 else None,
         delta_color="off",
-        help="FIIs satisfazendo ao menos 3 dos 4 critérios do radar"
+        help="FIIs satisfazendo todos os critérios do radar (descritivo, sem poder preditivo comprovado)"
     )
     col5.metric(
         "IFIX YTD",
@@ -259,7 +266,7 @@ def main():
 
         st.caption(
             "Colunas P/VP %ile e DY Gap %ile são percentis históricos (504 pregões). "
-            "Radar: P/VP ↓ · DY Gap ↑ · Saúde ✓ · Liquidez ✓. "
+            "Radar: P/VP ↓ · Saúde ✓ · Liquidez ✓ (DY Gap ↑ à parte, como regime). "
             "Dados calculados point-in-time. Atualize via CLI: `fii update-prices`"
         )
 

@@ -21,7 +21,7 @@ def main():
     render_sidebar_guide("Laboratorio", "Auditar")
     render_page_header(
         "Laboratorio (Backtest)",
-        "Camada de auditoria estatistica e modelos. Tres ferramentas para validar robustez antes de operar com base nos sinais.",
+        "Camada de auditoria estatistica e modelos. Tres ferramentas para auditar a robustez dos sinais.",
         "Auditar",
     )
     render_inline_note(

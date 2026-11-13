@@ -5,7 +5,7 @@ import numpy as np
 import plotly.express as px
 import streamlit as st
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_tickers_modelo
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.models.event_study_cvm import (
     _block_placebo,
@@ -35,7 +35,7 @@ def render(ticker: str | None = None, *, key_prefix: str = "fcs") -> None:
 
     N_SINAIS = len(SINAIS)
 
-    tickers = load_tickers_ativos()
+    tickers = load_tickers_modelo()
     if not tickers:
         st.warning("Nenhum ticker ativo encontrado.")
         return

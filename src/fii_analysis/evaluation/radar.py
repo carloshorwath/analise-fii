@@ -2,7 +2,7 @@ from rich.console import Console
 from rich.table import Table
 
 from src.fii_analysis.config import tickers_ativos
-from src.fii_analysis.features.radar import radar_matriz
+from src.fii_analysis.features.radar import RADAR_N_CRITERIOS, radar_matriz
 
 console = Console()
 
@@ -19,7 +19,7 @@ def render_radar(tickers: list[str] | None = None):
         table = Table(title="RADAR DESCRITIVO", show_lines=False)
         table.add_column("Ticker", style="bold cyan")
         table.add_column("P/VP pct<30", justify="center")
-        table.add_column("DY Gap pct>70", justify="center")
+        table.add_column("DY Gap pct>70 (regime)", justify="center")
         table.add_column("Saude OK", justify="center")
         table.add_column("Liquidez OK", justify="center")
         table.add_column("Vistos", justify="center", style="bold")
@@ -34,7 +34,7 @@ def render_radar(tickers: list[str] | None = None):
                 _check(row["dy_gap_alto"]),
                 _check(row["saude_ok"]),
                 _check(row["liquidez_ok"]),
-                str(row["vistos"]) + "/4",
+                f'{row["vistos"]}/{RADAR_N_CRITERIOS}',
             )
 
         console.print(table)

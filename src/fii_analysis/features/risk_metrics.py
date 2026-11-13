@@ -70,7 +70,7 @@ def beta_vs_ifix(ticker: str, janela: int = 252, session=None) -> float | None:
 
 
 def max_drawdown(ticker: str, janela: int = 504, session=None) -> float | None:
-    """Calcula o Maximum Drawdown real baseado no fechamento ajustado."""
+    """Maximum Drawdown sobre fechamento_aj (retorno total: dividendo reinvestido, construido pelo projeto)."""
     rows = session.execute(
         select(PrecoDiario.fechamento_aj)
         .where(PrecoDiario.ticker == ticker, PrecoDiario.fechamento_aj.isnot(None))
@@ -115,8 +115,9 @@ def liquidez_media_21d(ticker: str, session=None) -> float | None:
 def retorno_total_12m(ticker: str, session=None) -> float | None:
     """Calcula (P_t - P_{t-252} + soma_dividendos_12m) / P_{t-252}.
 
-    Usa o fechamento BRUTO: fechamento_aj (yfinance) ja embute dividendos, e somar
-    os dividendos de novo contaria cada provento 2x.
+    Usa o fechamento BRUTO: fechamento_aj (retorno total construido pelo projeto em
+    data/corporate_actions.py) ja embute dividendos, e somar os dividendos de novo
+    contaria cada provento 2x.
     """
     rows = session.execute(
         select(PrecoDiario.fechamento, PrecoDiario.data)
@@ -139,7 +140,7 @@ def retorno_total_12m(ticker: str, session=None) -> float | None:
 
     divs = session.execute(
         select(Dividendo.valor_cota)
-        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t252, Dividendo.data_com <= data_t)
+        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t252, Dividendo.data_com < data_t)  # data_com == t so entra no pregao seguinte (data-ex)
     ).all()
 
     soma_divs = sum(float(d[0]) for d in divs if d[0] is not None)
@@ -175,7 +176,7 @@ def dy_3m_anualizado(ticker: str, session=None) -> float | None:
 
     divs = session.execute(
         select(Dividendo.valor_cota)
-        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t63, Dividendo.data_com <= data_t)
+        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t63, Dividendo.data_com < data_t)  # data_com == t so entra no pregao seguinte (data-ex)
     ).all()
 
     soma_divs = sum(float(d[0]) for d in divs if d[0] is not None)
@@ -204,7 +205,7 @@ def yield_on_cost(ticker: str, preco_medio: float, session=None) -> float | None
 
     divs = session.execute(
         select(Dividendo.valor_cota)
-        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t252, Dividendo.data_com <= data_t)
+        .where(Dividendo.ticker == ticker, Dividendo.data_com > data_t252, Dividendo.data_com < data_t)  # data_com == t so entra no pregao seguinte (data-ex)
     ).all()
 
     soma_divs = sum(float(d[0]) for d in divs if d[0] is not None)

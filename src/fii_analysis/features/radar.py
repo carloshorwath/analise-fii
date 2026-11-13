@@ -11,6 +11,12 @@ from src.fii_analysis.features.saude import flag_destruicao_capital
 from src.fii_analysis.features.valuation import get_dy_gap, get_dy_gap_percentil, get_pvp_percentil
 
 
+# Criterios que entram na contagem ``vistos``: pvp_baixo, saude_ok, liquidez_ok.
+# ``dy_gap_alto`` e gravado mas e indicador de REGIME (0% a 99% dos fundos conforme a
+# data; estudo em painel 2026-11-12), nao de selecao: nao entra em ``vistos``.
+RADAR_N_CRITERIOS = 3
+
+
 def radar_matriz(tickers: list[str] | None = None, session=None) -> pd.DataFrame:
     if tickers is None:
         tickers = tickers_ativos(session)
@@ -51,7 +57,7 @@ def radar_matriz(tickers: list[str] | None = None, session=None) -> pd.DataFrame
         piso = get_piso_liquidez()
         liquidez_ok = vol_medio is not None and vol_medio >= piso
 
-        vistos = sum([pvp_baixo, dy_gap_alto, saude_ok, liquidez_ok])
+        vistos = sum([pvp_baixo, saude_ok, liquidez_ok])
 
         rows.append({
             "ticker": ticker, "pvp_baixo": pvp_baixo, "dy_gap_alto": dy_gap_alto,

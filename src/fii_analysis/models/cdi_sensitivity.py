@@ -26,6 +26,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 from sqlalchemy import select
 
 from src.fii_analysis.data.cdi import get_cdi_acumulado_12m
@@ -42,7 +43,7 @@ MAX_LAGS = 4   # Newey-West
 class CdiSensitivityResult:
     """Resultado da regressão CDI sensitivity para um ticker."""
 
-    status: str  # OK | DADOS_INSUFICIENTES | SEM_CDI | CONVERGENCIA_FALHOU
+    status: str  # OK | DADOS_INSUFICIENTES | SEM_CDI | CONVERGENCIA_FALHOU | ERRO_CODIGO
     beta: float | None = None
     r_squared: float | None = None
     p_value: float | None = None
@@ -203,8 +204,13 @@ def compute_cdi_sensitivity(
             n_obs=n_obs,
         )
 
-    except Exception:
+    except np.linalg.LinAlgError as exc:
+        logger.warning("cdi_sensitivity {}: regressao nao convergiu: {}", ticker, exc)
         return CdiSensitivityResult(status="CONVERGENCIA_FALHOU", n_obs=len(df))
+    except Exception:
+        # erro de codigo (ValueError/KeyError...) != nao convergiu: nao mascarar
+        logger.exception("cdi_sensitivity {}: ERRO DE CODIGO na regressao", ticker)
+        return CdiSensitivityResult(status="ERRO_CODIGO", n_obs=len(df))
 
 
 def compute_cdi_sensitivity_batch(
@@ -223,7 +229,8 @@ def compute_cdi_sensitivity_batch(
         try:
             results[ticker] = compute_cdi_sensitivity(ticker, session, t)
         except Exception:
-            results[ticker] = CdiSensitivityResult(status="CONVERGENCIA_FALHOU")
+            logger.exception("cdi_sensitivity {}: ERRO DE CODIGO", ticker)
+            results[ticker] = CdiSensitivityResult(status="ERRO_CODIGO")
     return results
 
 

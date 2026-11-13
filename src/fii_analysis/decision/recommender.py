@@ -5,17 +5,18 @@ Tres camadas separadas semanticamente:
 1. SINAL  — saida pura dos modos (BUY/SELL/NEUTRO/INDISPONIVEL).
 2. RISCO  — flags de saude do fundo (destruicao de capital, emissoes,
             P/VP extremo, DY Gap baixo). Independente do sinal.
-3. ACAO   — derivada (COMPRAR/VENDER/AGUARDAR/EVITAR). Risco critico
-            VETA qualquer BUY mesmo com 3/3 de concordancia.
+3. ACAO   — derivada (COMPRAR/VENDER/AGUARDAR). Flags de risco sao ALERTAS
+            descritivos no rationale: NAO vetam nem geram acao (estudo em painel
+            2026-11-12: sem evidencia de que antecipem retorno pior; ver evidencia.py).
 
 Concordancia e HEURISTICA, nao estatistica. Um sinal so entra no voto se tiver
 suporte estatistico (n de eventos independentes fora da amostra e p-valor
 corrigido; ver decision/suporte.py) — sinal sem suporte e gravado e exibido como
 informativo, mas nao conta. Niveis:
-    ALTA   — 3/3 modos concordam, sem flag critica
-    MEDIA  — 2/3 modos concordam, sem flag critica
+    ALTA   — 3/3 modos concordam
+    MEDIA  — 2/3 modos concordam
     BAIXA  — 1 modo isolado, ou 2+/2 com algum modo indisponivel
-    VETADA — qualquer BUY com flag critica de saude
+(``EVITAR`` / ``VETADA`` nao sao mais produzidos; existem so em snapshots antigos.)
 
 Funcoes publicas:
     decidir_ticker(ticker, session, ...)   -> TickerDecision
@@ -34,12 +35,14 @@ import pandas as pd
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.decision.abertos import detectar_episodio_aberto, detectar_janela_captura
 from src.fii_analysis.decision.elegibilidade import data_referencia_mercado, motivo_bloqueio_compra
+from src.fii_analysis.decision.evidencia import linha_evidencia
 from src.fii_analysis.decision.suporte import (
+    aplicar_fdr,
     conta_no_voto,
+    evidencia_episodio,
+    evidencia_otimizador,
+    evidencia_walkforward,
     linhas_rationale,
-    suporte_episodio,
-    suporte_otimizador,
-    suporte_walkforward,
 )
 from src.fii_analysis.features.composicao import classificar_fii
 from src.fii_analysis.features.momentum_signals import (
@@ -71,6 +74,13 @@ from src.fii_analysis.models.walk_forward_rolling import walk_forward_roll
 
 
 VALID_SIGNALS = ("BUY", "SELL", "NEUTRO")
+
+# Janelas dos percentis EXIBIDOS/gravados na decisao e usados nos flags.
+# Devem ser iguais as de evaluation/daily_snapshots.build_snapshot_ticker_metrics
+# (get_pvp_percentil(..., 504, ...) e get_dy_gap_percentil(..., 252, ...)), para
+# o mesmo run nao mostrar dois numeros diferentes para a mesma metrica.
+JANELA_PVP_PERCENTIL = 504
+JANELA_DY_GAP_PERCENTIL = 252
 
 
 @dataclass(kw_only=True)
@@ -119,8 +129,8 @@ class TickerDecision:
     cortes_24m: int = 0                            # quedas consecutivas de DY nos 24m
 
     # === ACAO (derivada Sinal + Risco) ===
-    acao: str                 # COMPRAR / VENDER / AGUARDAR / EVITAR
-    nivel_concordancia: str   # ALTA / MEDIA / BAIXA / VETADA
+    acao: str                 # COMPRAR / VENDER / AGUARDAR (EVITAR so em snapshots antigos)
+    nivel_concordancia: str   # ALTA / MEDIA / BAIXA (VETADA so em snapshots antigos)
     n_concordam_buy: int
     n_concordam_sell: int
 
@@ -172,16 +182,6 @@ class TickerDecision:
     # === Auditoria ===
     rationale: list[str] = field(default_factory=list)
 
-    @property
-    def has_critical_flag(self) -> bool:
-        """Flag critica = veta qualquer COMPRAR mesmo com 3/3 concordancia.
-
-        Hoje so destruicao de capital eh veto absoluto. DY Gap baixo e P/VP caro
-        sao informativos (entram no rationale, nao vetam).
-        """
-        return self.flag_destruicao_capital
-
-
 # =============================================================================
 # Helpers internos
 # =============================================================================
@@ -200,15 +200,11 @@ def _sinal_episodio_atual(pvp_pct_atual: Optional[float],
     return "NEUTRO"
 
 
-def _derivar_acao(n_buy: int, n_sell: int, n_validos: int,
-                  has_critical: bool) -> tuple[str, str]:
+def _derivar_acao(n_buy: int, n_sell: int, n_validos: int) -> tuple[str, str]:
     """Regra de combinacao Sinal -> Acao + nivel de concordancia heuristico.
 
-    Veto absoluto: BUY com flag critica → EVITAR/VETADA.
+    Sem veto por flag de risco: a flag vira alerta no rationale (ver _finalizar_votos).
     """
-    if has_critical and n_buy > 0:
-        return "EVITAR", "VETADA"
-
     if n_validos == 0:
         return "AGUARDAR", "BAIXA"
 
@@ -268,6 +264,23 @@ def decidir_ticker(
     ticker: str,
     session,
     optimizer_params: Optional[dict] = None,
+    **kwargs,
+) -> TickerDecision:
+    """Decisao de UM ticker (chamada avulsa).
+
+    A familia do ajuste Benjamini-Hochberg e o conjunto dos sinais BUY/SELL
+    ativos DESTE ticker (<= 3). Para a familia da rodada inteira use
+    ``decidir_universo``. Parametros: ver ``_decidir_ticker_base``.
+    """
+    d = _decidir_ticker_base(ticker, session, optimizer_params, **kwargs)
+    _finalizar_votos([d])
+    return d
+
+
+def _decidir_ticker_base(
+    ticker: str,
+    session,
+    optimizer_params: Optional[dict] = None,
     *,
     cdi_sensitivity: Optional[dict] = None,
     focus_explanation: Optional[dict] = None,
@@ -321,6 +334,8 @@ def decidir_ticker(
     data_ref: date = (
         data_ref_raw.date() if hasattr(data_ref_raw, "date") else data_ref_raw
     )
+    # Percentil INTERNO do modelo de episodios (so gera sinal_episodio); janela
+    # ate t-1, mesma definicao de valuation.get_pvp_percentil.
     pvp_pct_atual = float(ult["pvp_pct"]) if pd.notna(ult["pvp_pct"]) else None
     pvp_atual = float(ult["pvp"]) if pd.notna(ult["pvp"]) else None
     preco_ref = float(ult["fechamento"]) if pd.notna(ult["fechamento"]) else None
@@ -439,17 +454,19 @@ def decidir_ticker(
     except Exception as exc:
         rationale.append(f"Emissoes erro: {exc}")
 
+    # Percentis EXIBIDOS/gravados = metrica do snapshot; flags usam os mesmos numeros.
     flag_pvp_caro = False
+    pvp_pct_exibido: Optional[float] = None
     try:
-        pvp_pct_risk, _ = get_pvp_percentil(ticker, data_ref, 504, session)
-        flag_pvp_caro = pvp_pct_risk is not None and pvp_pct_risk > 95
+        pvp_pct_exibido, _ = get_pvp_percentil(ticker, data_ref, JANELA_PVP_PERCENTIL, session)
+        flag_pvp_caro = pvp_pct_exibido is not None and pvp_pct_exibido > 95
     except Exception as exc:
         rationale.append(f"P/VP percentil erro: {exc}")
 
     flag_dy_baixo = False
     dy_gap_pct: Optional[float] = None
     try:
-        dy_gap_pct = get_dy_gap_percentil(ticker, data_ref, 504, session)
+        dy_gap_pct = get_dy_gap_percentil(ticker, data_ref, JANELA_DY_GAP_PERCENTIL, session)
         flag_dy_baixo = dy_gap_pct is not None and dy_gap_pct < 5
     except Exception as exc:
         rationale.append(f"DY Gap erro: {exc}")
@@ -533,16 +550,10 @@ def decidir_ticker(
         rationale.append(f'Dividend Safety erro: {exc}')
 
     # -------------------------------------------------------------------------
-    # 6. Combinacao Sinal -> Acao (com veto)
+    # 6. Evidencia por sinal (Sinal -> Acao com veto e BH: _finalizar_votos)
     # -------------------------------------------------------------------------
-    sinais = {
-        "otimizador": sinal_otimizador,
-        "episodio": sinal_episodio,
-        "walkforward": sinal_wf,
-    }
-    sinais_validos = [s for s in sinais.values() if s in VALID_SIGNALS]
-
-    # Suporte estatistico: so sinal com n e p corrigido suficientes vota.
+    # Evidencia estatistica bruta por sinal (excesso sobre a deriva). A correcao
+    # BH e o voto/acao sao resolvidos em _finalizar_votos() sobre a familia da rodada.
     opt_stats = optimizer_stats
     if opt_stats is None and optimizer_params:
         try:
@@ -550,16 +561,10 @@ def decidir_ticker(
         except Exception as exc:
             rationale.append(f"Otimizador stats erro: {exc}")
     suporte_sinais = {
-        "otimizador": suporte_otimizador(sinal_otimizador, opt_stats),
-        "episodio": suporte_episodio(sinal_episodio, eps_summary),
-        "walkforward": suporte_walkforward(sinal_wf, wf_summary),
+        "otimizador": evidencia_otimizador(sinal_otimizador, opt_stats),
+        "episodio": evidencia_episodio(sinal_episodio, eps_summary),
+        "walkforward": evidencia_walkforward(sinal_wf, wf_summary),
     }
-    votos = [sinais[k] for k in sinais if conta_no_voto(suporte_sinais[k])]
-    n_buy = sum(1 for s in votos if s == "BUY")
-    n_sell = sum(1 for s in votos if s == "SELL")
-
-    has_critical = flag_destr or (flag_vol_drop and n_buy > 0)  # veto absoluto
-    acao, nivel = _derivar_acao(n_buy, n_sell, len(sinais_validos), has_critical)
 
     # Elegibilidade de compra: liquidacao/encerramento vigente ou preco defasado
     bloqueio_compra: Optional[str] = None
@@ -568,19 +573,7 @@ def decidir_ticker(
         bloqueio_compra = motivo_bloqueio_compra(ticker, ref_mercado, session)
     except Exception as exc:
         rationale.append(f"Elegibilidade de compra erro: {exc}")
-    if bloqueio_compra:
-        if acao == "COMPRAR":
-            acao, nivel = "AGUARDAR", "BAIXA"
-            rationale.append(f"COMPRA BLOQUEADA ({bloqueio_compra}): COMPRAR rebaixado para AGUARDAR")
-        else:
-            rationale.append(f"Compra bloqueada: {bloqueio_compra}")
 
-    if flag_destr and n_buy > 0:
-        rationale.append(f"VETO: BUY presente mas destruicao de capital ({motivo_destr})")
-    if flag_vol_drop and n_buy > 0:
-        rationale.append('VETO: BUY presente mas queda com volume alto detectada')
-    if flag_dy_baixo and acao == "COMPRAR":
-        rationale.append("Atencao: DY Gap < p5 (DY baixo vs CDI) na entrada COMPRAR")
     if flag_emiss:
         rationale.append("Atencao: emissoes recentes (>1%) — diluicao possivel")
 
@@ -597,6 +590,8 @@ def decidir_ticker(
         if ep_aberto["aberto"]:
             episodio_novo = bool(ep_aberto["novo_evento"])
             pregoes_desde = ep_aberto["pregoes_desde_ultimo"]
+            if pregoes_desde is not None:
+                pregoes_desde = int(pregoes_desde)  # numpy.int64 viraria BLOB no SQLite
             if not episodio_novo and pregoes_desde is not None:
                 rationale.append(
                     f"Episodio em CONTINUACAO ({pregoes_desde} pregoes desde ultimo) — "
@@ -693,8 +688,6 @@ def decidir_ticker(
     except Exception:
         classif = None
 
-    rationale.extend(linhas_rationale(suporte_sinais, bloqueio_compra))
-
     return TickerDecision(
         ticker=ticker,
         data_referencia=data_ref,
@@ -723,12 +716,12 @@ def decidir_ticker(
         dividend_safety_flag=div_safety_flag,
         payout_vs_caixa=payout_caixa,
         cortes_24m=cortes_dy,
-        acao=acao,
-        nivel_concordancia=nivel,
-        n_concordam_buy=n_buy,
-        n_concordam_sell=n_sell,
+        acao="AGUARDAR",          # provisorios: _finalizar_votos() define
+        nivel_concordancia="BAIXA",
+        n_concordam_buy=0,
+        n_concordam_sell=0,
         pvp_atual=pvp_atual,
-        pvp_percentil=pvp_pct_atual,
+        pvp_percentil=pvp_pct_exibido,
         dy_gap_percentil=dy_gap_pct,
         preco_referencia=preco_ref,
         n_episodios_buy=n_buy_hist,
@@ -754,6 +747,58 @@ def decidir_ticker(
         cdi_repricing_12m=cdi_repricing_12m_val,
         rationale=rationale,
     )
+
+
+def _finalizar_votos(decisoes: list[TickerDecision]) -> None:
+    """BH sobre a familia (sinais BUY/SELL ativos de ``decisoes``) -> voto -> acao.
+
+    Muta as decisoes. Decisoes sem evidencias (indisponiveis) ficam como estao.
+    Deve ser chamada UMA vez por decisao (anexa linhas ao rationale).
+    """
+    chaves = ("otimizador", "episodio", "walkforward")
+    for d in decisoes:
+        d.rationale.append(linha_evidencia())
+    alvo = [d for d in decisoes if d.suporte_sinais]
+    flat = [d.suporte_sinais[k] for d in alvo for k in chaves]
+    julgados = aplicar_fdr(flat)
+    for j, d in enumerate(alvo):
+        suporte = dict(zip(chaves, julgados[j * 3:(j + 1) * 3]))
+        sinais = {
+            "otimizador": d.sinal_otimizador,
+            "episodio": d.sinal_episodio,
+            "walkforward": d.sinal_walkforward,
+        }
+        n_validos = sum(1 for v in sinais.values() if v in VALID_SIGNALS)
+        votos = [sinais[k] for k in chaves if conta_no_voto(suporte[k])]
+        n_buy = sum(1 for v in votos if v == "BUY")
+        n_sell = sum(1 for v in votos if v == "SELL")
+
+        acao, nivel = _derivar_acao(n_buy, n_sell, n_validos)
+
+        if d.bloqueio_compra:
+            if acao == "COMPRAR":
+                acao, nivel = "AGUARDAR", "BAIXA"
+                d.rationale.append(
+                    f"COMPRA BLOQUEADA ({d.bloqueio_compra}): COMPRAR rebaixado para AGUARDAR"
+                )
+            else:
+                d.rationale.append(f"Compra bloqueada: {d.bloqueio_compra}")
+        if d.flag_destruicao_capital and n_buy > 0:
+            d.rationale.append(
+                f"ALERTA (descritivo, nao veta): BUY presente e destruicao de capital ({d.motivo_destruicao}); "
+                "sem evidencia de que a flag antecipe retorno pior"
+            )
+        if d.flag_volume_queda_forte and n_buy > 0:
+            d.rationale.append("ALERTA (descritivo, nao veta): BUY presente e queda com volume alto detectada")
+        if d.flag_dy_gap_baixo and acao == "COMPRAR":
+            d.rationale.append("Atencao: DY Gap < p5 (DY baixo vs CDI) na entrada COMPRAR")
+
+        d.suporte_sinais = suporte
+        d.n_concordam_buy = n_buy
+        d.n_concordam_sell = n_sell
+        d.acao = acao
+        d.nivel_concordancia = nivel
+        d.rationale.extend(linhas_rationale(suporte, d.bloqueio_compra))
 
 
 def decidir_universo(
@@ -786,6 +831,10 @@ def decidir_universo(
     data_ref_mercado : date, optional
         Data de referencia do snapshot para elegibilidade de compra.
         Default: ultima data com preco no banco.
+
+    A correcao Benjamini-Hochberg (``decisao.fdr_q``) usa como familia os sinais
+    BUY/SELL ativos de TODOS os ``tickers`` desta chamada: um subconjunto gera
+    familia menor (menos conservadora) que o universo inteiro.
     """
     if tickers is None:
         tickers = tickers_ativos(session)
@@ -802,7 +851,7 @@ def decidir_universo(
         cdi = cdi_map.get(ticker)
         focus = focus_map.get(ticker)
         try:
-            d = decidir_ticker(ticker, session, optimizer_params=params,
+            d = _decidir_ticker_base(ticker, session, optimizer_params=params,
                                cdi_sensitivity=cdi,
                                focus_explanation=focus,
                                forward_days=forward_days,
@@ -812,4 +861,6 @@ def decidir_universo(
             d = _decisao_indisponivel(ticker, f"erro inesperado: {exc}")
         decisoes.append(d)
 
+    # Familia BH = todos os sinais BUY/SELL ativos da rodada (todos os tickers).
+    _finalizar_votos(decisoes)
     return decisoes

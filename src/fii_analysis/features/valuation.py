@@ -11,6 +11,8 @@ from src.fii_analysis.data.database import CdiDiario, Dividendo, PrecoDiario, Re
 from src.fii_analysis.data.cdi import get_cdi_acumulado_12m
 from src.fii_analysis.features.indicators import get_pvp_serie
 
+TOL_EMPATE_PVP = 1e-9  # tolerancia relativa de empate numerico (config sugerida: pvp_tol_empate)
+
 
 def _extract_pvp_tuples(serie_df: pd.DataFrame) -> list[tuple]:
     result = []
@@ -54,8 +56,14 @@ def get_pvp_percentil(ticker: str, t: date, janela: int | None = None, session: 
     if n < 63:
         return None, 0
 
-    percentil = float(100.0 if pvp_em_t >= max(window) else
-                 np.searchsorted(sorted(window), pvp_em_t) / n * 100)
+    # Convencao: percentil = % de observacoes ESTRITAMENTE abaixo de pvp_em_t. Valores que
+    # diferem de pvp_em_t por ruido de ponto flutuante (tol. relativa 1e-9) sao empate,
+    # nao "abaixo" nem "acima" (evita que 1e-12 de diferenca mude o rank).
+    limite_abaixo = pvp_em_t * (1.0 - TOL_EMPATE_PVP)
+    if pvp_em_t >= max(window) * (1.0 - TOL_EMPATE_PVP):
+        percentil = 100.0
+    else:
+        percentil = float(sum(1 for w in window if w < limite_abaixo) / n * 100)
 
     if n >= 252:
         return percentil, janela
@@ -86,8 +94,8 @@ def get_dy_n_meses(ticker: str, t: date, n_meses: int, session: Session | None =
     soma_div = session.execute(
         select(func.coalesce(func.sum(Dividendo.valor_cota), 0)).where(
             Dividendo.ticker == ticker,
-            Dividendo.data_com > inicio,  # semiaberta (inicio, t]: nao conta 13 pagamentos
-            Dividendo.data_com <= t,
+            Dividendo.data_com > inicio,  # semiaberta: nao conta 13 pagamentos
+            Dividendo.data_com < t,  # data_com == t so entra a partir de t+1 (data-ex), sem look-ahead
         )
     ).scalar_one()
 
@@ -111,6 +119,13 @@ def get_dy_gap(ticker: str, t: date, session: Session | None = None) -> float | 
     return dy_12m - cdi
 
 
+def _datas_janela(datas_precos: list, janela: int) -> list:
+    """Os ``janela`` pregoes ANTERIORES ao ultimo (t excluido), como get_pvp_percentil.
+    ``datas_precos``: pregoes do ticker ate t, em ordem crescente (t = ultimo)."""
+    start_idx = max(0, len(datas_precos) - 1 - janela)
+    return datas_precos[start_idx:-1] if len(datas_precos) > start_idx + 1 else []
+
+
 def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, session: Session | None = None) -> float | None:
     if janela is None:
         janela = get_threshold("dy_janela_pregoes", 252)
@@ -126,8 +141,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
     if len(datas_precos) < 252:
         return None
 
-    start_idx = max(0, len(datas_precos) - janela)
-    datas = datas_precos[start_idx:-1] if len(datas_precos) > start_idx + 1 else []
+    datas = _datas_janela(datas_precos, janela)
 
     if len(datas) < max(1, janela - 2):
         return None
@@ -140,7 +154,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
         .where(
             Dividendo.ticker == ticker,
             Dividendo.data_com > _meses_atras(data_min, 12),  # cobre a janela 12m da data mais antiga
-            Dividendo.data_com <= data_max,
+            Dividendo.data_com <= data_max,  # o corte "< d" (data-ex) e aplicado por dia abaixo
             Dividendo.valor_cota.isnot(None),
         )
         .order_by(Dividendo.data_com.asc())
@@ -183,7 +197,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
         inicio = _meses_atras(d, 12)
         soma = 0.0
         for i, dd in enumerate(div_dates):
-            if inicio < dd <= d:
+            if inicio < dd < d:  # data_com == d so entra a partir do pregao seguinte
                 soma += div_vals[i]
         if soma == 0:
             return None
@@ -194,7 +208,7 @@ def get_dy_gap_percentil(ticker: str, t: date, janela: int | None = None, sessio
 
     def _cdi_12m_em(d):
         inicio = _meses_atras(d, 12)
-        taxas = [v for dt, v in cdi_rows if inicio <= dt <= d]
+        taxas = [v for dt, v in cdi_rows if inicio < dt <= d]  # semiaberta, como o DY
         if len(taxas) < 200:
             return None
         return prod(1.0 + v / 100.0 for v in taxas) - 1.0

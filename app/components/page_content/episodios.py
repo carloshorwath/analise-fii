@@ -6,9 +6,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_tickers_modelo
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.models.episodes import get_pvp_series, identify_episodes
+
+try:
+    from src.fii_analysis.models.teste_excesso import N_MIN_TESTE
+except ImportError:
+    N_MIN_TESTE = 5
 from src.fii_analysis.models.trade_simulator import simulate_buy_and_hold, simulate_cdi_only, simulate_trades
 from src.fii_analysis.models.walk_forward_rolling import _load_cdi_series, _load_dividend_series
 
@@ -24,6 +29,20 @@ SIMULATION_INFO = """
 """
 
 
+def _caption_p(sx: dict, h1: str) -> None:
+    """Deriva, excesso e p; quando o p e omitido, diz por que."""
+    exc = sx.get("excess")
+    base = f"deriva={sx.get('drift', 0):+.2%}" + (f" | excesso={exc:+.2%}" if exc is not None else "")
+    p = sx.get("p_value")
+    if p is not None:
+        sig = "SIGNIFICATIVO" if p < 0.05 else "NAO SIGNIFICATIVO"
+        st.caption(f"t-test do excesso sobre a deriva, H1 {h1}: {base} | t={sx['t_stat']:.2f}, p={p:.3f} — {sig}")
+    elif sx.get("n", 0) < N_MIN_TESTE:
+        st.caption(f"{base} | p omitido: n={sx.get('n', 0)} episodios independentes < minimo de {N_MIN_TESTE}.")
+    else:
+        st.caption(f"{base} | p omitido: excesso sem variancia (SE = 0).")
+
+
 def render(*, key_prefix: str = "ep") -> None:
     """Renderiza analise de episodios (sem header/footer)."""
     st.caption(
@@ -33,7 +52,7 @@ def render(*, key_prefix: str = "ep") -> None:
         "Sem OR de multiplas condicoes — so P/VP percentil."
     )
 
-    tickers = load_tickers_ativos()
+    tickers = load_tickers_modelo()
     ticker = st.selectbox("Ticker", tickers, key=f"{key_prefix}_ticker")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -44,15 +63,12 @@ def render(*, key_prefix: str = "ep") -> None:
     with col3:
         fwd = st.selectbox("Forward (pregoes)", [10, 20, 30, 60], index=2, key=f"{key_prefix}_fwd")
     with col4:
-        min_gap_options = [10, 20, 30, 40, 60]
-        default_gap_idx = next(
-            (i for i, v in enumerate(min_gap_options) if v >= fwd),
-            len(min_gap_options) - 1,
+        # So valores >= forward_days (gap menor viola independencia)
+        min_gap_options = [v for v in [10, 20, 30, 40, 60] if v >= fwd]
+        min_gap = st.selectbox(
+            "Gap minimo (pregoes)", min_gap_options, index=0, key=f"{key_prefix}_gap_{fwd}",
+            help="Apenas valores >= Forward (pregoes) sao validos.",
         )
-        min_gap_raw = st.selectbox("Gap minimo (pregoes)", min_gap_options, index=default_gap_idx, key=f"{key_prefix}_gap")
-        min_gap = max(min_gap_raw, fwd)
-        if min_gap_raw < fwd:
-            st.warning(f"Gap ajustado para {fwd} (= forward_days). Gap < forward_days viola independencia.")
 
     run_key = f"ep_{ticker}_{pvp_low}_{pvp_high}_{fwd}_{min_gap}"
 
@@ -83,19 +99,19 @@ def render(*, key_prefix: str = "ep") -> None:
         pvp_atual = float(ult["pvp"]) if not pd.isna(ult["pvp"]) else None
         if pct_atual is not None:
             if pct_atual <= pvp_low:
-                cor, label = "#2e7d32", "BUY ativo"
-                dist_msg = f"P/VP percentil {pct_atual:.0f}% — sinal de COMPRA ATIVO (≤ {pvp_low}%)."
+                cor, label = "#2e7d32", "P/VP na zona baixa"
+                dist_msg = f"P/VP percentil {pct_atual:.0f}% — dentro da zona baixa (≤ {pvp_low}%)."
             elif pct_atual >= pvp_high:
-                cor, label = "#c62828", "SELL ativo"
-                dist_msg = f"P/VP percentil {pct_atual:.0f}% — sinal de VENDA ATIVO (≥ {pvp_high}%)."
+                cor, label = "#c62828", "P/VP na zona alta"
+                dist_msg = f"P/VP percentil {pct_atual:.0f}% — dentro da zona alta (≥ {pvp_high}%)."
             else:
                 cor, label = "#e65100", "NEUTRO"
                 dist_buy = pct_atual - pvp_low
                 dist_sell = pvp_high - pct_atual
                 dist_msg = (
                     f"P/VP percentil {pct_atual:.0f}% — neutro. "
-                    f"Faltam {dist_buy:.0f} pp para BUY (≤{pvp_low}%) "
-                    f"ou {dist_sell:.0f} pp para SELL (≥{pvp_high}%)."
+                    f"Faltam {dist_buy:.0f} pp para a zona baixa (≤{pvp_low}%) "
+                    f"ou {dist_sell:.0f} pp para a zona alta (≥{pvp_high}%)."
                 )
             pvp_str = f"P/VP={pvp_atual:.4f}" if pvp_atual else ""
             st.markdown(
@@ -127,9 +143,7 @@ def render(*, key_prefix: str = "ep") -> None:
 
                 if s_buy["ci_lower"] is not None:
                     st.caption(f"IC 95%: [{s_buy['ci_lower']*100:+.2f}%, {s_buy['ci_upper']*100:+.2f}%]")
-                if s_buy.get("p_value") is not None:
-                    sig = "SIGNIFICATIVO" if s_buy["p_value"] < 0.05 else "NAO SIGNIFICATIVO"
-                    st.caption(f"t-test H0:ret=0: t={s_buy['t_stat']:.2f}, p={s_buy['p_value']:.3f} — {sig}")
+                _caption_p(s_buy, "excesso>0")
 
         with col_s:
             st.markdown("### SELL Episodes (P/VP alto)")
@@ -144,9 +158,7 @@ def render(*, key_prefix: str = "ep") -> None:
 
                 if s_sell["ci_lower"] is not None:
                     st.caption(f"IC 95%: [{s_sell['ci_lower']*100:+.2f}%, {s_sell['ci_upper']*100:+.2f}%]")
-                if s_sell.get("p_value") is not None:
-                    sig = "SIGNIFICATIVO" if s_sell["p_value"] < 0.05 else "NAO SIGNIFICATIVO"
-                    st.caption(f"t-test H0:ret=0: t={s_sell['t_stat']:.2f}, p={s_sell['p_value']:.3f} — {sig}")
+                _caption_p(s_sell, "excesso<0")
 
         comp = summary.get("comparison")
         if comp:
@@ -268,7 +280,7 @@ def render(*, key_prefix: str = "ep") -> None:
         c1, c2, c3 = st.columns(3)
         c1.metric("Retorno Estratégia", f"{ret_strategy*100:+.2f}%")
         c2.metric("Retorno Buy & Hold", f"{ret_hold*100:+.2f}%")
-        c3.metric("Excesso (Alpha)", f"{alpha:+.2f}%", delta=f"{alpha:+.2f}%")
+        c3.metric("Excesso vs Buy & Hold", f"{alpha:+.2f}%", delta=f"{alpha:+.2f}%")
 
         st.info(SIMULATION_INFO)
 

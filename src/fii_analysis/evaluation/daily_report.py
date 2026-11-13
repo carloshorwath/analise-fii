@@ -193,10 +193,10 @@ def _render_secao_riscos(decisoes: list[TickerDecision]) -> list[str]:
         linhas.append("")
         return linhas
 
-    linhas.append("_Vetos e flags de saude do fundo._")
+    linhas.append("_Alertas de risco DESCRITIVOS — sem evidencia de que antecipem retorno pior; nao vetam nem geram acao._")
     linhas.append("")
     for d in sorted(decisoes, key=lambda x: (x.acao != "EVITAR", x.ticker)):
-        prefix = "**VETADO**" if d.acao == "EVITAR" else "Atencao"
+        prefix = "**VETADO (legado)**" if d.acao == "EVITAR" else "Alerta"
         linha = f"- **{d.ticker}** ({d.classificacao or '?'}) — {prefix}: "
         motivos = []
         if d.flag_destruicao_capital:
@@ -293,7 +293,7 @@ def render_markdown(decisoes: list[TickerDecision], data_ref: date | None = None
         f"Riscos: {len(buckets['riscos'])}._"
     )
     out.append("")
-    out.append("> Sinal e estatistico (saida dos modos). Acao e a decisao derivada com veto de risco.")
+    out.append("> Sinal e estatistico (saida dos modos). Acao so existe com sinal de suporte estatistico; flags de risco sao alertas, nao vetos.")
     out.append("> Concordancia e heuristica (3/3, 2/3, 1/3) — nao e intervalo de confianca.")
     out.append("")
 

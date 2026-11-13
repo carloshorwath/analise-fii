@@ -21,11 +21,12 @@ from src.fii_analysis.decision.opportunities import _candidatos_comprar_de_decis
 from src.fii_analysis.decision.portfolio_advisor import aconselhar_carteira
 from src.fii_analysis.decision.recommender import _decisao_indisponivel, decidir_ticker
 from src.fii_analysis.decision.suporte import (
+    aplicar_fdr,
     avaliar_suporte,
+    evidencia_episodio,
+    evidencia_walkforward,
     restaurar_de_rationale,
     rotulo_sinal,
-    suporte_episodio,
-    suporte_walkforward,
 )
 from src.fii_analysis.features.saude import (
     _score_destruicao_pct,
@@ -39,11 +40,12 @@ from src.fii_analysis.models.threshold_optimizer_v2 import (
 
 STATS_OTIM_OK = {
     "n_buy_thinned": 40, "n_sell_thinned": 40,
-    "p_value_buy_bonferroni": 0.001, "p_value_sell_bonferroni": 0.001,
-    "avg_return_buy_independent": 0.02,
+    "p_value_buy": 0.001, "p_value_sell": 0.001,
+    "avg_return_buy_independent": 0.02, "avg_return_sell_independent": -0.02,
+    "deriva": 0.005, "excess_buy": 0.015, "excess_sell": -0.025,
 }
 WF_BUY_OK = {"sinal_hoje": {"sinal": "BUY"}, "n_steps": 10,
-             "summary": {"BUY": {"p_value": 0.01, "n_effective": 40, "mean": 0.02}}}
+             "summary": {"BUY": {"p_value": 0.01, "n_effective": 40, "mean": 0.02, "drift": 0.005}}}
 
 
 def _add_fundo(session, ticker, cnpj, vps, inicio=date(2024, 1, 1)):
@@ -164,22 +166,29 @@ def test_avaliar_suporte_fronteiras():
     assert avaliar_suporte("INDISPONIVEL", None, None)["status"] == "NAO_APLICA"
 
 
-def test_suporte_episodio_aplica_bonferroni_m2():
-    # p bruto 0,02 * 2 testes = 0,04 < 0,05 => suportado; 0,03 * 2 = 0,06 => nao.
-    ok = suporte_episodio("BUY", {"buy": {"n": 40, "p_value": 0.02, "mean": 0.03}})
-    assert ok["status"] == "SUPORTADO" and ok["p"] == pytest.approx(0.04)
-    ruim = suporte_episodio("BUY", {"buy": {"n": 40, "p_value": 0.03, "mean": 0.03}})
-    assert ruim["status"] == "SEM_SUPORTE" and ruim["p"] == pytest.approx(0.06)
-    # p baixo mas media negativa num sinal BUY nao e suporte
-    assert suporte_episodio("BUY", {"buy": {"n": 40, "p_value": 0.001, "mean": -0.03}})["status"] == "SEM_SUPORTE"
-    # SELL exige media < 0
-    assert suporte_episodio("SELL", {"sell": {"n": 40, "p_value": 0.001, "mean": -0.03}})["status"] == "SUPORTADO"
-    assert suporte_episodio("BUY", None)["status"] == "SEM_SUPORTE"
+def _julga(evid):
+    """Familia de 1 sinal: BH com m=1 => p_bh == p_bruto (isola n/p/direcao)."""
+    return aplicar_fdr([evid])[0]
 
 
-def test_suporte_walkforward_usa_n_effective_nao_n_bruto():
-    s = {"BUY": {"n": 500, "n_effective": 12, "p_value": 0.0001, "mean": 0.02}}
-    r = suporte_walkforward("BUY", s)
+def test_evidencia_episodio_julgada_com_excesso_e_direcao():
+    # Antes: p x2 (Bonferroni m=2). Agora: p_bh sobre a familia (m=1 aqui => p_bh = p bruto).
+    ok = _julga(evidencia_episodio("BUY", {"buy": {"n": 40, "p_value": 0.02, "mean": 0.03, "drift": 0.005}}))
+    assert ok["status"] == "SUPORTADO" and ok["p"] == pytest.approx(0.02)
+    assert ok["excesso"] == pytest.approx(0.025) and ok["deriva"] == 0.005
+    ruim = _julga(evidencia_episodio("BUY", {"buy": {"n": 40, "p_value": 0.06, "mean": 0.03, "drift": 0.005}}))
+    assert ruim["status"] == "SEM_SUPORTE"
+    # p baixo mas excesso negativo (media abaixo da deriva) num BUY nao e suporte
+    contra = _julga(evidencia_episodio("BUY", {"buy": {"n": 40, "p_value": 0.001, "mean": 0.01, "drift": 0.02}}))
+    assert contra["status"] == "SEM_SUPORTE"
+    # SELL exige excesso < 0
+    assert _julga(evidencia_episodio("SELL", {"sell": {"n": 40, "p_value": 0.001, "mean": -0.03, "drift": 0.0}}))["status"] == "SUPORTADO"
+    assert _julga(evidencia_episodio("BUY", None))["status"] == "SEM_SUPORTE"
+
+
+def test_evidencia_walkforward_usa_n_effective_nao_n_bruto():
+    s = {"BUY": {"n": 500, "n_effective": 12, "p_value": 0.0001, "mean": 0.02, "drift": 0.0}}
+    r = _julga(evidencia_walkforward("BUY", s))
     assert r["status"] == "SEM_SUPORTE" and r["n"] == 12
 
 
@@ -187,10 +196,10 @@ def test_suporte_walkforward_usa_n_effective_nao_n_bruto():
 @patch("src.fii_analysis.decision.recommender.ThresholdOptimizerV2")
 def test_sinais_sem_suporte_nao_votam_mas_ficam_gravados(MockOpt, mock_wf, db_session):
     mock_wf.return_value = {"sinal_hoje": {"sinal": "BUY"}, "n_steps": 10,
-                            "summary": {"BUY": {"p_value": 0.0001, "n_effective": 3, "mean": 0.05}}}
+                            "summary": {"BUY": {"p_value": 0.0001, "n_effective": 3, "mean": 0.05, "drift": 0.0}}}
     MockOpt.return_value.get_signal_hoje.return_value = {"sinal": "BUY"}
-    stats_fracas = {"n_buy_thinned": 4, "p_value_buy_bonferroni": 1.0,
-                    "avg_return_buy_independent": 0.02}
+    stats_fracas = {"n_buy_thinned": 4, "p_value_buy": 1.0,
+                    "avg_return_buy_independent": 0.02, "deriva": 0.0, "excess_buy": 0.02}
     d = decidir_ticker("MOCK11", db_session, optimizer_params={"x": 1}, optimizer_stats=stats_fracas)
     assert d.sinal_otimizador == "BUY" and d.sinal_walkforward == "BUY"   # gravados
     assert d.suporte_sinais["otimizador"]["status"] == "SEM_SUPORTE"

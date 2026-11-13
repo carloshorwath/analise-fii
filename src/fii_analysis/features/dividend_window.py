@@ -11,8 +11,9 @@ def get_dividend_windows(ticker: str, session: Session) -> pd.DataFrame:
     """
     Retorna janela ±10 pregões ao redor de cada data-com.
 
-    Usa fechamento_aj (preço ajustado por dividendos) para calcular retornos.
-    Com preços ajustados, o efeito mecânico do ex-dividend já está removido:
+    Usa fechamento_aj (série de retorno total construída pelo projeto, dividendo
+    reinvestido na data-ex; data/corporate_actions.py) para calcular retornos.
+    Com a série de retorno total, o efeito mecânico do ex-dividend já está removido:
     a série reflete retorno total (preço + dividendo) sem queda artificial no dia +1.
     """
     dividendos = session.execute(

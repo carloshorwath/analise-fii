@@ -3,9 +3,11 @@ from __future__ import annotations
 import calendar
 from datetime import date
 import numpy as np
+import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from src.fii_analysis.data.database import BenchmarkDiario, CdiDiario, PrecoDiario, RelatorioMensal, get_cnpj_by_ticker
+from src.fii_analysis.features.indicators import get_relatorios_ajustados
 
 
 def get_pl_trend(ticker: str, target_date: date, session: Session, months: int = 3) -> str:
@@ -14,16 +16,11 @@ def get_pl_trend(ticker: str, target_date: date, session: Session, months: int =
     if not cnpj:
         return 'ESTAVEL'
 
-    stmt = (
-        select(RelatorioMensal.patrimonio_liq, RelatorioMensal.cotas_emitidas)
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.data_entrega <= target_date
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(months + 1)
-    )
-    rows = session.execute(stmt).all()
+    # Cotas na base ajustada a splits: PL/cotas nominal criaria um degrau falso no split.
+    df = get_relatorios_ajustados(ticker, session)
+    df = df[pd.to_datetime(df["data_entrega"]) <= pd.Timestamp(target_date)]
+    df = df.sort_values("data_referencia", ascending=False).head(months + 1)
+    rows = [(r.patrimonio_liq, r.cotas_aj) for r in df.itertuples(index=False)]
 
     if len(rows) < months + 1:
         return 'ESTAVEL'
@@ -31,9 +28,9 @@ def get_pl_trend(ticker: str, target_date: date, session: Session, months: int =
     vpas = []
     for row in rows:
         pl, cotas = row
-        if pl is None:
+        if pd.isna(pl):
             return 'ESTAVEL'
-        if cotas is not None and cotas > 0:
+        if pd.notna(cotas) and cotas > 0:
             vpas.append(float(pl) / float(cotas))
         else:
             vpas.append(float(pl))

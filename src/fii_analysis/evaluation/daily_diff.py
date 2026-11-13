@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.fii_analysis.data.database import (
@@ -14,7 +14,50 @@ from src.fii_analysis.data.database import (
     SnapshotStructuralAlerts,
     SnapshotPortfolioAdvices,
     Dividendo,
+    PrecoDiario,
 )
+
+
+def _pregoes_b3(inicio: date, fim: date) -> list[date]:
+    """Pregoes da B3 em [inicio, fim] (calendario pandas_market_calendars, o mesmo da ingestao)."""
+    import pandas_market_calendars as mcal
+
+    return [d.date() for d in mcal.get_calendar("B3").valid_days(start_date=inicio, end_date=fim)]
+
+
+def pregao_anterior(d: date) -> date | None:
+    """Ultimo pregao estritamente anterior a ``d`` (None se o calendario nao resolver)."""
+    ps = _pregoes_b3(d - timedelta(days=15), d - timedelta(days=1))
+    return ps[-1] if ps else None
+
+
+def ultimo_pregao(ref: date) -> date | None:
+    """Ultimo pregao <= ``ref``."""
+    ps = _pregoes_b3(ref - timedelta(days=15), ref)
+    return ps[-1] if ps else None
+
+
+def rotulo_periodo_diff(data_anterior: date, data_atual: date) -> str:
+    """'desde ontem' SO se data_anterior for de fato o pregao anterior a data_atual;
+    senao 'desde o snapshot anterior'."""
+    try:
+        eh_ontem = data_anterior == pregao_anterior(data_atual)
+    except Exception:  # calendario indisponivel: rotulo neutro e sempre verdadeiro
+        eh_ontem = False
+    return "desde ontem" if eh_ontem else "desde o snapshot anterior"
+
+
+def precos_desatualizados(session: Session, hoje: date | None = None) -> bool:
+    """True se o ultimo preco do banco e anterior ao ultimo pregao ate ``hoje``
+    (so entao faz sentido sugerir 'fii update-prices')."""
+    ultimo_preco = session.execute(select(func.max(PrecoDiario.data))).scalar_one_or_none()
+    if ultimo_preco is None:
+        return True
+    try:
+        alvo = ultimo_pregao(hoje or date.today())
+    except Exception:
+        return True
+    return alvo is not None and ultimo_preco < alvo
 
 
 @dataclass
@@ -172,9 +215,15 @@ def calcular_diff_diario(session: Session, run_id_atual: int, run_id_anterior: i
             "valor": float(a.valor) if a.valor is not None else None
         })
 
-    # 7. Próximas Datas-Com (próximos 7 dias corridos ~ 5 dias úteis)
+    # 7. Próximas Datas-Com (próximos 5 pregões B3): confirmadas (tabela dividendos) +
+    # estimadas (snapshot_decisions.proxima_data_com_estimada — a MESMA fonte da watchlist),
+    # para as duas telas nunca divergirem. Confirmada vence a estimada do mesmo ticker.
     today = dt_act
-    end_date = today + timedelta(days=7)
+    try:
+        seguintes = [p for p in _pregoes_b3(today, today + timedelta(days=14)) if p > today][:5]
+        end_date = seguintes[-1] if seguintes else today + timedelta(days=7)
+    except Exception:
+        end_date = today + timedelta(days=7)
     divs = session.execute(
         select(Dividendo)
         .where(Dividendo.data_com >= today, Dividendo.data_com <= end_date)
@@ -185,8 +234,17 @@ def calcular_diff_diario(session: Session, run_id_atual: int, run_id_anterior: i
         diff.proximas_datas_com.append({
             "ticker": d.ticker,
             "data_com": d.data_com,
-            "valor_cota": float(d.valor_cota)
+            "valor_cota": float(d.valor_cota),
+            "estimada": False,
         })
+    confirmados = {x["ticker"] for x in diff.proximas_datas_com}
+    for t, d in sorted(dec_act.items()):
+        dc = d.proxima_data_com_estimada
+        if t not in confirmados and dc is not None and today <= dc <= end_date:
+            diff.proximas_datas_com.append(
+                {"ticker": t, "data_com": dc, "valor_cota": None, "estimada": True}
+            )
+    diff.proximas_datas_com.sort(key=lambda x: (x["data_com"], x["ticker"]))
 
     return diff
 
@@ -194,21 +252,24 @@ def calcular_diff_diario(session: Session, run_id_atual: int, run_id_anterior: i
 def render_diff_markdown(diff: DailyDiff) -> str:
     """Gera o sumário de mudanças diárias estruturado em Markdown."""
     lines = []
-    lines.append(f"## 1. O que mudou desde ontem ({diff.data_anterior.strftime('%d/%m/%Y')} ➔ {diff.data_atual.strftime('%d/%m/%Y')})")
+    periodo = rotulo_periodo_diff(diff.data_anterior, diff.data_atual)
+    lines.append(f"## 1. O que mudou {periodo} ({diff.data_anterior.strftime('%d/%m/%Y')} ➔ {diff.data_atual.strftime('%d/%m/%Y')})")
     lines.append("")
 
     if diff.empty:
-        lines.append("*Nada mudou no comportamento quantitativo e de recomendações desde ontem.*")
+        lines.append(f"*Nada mudou no comportamento quantitativo e de recomendações {periodo}.*")
         lines.append("")
     else:
         # Ações recomendadas
         if diff.mudacoes_acao:
-            lines.append("### 🟢 Recomendações e Sugestões Alteradas")
+            lines.append("### 🟢 Ação/Badge alterados")
             for m in diff.mudacoes_acao:
-                lines.append(
-                    f"- **{m['ticker']}**: Ação: `{m['acao_ant']}` ➔ `{m['acao_nv']}` | "
-                    f"Badge: `{m['badge_ant']}` ➔ `{m['badge_nv']}`"
-                )
+                partes = []  # so o que mudou
+                if m["acao_ant"] != m["acao_nv"]:
+                    partes.append(f"Ação: `{m['acao_ant']}` ➔ `{m['acao_nv']}`")
+                if m["badge_ant"] != m["badge_nv"]:
+                    partes.append(f"Badge: `{m['badge_ant']}` ➔ `{m['badge_nv']}`")
+                lines.append(f"- **{m['ticker']}**: " + " | ".join(partes))
             lines.append("")
 
         # Filtros de Radar
@@ -229,7 +290,7 @@ def render_diff_markdown(diff: DailyDiff) -> str:
 
         # Oportunidades Novas
         if diff.oportunidades_novas:
-            lines.append("### 🔄 Novas Oportunidades de Rotação Recomendadas")
+            lines.append("### 🔄 Novos Pares de Rotação (descritivos)")
             for o in diff.oportunidades_novas:
                 lines.append(
                     f"- **VENDER {o['vender']}** ➔ **COMPRAR {o['comprar']}** | "
@@ -252,7 +313,10 @@ def render_diff_markdown(diff: DailyDiff) -> str:
         lines.append("")
     else:
         for d in diff.proximas_datas_com:
-            lines.append(f"- **{d['ticker']}**: Data-com em `{d['data_com'].strftime('%d/%m/%Y')}` | Valor: `R$ {d['valor_cota']:.4f}`")
+            if d.get("estimada") or d["valor_cota"] is None:
+                lines.append(f"- **{d['ticker']}**: Data-com ESTIMADA em `{d['data_com'].strftime('%d/%m/%Y')}` (pela mediana histórica)")
+            else:
+                lines.append(f"- **{d['ticker']}**: Data-com em `{d['data_com'].strftime('%d/%m/%Y')}` | Valor: `R$ {d['valor_cota']:.4f}`")
         lines.append("")
 
     return "\n".join(lines)

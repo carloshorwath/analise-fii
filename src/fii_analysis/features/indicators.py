@@ -88,7 +88,7 @@ def get_dy_trailing(ticker: str, data: date, session: Session, janela_dias: int 
         select(func.coalesce(func.sum(Dividendo.valor_cota), 0)).where(
             Dividendo.ticker == ticker,
             Dividendo.data_com > inicio,
-            Dividendo.data_com <= data,
+            Dividendo.data_com < data,  # data_com == data so entra a partir do pregao seguinte (data-ex)
         )
     ).scalar_one()
     if soma == 0:
@@ -152,7 +152,7 @@ def get_dy_serie(ticker: str, session: Session, janela_dias: int = 365) -> pd.Da
         inicio = d - timedelta(days=janela_dias)
         soma = 0.0
         for i, dd in enumerate(div_dates):
-            if inicio < dd <= d:
+            if inicio < dd < d:  # data_com == d so entra a partir do pregao seguinte
                 soma += div_vals[i]
         dy = soma / fech_f if (fech_f is not None and fech_f > 0 and soma > 0) else None
         rows.append({"data": d, "fechamento": fech_f, "dividendos_12m": soma if soma > 0 else None, "dy": dy})

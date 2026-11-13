@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from src.fii_analysis.config import tickers_ativos
 from src.fii_analysis.data.database import Dividendo, PrecoDiario, Ticker
 from src.fii_analysis.features.composicao import classificar_fii, composicao_ativo
-from src.fii_analysis.features.portfolio import carteira_panorama
+from src.fii_analysis.features.portfolio import carteira_panorama, herfindahl, posicoes_carteira
 from src.fii_analysis.features.saude import emissoes_recentes, flag_destruicao_capital, tendencia_pl
 from src.fii_analysis.features.valuation import get_dy_n_meses, get_pvp_percentil
 
@@ -20,6 +20,19 @@ def _fmt(val, fmt=".2f", pct=False, suffix=""):
     if pct:
         return f"{val * 100:{fmt}}%{suffix}"
     return f"{val:{fmt}}{suffix}"
+
+
+def resumo_defasagem(ultimos: dict) -> tuple:
+    """(data do ultimo pregao da MAIORIA dos tickers, {ticker: data} dos que estao antes dela).
+
+    Maioria = data mais frequente (empate: a mais recente). Nao usa o MIN, que seria
+    puxado por um unico ticker parado.
+    """
+    from collections import Counter
+
+    cont = Counter(ultimos.values())
+    data_maioria = max(cont, key=lambda d: (cont[d], d))
+    return data_maioria, {t: d for t, d in ultimos.items() if d < data_maioria}
 
 
 def render_panorama(df=None):
@@ -61,21 +74,27 @@ def render_panorama(df=None):
 
         console.print(table)
 
-        coletado_em_rows = {}
+        ultimos = {}
         for ticker_item in (df["ticker"].tolist() if df is not None else tickers_ativos(session)):
-            ts = session.execute(
-                select(func.max(PrecoDiario.coletado_em))
-                .where(PrecoDiario.ticker == ticker_item)
+            d_ult = session.execute(
+                select(func.max(PrecoDiario.data)).where(PrecoDiario.ticker == ticker_item)
             ).scalar_one_or_none()
-            if ts:
-                coletado_em_rows[ticker_item] = ts
+            if d_ult:
+                ultimos[ticker_item] = d_ult
 
-    if coletado_em_rows:
-        mais_antigo = min(coletado_em_rows.values())
+    if ultimos:
+        data_maioria, defasados = resumo_defasagem(ultimos)
+        n_ok = len(ultimos) - len(defasados)
         console.print(
-            f"[dim][Nota: fechamento_aj (preço ajustado) recalculado retroativamente pelo yfinance. "
-            f"Coletado em: {mais_antigo.strftime('%Y-%m-%d %H:%M') if hasattr(mais_antigo, 'strftime') else mais_antigo}][/dim]"
+            f"[dim][Nota: fechamento_aj é a série de retorno total (dividendo reinvestido) construída pelo projeto e recalculada por inteiro a cada atualização. "
+            f"Último pregão da maioria: {data_maioria} ({n_ok}/{len(ultimos)} tickers)][/dim]"
         )
+        if defasados:
+            console.print(
+                "[yellow]Defasados: "
+                + ", ".join(f"{t} (último preço {d})" for t, d in sorted(defasados.items()))
+                + "[/yellow]"
+            )
 
 
 def render_fii_detalhe(ticker: str):
@@ -121,6 +140,7 @@ def render_fii_detalhe(ticker: str):
         comp = composicao_ativo(ticker, session)
         table.add_row("Tipo FII", classificar_fii(ticker, session))
         table.add_row("% Imoveis", _fmt(comp.get("pct_imoveis"), ".1f", pct=True))
+        table.add_row("% Part. sociedades imob.", _fmt(comp.get("pct_sociedades_imobiliarias"), ".1f", pct=True))
         table.add_row("% Recebiveis", _fmt(comp.get("pct_recebiveis"), ".1f", pct=True))
         table.add_row("% Caixa", _fmt(comp.get("pct_caixa"), ".1f", pct=True))
 
@@ -151,26 +171,32 @@ def render_carteira():
     from src.fii_analysis.data.database import get_session_ctx
 
     with get_session_ctx() as session:
-        ativos = tickers_ativos(session)
-        df = carteira_panorama(ativos, session)
+        # Posicoes reais (tabela carteira): valor de mercado = quantidade x preco.
+        df = posicoes_carteira(session)
+        if df.empty:
+            console.print("[yellow]Carteira vazia (tabela carteira sem posicoes).[/yellow]")
+            return
 
-        console.print("\n[bold]Alocacao por Classificacao:[/bold]")
-        from src.fii_analysis.features.composicao import classificar_fii as cf
+        console.print("\n[bold]Alocacao por Classificacao (valor de mercado):[/bold]")
         classificacoes = {}
-        for _, row in df.iterrows():
-            tipo = cf(row["ticker"], session)
-            preco = row.get("preco") or 0
-            classificacoes[tipo] = classificacoes.get(tipo, 0) + preco
+        for _, row in df.dropna(subset=["valor_mercado"]).iterrows():
+            tipo = classificar_fii(row["ticker"], session)
+            classificacoes[tipo] = classificacoes.get(tipo, 0) + row["valor_mercado"]
 
         total = sum(classificacoes.values())
         for tipo, val in sorted(classificacoes.items(), key=lambda x: -x[1]):
             pct = val / total * 100 if total > 0 else 0
             console.print(f"  {tipo}: R$ {val:,.2f} ({pct:.1f}%)")
+        console.print(f"  Total: R$ {total:,.2f} ({len(df)} posicoes)")
 
-        from src.fii_analysis.features.portfolio import herfindahl
-        pesos = [p for p in df["preco"].dropna().tolist() if p > 0]
+        sem_preco = df[df["valor_mercado"].isna()]["ticker"].tolist()
+        if sem_preco:
+            console.print(f"[yellow]Sem preco (fora do total): {', '.join(sem_preco)}[/yellow]")
+
+        pesos = [v for v in df["valor_mercado"].dropna().tolist() if v > 0]
         hh = herfindahl(pesos)
-        console.print(f"\n[bold]Herfindahl:[/bold] {hh['hh']:.4f}  |  Maior peso: {hh['maior_peso']:.1%}")
+        if hh["hh"] is not None:
+            console.print(f"\n[bold]Herfindahl:[/bold] {hh['hh']:.4f}  |  Maior peso: {hh['maior_peso']:.1%}")
 
 
 def render_calendario(dias: int = 30):

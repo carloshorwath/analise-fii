@@ -168,3 +168,52 @@ def calcular_retorno_total(
     tr = tr * (vals[-1] / tr[-1])
     saida.loc[valido.index] = tr
     return saida
+
+
+# ---------------------------------------------------------------------------
+# Janela de validade do RETORNO TOTAL
+# ---------------------------------------------------------------------------
+# `dividendos` (yfinance) so tem cobertura ampla a partir de 2022-03/04; antes disso
+# `fechamento_aj` e retorno de PRECO, nao total. Os modelos de retorno forward
+# (episodios, otimizador, walk-forward, event study) usam so retornos a partir de
+# INICIO_RETORNO_TOTAL, calculado do dado (nunca hardcoded):
+# primeiro mes a partir do qual >= FRACAO_COBERTURA_DIVIDENDOS dos fundos com preco tem
+# dividendo em TODOS os meses seguintes (o mes corrente, incompleto, e ignorado).
+# "Primeiro mes qualquer" nao serve: em 2017 havia 2 fundos com preco e 1 com dividendo.
+FRACAO_COBERTURA_DIVIDENDOS = 0.5
+
+
+def primeiro_mes_com_cobertura(
+    n_precos_por_mes: dict[str, int], n_divs_por_mes: dict[str, int],
+    fracao: float = FRACAO_COBERTURA_DIVIDENDOS,
+) -> str | None:
+    """Primeiro mes ('YYYY-MM') da sequencia final de meses com n_divs/n_precos >= fracao
+    (o ultimo mes, possivelmente incompleto, nao entra na checagem). Funcao pura."""
+    meses = sorted(n_precos_por_mes)[:-1]
+    inicio = None
+    for mes in reversed(meses):
+        n = n_precos_por_mes[mes]
+        if n > 0 and n_divs_por_mes.get(mes, 0) / n >= fracao:
+            inicio = mes
+        else:
+            break
+    return inicio
+
+
+def get_inicio_retorno_total(session) -> date | None:
+    """Primeiro dia (do primeiro mes com cobertura de dividendos) a partir do qual
+    `fechamento_aj` e retorno total. None se nao ha dados (=> sem restricao)."""
+    from sqlalchemy import func, select
+
+    from src.fii_analysis.data.database import Dividendo, PrecoDiario
+
+    mes_p = func.strftime("%Y-%m", PrecoDiario.data)
+    precos = dict(session.execute(
+        select(mes_p, func.count(func.distinct(PrecoDiario.ticker))).group_by(mes_p)
+    ).all())
+    mes_d = func.strftime("%Y-%m", Dividendo.data_com)
+    divs = dict(session.execute(
+        select(mes_d, func.count(func.distinct(Dividendo.ticker))).group_by(mes_d)
+    ).all())
+    mes = primeiro_mes_com_cobertura(precos, divs)
+    return None if mes is None else date(int(mes[:4]), int(mes[5:7]), 1)

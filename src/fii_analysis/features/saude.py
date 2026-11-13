@@ -1,12 +1,26 @@
 from datetime import date
 
 import numpy as np
+import pandas as pd
 from scipy import stats as sp_stats
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.fii_analysis.config_yaml import get_saude_param, get_threshold
 from src.fii_analysis.data.database import AtivoPassivo, RelatorioMensal, get_cnpj_by_ticker
+from src.fii_analysis.features.indicators import get_relatorios_ajustados
+
+
+def _informes_pit(ticker: str, session, t: date) -> pd.DataFrame:
+    """Informes entregues ate `t` (point-in-time), do mais recente ao mais antigo, com
+    VP/cota (vp_aj) e cotas (cotas_aj) na MESMA BASE entre informes: um split/grupamento
+    dentro da janela nao pode virar "emissao" nem "queda de VP" (ver data/corporate_actions.py).
+    """
+    df = get_relatorios_ajustados(ticker, session)
+    if df.empty:
+        return df
+    df = df[pd.to_datetime(df["data_entrega"]) <= pd.Timestamp(t)]
+    return df.sort_values("data_referencia", ascending=False).reset_index(drop=True)
 
 
 def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t: date | None = None) -> dict:
@@ -25,15 +39,9 @@ def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t
     if cnpj is None:
         return {m: {"coef_angular": None, "r2": None, "n": 0} for m in meses}
 
-    relatorios = session.execute(
-        select(RelatorioMensal.data_referencia, RelatorioMensal.vp_por_cota)
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.vp_por_cota.isnot(None),
-            RelatorioMensal.data_entrega <= t,
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-    ).all()
+    df = _informes_pit(ticker, session, t)
+    df = df[df["vp_aj"].notna()]
+    relatorios = list(df["vp_aj"].astype(float))  # mais recente primeiro
 
     if not relatorios:
         return {m: {"coef_angular": None, "r2": None, "n": 0} for m in meses}
@@ -45,7 +53,7 @@ def tendencia_pl(ticker: str, meses: list[int] | None = None, session=None, *, t
             resultado[m] = {"coef_angular": None, "r2": None, "n": len(corte)}
             continue
 
-        vp_vals = [float(r.vp_por_cota) for r in reversed(corte)]
+        vp_vals = list(reversed(corte))
         x = np.arange(len(vp_vals), dtype=float)
         y = np.array(vp_vals)
 
@@ -145,20 +153,8 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     if cnpj is None:
         return _destruicao_result(False, "saudavel", "estavel", 100, "ticker nao encontrado")
 
-    relatorios = session.execute(
-        select(
-            RelatorioMensal.data_referencia,
-            RelatorioMensal.cotas_emitidas,
-            RelatorioMensal.vp_por_cota,
-        )
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.vp_por_cota.isnot(None),
-            RelatorioMensal.data_entrega <= t,
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(12)
-    ).all()
+    relatorios = _informes_pit(ticker, session, t)
+    relatorios = relatorios[relatorios["vp_aj"].notna()].head(12)
 
     if len(relatorios) < 3:
         return _destruicao_result(False, "saudavel", "estavel", 100, "dados insuficientes")
@@ -166,12 +162,12 @@ def flag_destruicao_capital(ticker: str, session=None, *, t: date | None = None)
     pct_saudavel, pct_severo, delta_tendencia = _limiares_vp_pct()
 
     # --- Meses consecutivos de queda do VP/cota (relatorios é DESC) ---
-    vps_desc = [float(r.vp_por_cota) for r in relatorios]
+    vps_desc = [float(v) for v in relatorios["vp_aj"]]
     current_consec, max_consec = _meses_queda_vp(vps_desc, pct_saudavel)
 
     cond1 = max_consec >= get_threshold("meses_consec_alerta", 2)
 
-    cotas = [float(r.cotas_emitidas) for r in relatorios if r.cotas_emitidas is not None]
+    cotas = [float(c) for c in relatorios["cotas_aj"] if pd.notna(c)]
     cond2 = True
     if len(cotas) >= 2:
         crescimento = (cotas[0] - cotas[-1]) / cotas[-1] if cotas[-1] > 0 else 0
@@ -361,6 +357,9 @@ def emissoes_recentes(
     Parâmetro t define o ponto de corte point-in-time: só são usados
     relatórios com data_entrega <= t. Default: hoje.
 
+    Cotas e VP/cota vêm ajustados a splits/grupamentos (mesma base entre informes),
+    portanto ``cotas_ant``/``cotas_novas``/``vp_*`` estão na base da quantidade ATUAL de cotas.
+
     Returns:
         Lista de dicts com campos:
             data_ref, cotas_ant, cotas_novas, variacao_pct,
@@ -375,34 +374,22 @@ def emissoes_recentes(
     if cnpj is None:
         return []
 
-    relatorios = session.execute(
-        select(
-            RelatorioMensal.data_referencia,
-            RelatorioMensal.cotas_emitidas,
-            RelatorioMensal.vp_por_cota,
-        )
-        .where(
-            RelatorioMensal.cnpj == cnpj,
-            RelatorioMensal.cotas_emitidas.isnot(None),
-            RelatorioMensal.data_entrega <= t,
-        )
-        .order_by(RelatorioMensal.data_referencia.desc())
-        .limit(12)
-    ).all()
+    relatorios = _informes_pit(ticker, session, t)
+    relatorios = relatorios[relatorios["cotas_aj"].notna()].head(12)
 
     emissoes = []
-    rows = list(relatorios)
+    rows = list(relatorios.itertuples(index=False))
     for i in range(len(rows) - 1):
         atual = rows[i]
         anterior = rows[i + 1]
-        cotas_atual = float(atual.cotas_emitidas)
-        cotas_ant = float(anterior.cotas_emitidas)
+        cotas_atual = float(atual.cotas_aj)
+        cotas_ant = float(anterior.cotas_aj)
         if cotas_ant > 0:
             var = (cotas_atual - cotas_ant) / cotas_ant * 100
             if var > threshold_pct:
                 # Calcular impacto no VP/cota (mês anterior → mês da emissão)
-                vp_depois = float(atual.vp_por_cota) if atual.vp_por_cota is not None else None
-                vp_antes = float(anterior.vp_por_cota) if anterior.vp_por_cota is not None else None
+                vp_depois = float(atual.vp_aj) if pd.notna(atual.vp_aj) else None
+                vp_antes = float(anterior.vp_aj) if pd.notna(anterior.vp_aj) else None
                 impacto_vp_pct = None
                 ruim = False
                 classificacao = "neutra"

@@ -20,6 +20,8 @@ from src.fii_analysis.data.database import CdiDiario
 def get_cdi_acumulado_12m(t: date, session) -> float | None:
     """Retorna CDI acumulado nos 12 meses anteriores a t (como fração, ex: 0.105).
 
+    Janela SEMIABERTA (t-12m, t], a mesma do DY (get_dy_n_meses): o dia t-12m fica fora.
+
     Usa registros point-in-time da tabela cdi_diario.
     Retorna None se houver dados insuficientes (< 200 dias úteis).
     """
@@ -31,7 +33,7 @@ def get_cdi_acumulado_12m(t: date, session) -> float | None:
     registros = (
         session.execute(
             select(CdiDiario.taxa_diaria_pct)
-            .where(CdiDiario.data >= inicio, CdiDiario.data <= t)
+            .where(CdiDiario.data > inicio, CdiDiario.data <= t)
             .order_by(CdiDiario.data.asc())
         )
         .scalars()

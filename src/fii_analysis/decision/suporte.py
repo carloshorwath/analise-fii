@@ -1,36 +1,74 @@
 """Suporte estatistico dos sinais que votam no recommender.
 
+DEFINICAO UNICA DA HIPOTESE (vale para os tres sinais: otimizador, episodio e
+walk-forward; implementada em ``models/teste_excesso.py``):
+
+    Sinal s do ativo i, direcao d (BUY ou SELL), horizonte h (pregoes).
+    Periodo de avaliacao P = dias fora da amostra com retorno forward de h
+        pregoes definido (otimizador: split de TESTE; episodios: toda a serie
+        com percentil definido, limiares fixos 10/90; walk-forward: todos os
+        dias OOS).
+    Deriva  mu = media do retorno forward de h pregoes sobre TODOS os dias de P
+        do mesmo ativo (incondicional; inclui os dias de evento).
+    Eventos E = dias de P em que o sinal d esta ativo, afinados por gap >= h
+        pregoes (thinning: janelas forward nao se sobrepoem => independentes).
+    Excesso x_k = r_k - mu, k em E.
+    H0: E[x] = 0 (retorno apos o sinal igual ao incondicional do mesmo ativo
+        no mesmo periodo).
+    Estatistica: t de 1 amostra de x (n-1 g.l.), UNICAUDAL na direcao do sinal:
+        BUY  H1: E[x] > 0      SELL H1: E[x] < 0.
+    p bruto: p desse teste. Guardados no resultado: n, media bruta de r, mu,
+        excesso medio, p bruto.
+
+    Correcao para multiplos testes: Benjamini-Hochberg (FDR ``decisao.fdr_q``,
+    default 5%) sobre a FAMILIA = todos os sinais BUY/SELL ATIVOS avaliados na
+    rodada (todos os tickers decididos, os tres tipos de sinal). Sinal ativo
+    sem p calculavel entra na familia com p = 1 (conservador). Em
+    ``decidir_universo`` a familia e a rodada inteira; em ``decidir_ticker``
+    avulso, so os sinais ativos daquele ticker (<= 3). O p ajustado por BH
+    (``p_bh``) e o "p corrigido" da trava. A selecao de parametros do
+    otimizador ocorre em treino/validacao; o p de holdout NAO e multiplicado
+    pelo tamanho do grid (um teste por direcao).
+
 Regra (config.yaml, secao ``decisao``): um sinal BUY/SELL so entra no voto
 (n_concordam_buy / n_concordam_sell / nivel de concordancia) se
 
     n de eventos independentes fora da amostra  >= suporte_n_min   (default 30)
-    p-valor corrigido para multiplos testes     <  suporte_p_max   (default 0.05)
+    p_bh (BH sobre a familia da rodada)         <  fdr_q           (default 0.05)
 
 Sinal sem suporte NAO some: continua gravado e exibido, marcado como
 informativo. Sinal sem n/p disponivel e tratado como sem suporte.
 
-Origem de n e p por sinal:
-    otimizador   -> test_result do ThresholdOptimizerV2.optimize() (split de teste,
-                    n_*_thinned; p Bonferroni sobre o grid). Persistido em
-                    dados/optimizer_cache/<ticker>.json (chave ``test_stats``).
-    episodio     -> identify_episodes()["summary"][buy|sell]: n (thinned, min_gap)
-                    e p do t-test (H0 media=0), corrigido por Bonferroni
-                    (m = decisao.testes_episodio). Limiares 10/90 sao fixos
-                    (nada ajustado), logo os eventos sao fora da amostra.
-    walkforward  -> walk_forward_roll()["summary"][BUY|SELL]: n_effective
-                    (thinned, OOS por construcao) e p do t-test, corrigido
-                    por Bonferroni (m = decisao.testes_walkforward).
+Limitacoes conhecidas (nao corrigidas aqui):
+    - mu e tratado como constante conhecida; seu erro amostral (retornos
+      forward sobrepostos, poucos anos) nao entra na variancia do teste.
+    - BH assume independencia/dependencia positiva (PRDS) entre testes; os FIIs
+      e os tres sinais de um mesmo ticker compartilham mercado e dados.
+    - n >= 30 eventos independentes de 20 pregoes exige >= ~2,4 anos DE SINAL
+      ATIVO fora da amostra; o split de teste do otimizador raramente chega
+      a esse n (ver relatorio de medicao).
 
-Direcao: BUY exige media > 0 e SELL media < 0 nos eventos (um p baixo com
-sinal contrario ao do voto nao e suporte).
+Origem de n, media e p por sinal:
+    otimizador   -> test_result do ThresholdOptimizerV2.optimize() (split de teste).
+                    Persistido em dados/optimizer_cache/<ticker>.json (``test_stats``).
+    episodio     -> identify_episodes()["summary"][buy|sell]: n (thinned, min_gap),
+                    mean, drift, p_value (excesso, unicaudal).
+    walkforward  -> walk_forward_roll()["summary"][BUY|SELL]: n_effective (thinned),
+                    mean, drift, p_value (excesso, unicaudal).
+
+Direcao: BUY exige excesso > 0 e SELL excesso < 0 (redundante com a cauda do
+teste, mantido como verificacao explicita).
 """
 
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, Sequence
+
+import numpy as np
 
 from src.fii_analysis.config_yaml import get_decisao_param
+from src.fii_analysis.decision.evidencia import EVIDENCIA_PREFIX
 
 SUPORTADO = "SUPORTADO"
 SEM_SUPORTE = "SEM_SUPORTE"
@@ -43,9 +81,10 @@ _NOMES = {"otimizador": "Otim", "episodio": "Epi", "walkforward": "WF"}
 
 
 def limiares_suporte() -> tuple[int, float]:
+    """(n_min, fdr_q): n minimo de eventos independentes e q-valor BH maximo."""
     return (
         int(get_decisao_param("suporte_n_min", 30)),
-        float(get_decisao_param("suporte_p_max", 0.05)),
+        float(get_decisao_param("fdr_q", 0.05)),
     )
 
 
@@ -58,7 +97,10 @@ def avaliar_suporte(
     n_min: Optional[int] = None,
     p_max: Optional[float] = None,
 ) -> dict:
-    """Classifica um sinal como SUPORTADO / SEM_SUPORTE / NAO_APLICA."""
+    """Classifica um sinal como SUPORTADO / SEM_SUPORTE / NAO_APLICA.
+
+    ``p_corrigido`` = p ajustado por BH (``p_bh``) sobre a familia da rodada.
+    """
     if n_min is None or p_max is None:
         d_n, d_p = limiares_suporte()
         n_min = d_n if n_min is None else n_min
@@ -79,18 +121,53 @@ def avaliar_suporte(
     if n < n_min:
         razoes.append(f"n={int(n)}<{n_min}")
     if p_corrigido >= p_max:
-        razoes.append(f"p_corr={p_corrigido:.3f}>={p_max:g}")
+        razoes.append(f"p_bh={p_corrigido:.3f}>={p_max:g}")
     if direcao_ok is False:
-        razoes.append("media contraria ao sinal")
+        razoes.append("excesso contrario ao sinal")
     if razoes:
         return {**base, "status": SEM_SUPORTE, "motivo": ", ".join(razoes)}
-    return {**base, "status": SUPORTADO, "motivo": f"n={int(n)}, p_corr={p_corrigido:.3f}"}
+    return {**base, "status": SUPORTADO, "motivo": f"n={int(n)}, p_bh={p_corrigido:.3f}"}
 
 
-def _bonferroni(p: Optional[float], m: int) -> Optional[float]:
-    if p is None:
-        return None
-    return min(1.0, float(p) * max(1, int(m)))
+def ajustar_bh(pvalues: Sequence[float]) -> list[float]:
+    """p ajustado de Benjamini-Hochberg (step-up), na ordem de entrada.
+
+    adj_(i) = min_{j>=i} p_(j) * m / j, truncado em 1. Rejeitar adj < q controla
+    o FDR em q.
+    """
+    p = np.asarray(list(pvalues), dtype=float)
+    m = len(p)
+    if m == 0:
+        return []
+    ordem = np.argsort(p, kind="stable")
+    adj = np.empty(m)
+    corrente = 1.0
+    for rank in range(m, 0, -1):
+        idx = ordem[rank - 1]
+        corrente = min(corrente, p[idx] * m / rank)
+        adj[idx] = corrente
+    return [float(x) for x in adj]
+
+
+def evidencia(
+    sinal: str,
+    n: Optional[int],
+    media: Optional[float],
+    deriva: Optional[float],
+    p_bruto: Optional[float],
+    excesso: Optional[float] = None,
+) -> dict:
+    """Evidencia bruta de um sinal (ainda sem correcao de familia)."""
+    if excesso is None and media is not None and deriva is not None:
+        excesso = float(media) - float(deriva)
+    return {
+        "sinal": sinal,
+        "n": None if n is None else int(n),
+        "media": media,
+        "deriva": deriva,
+        "excesso": excesso,
+        "p_bruto": p_bruto,
+    }
 
 
 def extrair_stats_otimizador(result: dict) -> Optional[dict]:
@@ -103,51 +180,87 @@ def extrair_stats_otimizador(result: dict) -> Optional[dict]:
     return {
         "n_buy_thinned": tr.get("n_buy_thinned"),
         "n_sell_thinned": tr.get("n_sell_thinned"),
-        "p_value_buy_bonferroni": tr.get("p_value_buy_bonferroni"),
-        "p_value_sell_bonferroni": tr.get("p_value_sell_bonferroni"),
+        "p_value_buy": tr.get("p_value_buy"),
+        "p_value_sell": tr.get("p_value_sell"),
         "avg_return_buy_independent": tr.get("avg_return_buy_independent"),
+        "avg_return_sell_independent": tr.get("avg_return_sell_independent"),
+        "deriva": tr.get("unconditional_mean"),
+        "excess_buy": tr.get("buy_excess_vs_market_independent"),
+        "excess_sell": tr.get("sell_excess_vs_market_independent"),
         "n_combinations": result.get("n_combinations"),
     }
 
 
-def suporte_otimizador(sinal: str, stats: Optional[dict]) -> dict:
-    if not stats:
-        d = avaliar_suporte(sinal, None, None)
-        if d["status"] == SEM_SUPORTE:
-            d["motivo"] = "sem estatisticas de teste do otimizador (rode refresh_optimizer_cache)"
-        return d
-    if sinal == "BUY":
-        media = stats.get("avg_return_buy_independent")
-        return avaliar_suporte(
-            sinal, stats.get("n_buy_thinned"), stats.get("p_value_buy_bonferroni"),
-            direcao_ok=None if media is None else media > 0,
-        )
-    # SELL: o teste do otimizador ja e unicaudal (excesso vs mercado < 0)
-    return avaliar_suporte(sinal, stats.get("n_sell_thinned"), stats.get("p_value_sell_bonferroni"))
+def evidencia_otimizador(sinal: str, stats: Optional[dict]) -> dict:
+    if sinal not in ("BUY", "SELL") or not stats:
+        return evidencia(sinal, None, None, None, None)
+    k = "buy" if sinal == "BUY" else "sell"
+    return evidencia(
+        sinal, stats.get(f"n_{k}_thinned"), stats.get(f"avg_return_{k}_independent"),
+        stats.get("deriva"), stats.get(f"p_value_{k}"), stats.get(f"excess_{k}"),
+    )
 
 
-def _suporte_por_resumo(sinal: str, resumo: Optional[dict], chave_n: str, m: int) -> dict:
+def _evidencia_resumo(sinal: str, resumo: Optional[dict], chave_n: str) -> dict:
     if sinal not in ("BUY", "SELL") or not resumo:
-        return avaliar_suporte(sinal, None, None)
-    n = resumo.get(chave_n)
-    media = resumo.get("mean")
-    if media is None:
-        direcao = None
-    else:
-        direcao = media > 0 if sinal == "BUY" else media < 0
-    return avaliar_suporte(sinal, n, _bonferroni(resumo.get("p_value"), m), direcao_ok=direcao)
+        return evidencia(sinal, None, None, None, None)
+    return evidencia(
+        sinal, resumo.get(chave_n), resumo.get("mean"), resumo.get("drift"),
+        resumo.get("p_value"), resumo.get("excess"),
+    )
 
 
-def suporte_episodio(sinal: str, summary: Optional[dict]) -> dict:
+def evidencia_episodio(sinal: str, summary: Optional[dict]) -> dict:
     """``summary`` = identify_episodes()["summary"] (chaves 'buy' e 'sell')."""
-    resumo = (summary or {}).get("buy" if sinal == "BUY" else "sell")
-    return _suporte_por_resumo(sinal, resumo, "n", int(get_decisao_param("testes_episodio", 2)))
+    return _evidencia_resumo(sinal, (summary or {}).get("buy" if sinal == "BUY" else "sell"), "n")
 
 
-def suporte_walkforward(sinal: str, summary: Optional[dict]) -> dict:
+def evidencia_walkforward(sinal: str, summary: Optional[dict]) -> dict:
     """``summary`` = walk_forward_roll()["summary"] (chaves 'BUY' e 'SELL')."""
-    resumo = (summary or {}).get(sinal)
-    return _suporte_por_resumo(sinal, resumo, "n_effective", int(get_decisao_param("testes_walkforward", 2)))
+    return _evidencia_resumo(sinal, (summary or {}).get(sinal), "n_effective")
+
+
+def aplicar_fdr(
+    evidencias: Sequence[dict],
+    *,
+    n_min: Optional[int] = None,
+    q: Optional[float] = None,
+) -> list[dict]:
+    """Aplica BH sobre a familia (= evidencias BUY/SELL ativas) e julga cada uma.
+
+    Retorna, na mesma ordem, o dict de suporte: ``p`` = ``p_bh``; ``p_bruto``,
+    ``media``, ``deriva``, ``excesso`` e ``m_familia`` acompanham.
+    """
+    d_n, d_q = limiares_suporte()
+    n_min = d_n if n_min is None else n_min
+    q = d_q if q is None else q
+
+    ativos = [i for i, e in enumerate(evidencias) if e.get("sinal") in ("BUY", "SELL")]
+    m = len(ativos)
+    brutos = [
+        1.0 if evidencias[i].get("p_bruto") is None else min(1.0, float(evidencias[i]["p_bruto"]))
+        for i in ativos
+    ]
+    p_bh = dict(zip(ativos, ajustar_bh(brutos)))
+
+    saida: list[dict] = []
+    for i, e in enumerate(evidencias):
+        sinal = e.get("sinal")
+        exc = e.get("excesso")
+        direcao_ok = None if exc is None else (exc > 0 if sinal == "BUY" else exc < 0)
+        tem_p = e.get("p_bruto") is not None
+        res = avaliar_suporte(
+            sinal, e.get("n"), p_bh.get(i) if tem_p else None,
+            direcao_ok=direcao_ok, n_min=n_min, p_max=q,
+        )
+        if sinal in ("BUY", "SELL"):
+            res.update({
+                "p_bruto": None if e.get("p_bruto") is None else round(float(e["p_bruto"]), 6),
+                "media": e.get("media"), "deriva": e.get("deriva"), "excesso": exc,
+                "m_familia": m,
+            })
+        saida.append(res)
+    return saida
 
 
 def conta_no_voto(suporte: Optional[dict]) -> bool:
@@ -176,9 +289,10 @@ def linhas_rationale(suporte_sinais: dict, bloqueio: Optional[str]) -> list[str]
             else:
                 partes.append(f"{nome} {s['sinal']} informativo/sem suporte ({s['motivo']})")
         if partes:
-            n_min, p_max = limiares_suporte()
+            n_min, q = limiares_suporte()
+            m = next((v.get("m_familia") for v in suporte_sinais.values() if v.get("m_familia")), None)
             linhas.append(
-                f"Suporte estatistico (n>={n_min} indep. fora da amostra, p corrigido<{p_max:g}): "
+                f"Suporte estatistico (n>={n_min} indep. fora da amostra, p_BH<{q:g}, familia m={m}): "
                 + " | ".join(partes)
             )
         linhas.append(SUPORTE_JSON_PREFIX + json.dumps(suporte_sinais, ensure_ascii=False, sort_keys=True))
@@ -205,5 +319,6 @@ def restaurar_de_rationale(rationale: list[str]) -> tuple[dict, Optional[str]]:
 
 
 def rationale_legivel(rationale: list[str]) -> list[str]:
-    """Remove a linha JSON de maquina (para exibicao)."""
-    return [r for r in (rationale or []) if not (isinstance(r, str) and r.startswith(SUPORTE_JSON_PREFIX))]
+    """Remove as linhas JSON de maquina (suporte e evidencia) para exibicao."""
+    return [r for r in (rationale or [])
+            if not (isinstance(r, str) and r.startswith((SUPORTE_JSON_PREFIX, EVIDENCIA_PREFIX)))]

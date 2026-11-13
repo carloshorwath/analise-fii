@@ -68,6 +68,7 @@ class _BuyCandidate:
     ltv_atual: Optional[float] = None
     dividend_safety_flag: bool = False
     payout_vs_caixa: Optional[float] = None
+    alerta_saude: Optional[str] = None   # destruicao de capital: alerta descritivo, nao exclui
 
 
 def _obter_pvp_percentil_historico(ticker: str, d: date, session) -> Optional[float]:
@@ -135,9 +136,11 @@ def _candidatos_comprar_de_snapshot(
 ) -> list[_BuyCandidate]:
     """Lado COMPRAR a partir de snapshot_ticker_metrics + snapshot_radar do run.
 
-    Filtros (PROJETO.md §5.4): saúde OK e liquidez OK obrigatórios, P/VP barato,
-    radar >= 3/4 vistos, CVM não defasada. "Em recuperação" não é vetado — vira
-    candidato TURNAROUND com rótulo explícito (o mercado pode já ter precificado).
+    Filtros: liquidez OK, P/VP barato (define o par), CVM não defasada e elegível
+    (bloqueio factual). Sem exigir "sinais" do radar (``vistos``): nenhum deles tem
+    evidência de seleção (estudo em painel 2026-11-12) — a lista é descritiva.
+    Destruição de capital NÃO exclui: vira alerta de risco descritivo no racional.
+    "Em recuperação" vira rótulo TURNAROUND (o mercado pode já ter precificado).
     """
     pvp_barato = get_threshold("pvp_percentil_barato", 30)
 
@@ -156,13 +159,11 @@ def _candidatos_comprar_de_snapshot(
         t = met.ticker
         if t in tickers_carteira or t not in tickers_universo:
             continue
-        if not rad.saude_ok or not rad.liquidez_ok:
+        if not rad.liquidez_ok:
             continue
         if met.cvm_defasada:
             continue
         if met.pvp_percentil is None or float(met.pvp_percentil) > pvp_barato:
-            continue
-        if (rad.vistos or 0) < 3:
             continue
         if _bloqueio_candidato(session, t, data_ref):
             continue
@@ -180,6 +181,7 @@ def _candidatos_comprar_de_snapshot(
             dy_gap_percentil=float(met.dy_gap_percentil) if met.dy_gap_percentil is not None else None,
             score_total=int(met.score_total) if met.score_total is not None else None,
             turnaround=turnaround,
+            alerta_saude=None if rad.saude_ok else (rad.saude_motivo or "destruicao de capital"),
         ))
     return candidatos
 
@@ -193,7 +195,6 @@ def _candidatos_comprar_de_decisoes(
 ) -> list[_BuyCandidate]:
     """Lado COMPRAR a partir de TickerDecision (caminho legado / testes)."""
     pvp_barato = get_threshold("pvp_percentil_barato", 30)
-    dy_caro = get_threshold("dy_gap_percentil_caro", 70)
     piso = get_piso_liquidez()
 
     candidatos: list[_BuyCandidate] = []
@@ -212,13 +213,9 @@ def _candidatos_comprar_de_decisoes(
         pvp_pct = decisao.pvp_percentil
         cvm_ok = not getattr(decisao, "cvm_defasada", False)
 
-        pvp_baixo = pvp_pct is not None and pvp_pct < pvp_barato
         dy_gap_pct = decisao.dy_gap_percentil
-        dy_gap_alto = dy_gap_pct is not None and dy_gap_pct > dy_caro
-        vistos = sum([pvp_baixo, dy_gap_alto, saude_ok, liquidez_ok])
 
-        if not (saude_ok and liquidez_ok and cvm_ok and pvp_pct is not None
-                and pvp_pct <= pvp_barato and vistos >= 3):
+        if not (liquidez_ok and cvm_ok and pvp_pct is not None and pvp_pct <= pvp_barato):
             continue
 
         classe = decisao.classificacao
@@ -233,6 +230,7 @@ def _candidatos_comprar_de_decisoes(
             dy_gap_percentil=float(dy_gap_pct) if dy_gap_pct is not None else None,
             score_total=decisao.score_total,
             turnaround="RECUPERA" in motivo,
+            alerta_saude=None if saude_ok else (decisao.motivo_destruicao or "destruicao de capital"),
             flag_ltv_alto=bool(getattr(decisao, "flag_ltv_alto", False)),
             ltv_atual=getattr(decisao, "ltv_atual", None),
             dividend_safety_flag=bool(getattr(decisao, "dividend_safety_flag", False)),
@@ -446,6 +444,11 @@ def detectar_oportunidades(
                 racionais.append(
                     f"DY Gap percentil de {comprar.ticker} ({dy_gap_comprar:.0f}) é superior ao de "
                     f"{vender.ticker} ({dy_gap_vender:.0f})."
+                )
+            if comprar.alerta_saude:
+                racionais.append(
+                    f"ALERTA DE RISCO (descritivo): {comprar.ticker} — {comprar.alerta_saude} "
+                    "Sem evidência de que o alerta antecipe retorno pior."
                 )
             if comprar.turnaround:
                 racionais.append(

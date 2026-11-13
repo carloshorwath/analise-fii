@@ -11,16 +11,18 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from app.components.aviso_ui import render_aviso_evidencia
+from app.components.carteira_ui import decisao_ja_registrada
 from app.components.snapshot_ui import load_opportunities_snapshot, render_snapshot_info
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
-from app.state import render_footer, safe_page, safe_set_page_config
+from app.state import render_footer, safe_page, safe_set_page_config, set_flash, show_flash
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.decision.decision_journal import registrar_decisao, get_fechamento_on_or_before
 from src.fii_analysis.llm.context_builder import build_opportunity_context
 from src.fii_analysis.llm.prompts import render_prompt
 from src.fii_analysis.llm.gateway import export_prompt_pack
 
-safe_set_page_config(page_title="Oportunidades", page_icon="compare_arrows", layout="wide")
+safe_set_page_config(page_title="Pares de Rotacao", page_icon="compare_arrows", layout="wide")
 
 _CSS = """
 <style>
@@ -129,39 +131,41 @@ _CSS = """
 @safe_page
 def main():
     st.markdown(_CSS, unsafe_allow_html=True)
-    render_sidebar_guide("Oportunidades", "Diário")
+    render_sidebar_guide("Pares de Rotacao", "Diário")
     
     render_page_header(
-        "Oportunidades de Rotação",
-        "Sugestões de arbitragem relativa intra-segmento. Venda posições caras e realoque em candidatos subvalorizados com base nos dados mais recentes.",
+        "Pares de Rotação",
+        "Comparação descritiva intra-segmento: pares em que um fundo aparece com P/VP e score diferentes do outro, com base nos dados mais recentes.",
         "Diário",
     )
+    render_aviso_evidencia()
+    show_flash()
     
     render_inline_note(
-        "Pares DESCRITIVOS: cada sugestão passa por filtros de liquidez, saúde financeira, "
-        "valuation relativo e custos — mas o motor de rotação ainda NÃO tem validação "
-        "estatística de retorno futuro. Use como ponto de partida de investigação, não como ordem."
+        "Pares DESCRITIVOS: cada par passa por filtros de liquidez, saúde financeira, "
+        "valuation relativo e custos — mas o motor de rotação NÃO tem validação "
+        "estatística de retorno futuro. Serve para investigar, não como recomendação."
     )
 
     # Botão de refresh manual
-    if st.button("Atualizar Oportunidades", type="primary"):
+    if st.button("Atualizar Pares", type="primary"):
         load_opportunities_snapshot.clear()
         st.rerun()
 
-    with st.spinner("Carregando oportunidades do banco..."):
+    with st.spinner("Carregando pares do banco..."):
         meta, df = load_opportunities_snapshot()
 
     # Informações do snapshot
     render_snapshot_info(meta)
 
     if df.empty:
-        st.info("Nenhuma oportunidade de rotação acionável ativa no último snapshot. O mercado está equilibrado para o seu portfólio.")
+        st.info("Nenhum par de rotação ativo no último snapshot.")
         render_footer()
         return
 
     # KPIs superiores
     col1, col2, col3 = st.columns(3)
-    col1.metric("Oportunidades Ativas", len(df))
+    col1.metric("Pares ativos", len(df))
     
     max_spread = df["spread_liquido_pct"].max()
     col2.metric("Maior Spread Líquido", f"{max_spread:+.1f} pp")
@@ -235,7 +239,7 @@ def main():
         
         with btn_col1:
             # Gerar Prompt Pack
-            if st.button(f"Generate Prompt Pack ({vender} ➔ {comprar})", key=f"prompt_{opp_id}"):
+            if st.button(f"Gerar pacote de prompt ({vender} ➔ {comprar})", key=f"prompt_{opp_id}"):
                 with get_session_ctx() as session:
                     ctx = build_opportunity_context(vender, comprar, session)
                     if "erro" in ctx:
@@ -245,7 +249,7 @@ def main():
                         ticker_pair = f"{vender}_{comprar}"
                         filepath = export_prompt_pack(sys_prompt, user_prompt, "oportunidade_rotacao", ticker_pair)
                         
-                        st.success(f"Prompt Pack exportado com sucesso em: {filepath}")
+                        st.success(f"Pacote de prompt exportado com sucesso em: {filepath}")
                         with st.expander("Ver prompt copiado", expanded=True):
                             st.info("Copie o conteúdo abaixo e cole no seu modelo de IA (e.g. ChatGPT ou Gemini) para obter a análise qualitativa completa:")
                             st.text_area("System Prompt", value=sys_prompt, height=120)
@@ -253,37 +257,58 @@ def main():
                             
         with btn_col2:
             # Registrar Decisão
-            with st.expander(f"Registrar Operação/Decisão"):
-                with st.form(key=f"form_decision_{opp_id}"):
-                    tipo_op = st.selectbox("Ação", ["ROTACAO", "IGNORADA"], key=f"tipo_{opp_id}")
-                    qtd = st.number_input("Quantidade de Cotas", min_value=1, value=100, step=10, key=f"qtd_{opp_id}")
-                    
-                    # Carregar último preço de fechamento para sugerir
-                    with get_session_ctx() as session:
-                        preco_sugerido = get_fechamento_on_or_before(session, comprar, date.today()) or 100.0
-                        
-                    preco_exec = st.number_input("Preço Executado (R$)", min_value=0.01, value=float(preco_sugerido), format="%.2f", key=f"preco_{opp_id}")
-                    racional_user = st.text_area("Racional/Comentários do Usuário", value="Operação executada conforme sinal do modelo.", key=f"racional_user_{opp_id}")
-                    
-                    submit_btn = st.form_submit_button("Registrar Decisão")
-                    if submit_btn:
+            with st.expander("Registrar decisão"):
+                ja = decisao_ja_registrada(opp_id, "ROTACAO", None, None, None, None, None)
+                if ja:
+                    st.info(
+                        f"Este par já tem registro: {ja}. "
+                        "Para alterar, remova-o em Carteira > Diário & Performance > Histórico."
+                    )
+                else:
+                    with st.form(key=f"form_decision_{opp_id}"):
+                        tipo_op = st.selectbox("Decisão", ["ROTACAO", "IGNORADA"], key=f"tipo_{opp_id}")
+                        qtd = st.number_input("Quantidade de Cotas (só para ROTACAO)", min_value=1, value=100, step=10, key=f"qtd_{opp_id}")
+
+                        # Carregar último preço de fechamento para sugerir
                         with get_session_ctx() as session:
-                            try:
-                                registrar_decisao(
-                                    session=session,
-                                    tipo=tipo_op,
-                                    ticker_vendido=vender,
-                                    ticker_comprado=comprar,
-                                    quantidade=qtd if tipo_op == "ROTACAO" else None,
-                                    preco=preco_exec if tipo_op == "ROTACAO" else None,
-                                    opportunity_id=opp_id,
-                                    racional_usuario=racional_user,
-                                    data=date.today(),
-                                )
-                                st.success("Decisão registrada com sucesso no log histórico!")
-                                st.toast("Decisão registrada!")
-                            except Exception as e:
-                                st.error(f"Erro ao registrar decisão: {e}")
+                            preco_sugerido = get_fechamento_on_or_before(session, comprar, date.today()) or 100.0
+
+                        preco_exec = st.number_input("Preço Executado (R$, só para ROTACAO)", min_value=0.01, value=float(preco_sugerido), format="%.2f", key=f"preco_{opp_id}")
+                        racional_user = st.text_area(
+                            "Racional/Comentários do Usuário (obrigatório)",
+                            value="",
+                            placeholder="Por que executou ou por que decidiu ignorar este par...",
+                            key=f"racional_user_{opp_id}",
+                        )
+
+                        submit_btn = st.form_submit_button("Registrar Decisão")
+                        if submit_btn:
+                            if not racional_user.strip():
+                                st.error("Escreva o racional antes de registrar.")
+                            elif decisao_ja_registrada(opp_id, "ROTACAO", None, None, None, None, None):
+                                st.warning("Este par já foi registrado (clique duplo?). Nada foi gravado.")
+                            else:
+                                with get_session_ctx() as session:
+                                    try:
+                                        _dec, _avisos = registrar_decisao(
+                                            session=session,
+                                            tipo=tipo_op,
+                                            ticker_vendido=vender,
+                                            ticker_comprado=comprar,
+                                            quantidade=qtd if tipo_op == "ROTACAO" else None,
+                                            preco=preco_exec if tipo_op == "ROTACAO" else None,
+                                            opportunity_id=opp_id,
+                                            racional_usuario=racional_user.strip(),
+                                            data=date.today(),
+                                        )
+                                    except Exception as e:
+                                        st.error(f"Erro ao registrar decisão: {e}")
+                                    else:
+                                        if _dec is None:
+                                            st.warning("Nada foi gravado: " + "; ".join(_avisos))
+                                        else:
+                                            set_flash(f"Decisão registrada para {vender} ➔ {comprar}.")
+                                            st.rerun()
                                 
         st.markdown("<hr style='border: 1px solid #e5ece8; margin: 20px 0;'>", unsafe_allow_html=True)
 

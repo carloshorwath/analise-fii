@@ -11,13 +11,17 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
+from app.components.aviso_ui import AVISO_CURTO, render_aviso_evidencia, rotulo_acao, rotulo_flags
 from app.components.carteira_ui import load_carteira_db
 from app.components.snapshot_ui import (
     load_command_center_snapshot,
     load_latest_snapshot_meta,
     load_panorama_snapshot,
+    load_ultima_data_preco,
+    render_carteira_alterada,
     render_snapshot_info,
     load_opportunities_snapshot,
+    sufixo_preco_parado,
 )
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
 from app.state import render_footer, safe_page, safe_set_page_config
@@ -25,7 +29,7 @@ from src.fii_analysis.decision import (
     export_daily_report_csv,
     export_daily_report_md,
 )
-from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown
+from src.fii_analysis.evaluation.daily_diff import calcular_diff_diario, render_diff_markdown, rotulo_periodo_diff
 from src.fii_analysis.data.database import SnapshotRun, get_session_ctx
 from sqlalchemy import select
 from src.fii_analysis.decision.suporte import rationale_legivel, rotulo_sinal
@@ -70,12 +74,13 @@ def main():
     render_sidebar_guide("Hoje", "Operar")
     render_page_header(
         "Hoje",
-        "Cockpit operacional do sistema. Esta pagina concentra as sugestoes do dia, a watchlist e o cruzamento da carteira com os sinais do projeto.",
+        "Painel descritivo do dia. Esta pagina concentra os destaques dos indicadores, a watchlist e o cruzamento da carteira com os sinais do projeto.",
         "Operar",
     )
     render_inline_note(
-        "Use esta tela como entrada diaria. Se quiser validar o racional estatistico por tras das sugestoes, siga depois para Otimizador V2, Episodios ou Walk-Forward."
+        "Use esta tela como leitura diaria do estado dos fundos. Para ver o racional estatistico dos sinais, siga para Otimizador V2, Episodios ou Walk-Forward."
     )
+    render_aviso_evidencia()
 
     holdings = load_carteira_db()
     holdings_key = tuple(sorted(
@@ -113,9 +118,19 @@ def main():
     meta = load_latest_snapshot_meta(snapshot_scope, carteira_hash=meta_hash)
     stale_carteira = has_holdings and not report.holding_advices
     render_snapshot_info(meta, stale_carteira=stale_carteira)
+    render_carteira_alterada(meta, holdings)
+
+    # Datas do ultimo preco por ticker + motivos de bloqueio de compra (B4)
+    tickers_rep = tuple(sorted({d.ticker for d in report.decisions} | {a.ticker for a in report.holding_advices}))
+    datas_preco = load_ultima_data_preco(tickers_rep)
+    bloqueios = {
+        d.ticker: d.bloqueio_compra
+        for d in report.decisions
+        if getattr(d, "bloqueio_compra", None)
+    }
 
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    col1.metric("Acoes Hoje", len(report.action_today))
+    col1.metric("Destaques Hoje", len(report.action_today))
     col2.metric("Watchlist", len(report.watchlist))
     col3.metric("Riscos", len(report.risks))
     col4.metric("Holdings", len(report.holding_advices))
@@ -127,7 +142,7 @@ def main():
     with dl1:
         st.download_button(
             "Baixar Relatorio (MD)",
-            data=export_daily_report_md(report),
+            data=f"> {AVISO_CURTO}\n\n" + export_daily_report_md(report),
             file_name=f"{report.data_referencia.isoformat()}_hoje.md",
             mime="text/markdown",
         )
@@ -139,9 +154,9 @@ def main():
             mime="text/csv",
         )
 
-    st.info(
-        "As acoes abaixo sao SUGESTOES operacionais geradas por regras estatisticas do sistema. "
-        "Nao sao ordens executaveis e devem ser validadas antes de operar."
+    st.caption(
+        "Os rotulos abaixo descrevem o estado dos indicadores (favoravel, desfavoravel, neutro, "
+        "alerta de risco). Nao sao ordens nem recomendacao de compra ou venda."
     )
 
     # ── Seção: O que mudou desde ontem ─────────────────────────────────────────
@@ -154,34 +169,36 @@ def main():
         ).scalars().all()
         
         diff_md = None
+        diff_rotulo = "desde o snapshot anterior"
         if len(runs) >= 2:
             diff_obj = calcular_diff_diario(session, runs[0].id, runs[1].id)
             diff_md = render_diff_markdown(diff_obj)
+            diff_rotulo = rotulo_periodo_diff(diff_obj.data_anterior, diff_obj.data_atual)
 
     if diff_md:
-        with st.expander("🔍 O que mudou desde ontem", expanded=True):
+        with st.expander(f"🔍 O que mudou {diff_rotulo}", expanded=True):
             st.markdown(diff_md)
 
     # ── Seção: Oportunidades de Rotação (Top 3) ──────────────────────────────────
-    with st.spinner("Buscando oportunidades de rotação..."):
+    with st.spinner("Buscando pares de rotação..."):
         _, opps_df = load_opportunities_snapshot()
     
     if not opps_df.empty:
-        with st.expander("🔄 Oportunidades de Rotação (Top 3)", expanded=True):
-            st.markdown("Sugestões de troca de ativos com maior spread líquido e sem vetos ativos:")
+        with st.expander("🔄 Pares de rotação identificados (Top 3)", expanded=True):
+            st.markdown("Pares com maior spread líquido e sem vetos ativos (descritivo, sem validação de retorno futuro):")
             top_3 = opps_df.head(3)
             for _, o in top_3.iterrows():
                 st.markdown(
-                    f"- **VENDER {o['vender']}** ➔ **COMPRAR {o['comprar']}** | "
+                    f"- **{o['vender']}** ➔ **{o['comprar']}** | "
                     f"Spread Líq: **`{o['spread_liquido_pct']:+.1f} pp`** | "
                     f"Delta Score: **`{o['delta_score']:+.0f}`** | "
                     f"Persistência: `{o['dias_persistencia']} dias` | "
                     f"Critic: `{o['critic_veredicto']}`"
                 )
-            st.markdown("*(Acesse o menu lateral **Oportunidades** para ver detalhes, gerar prompts e registrar a execução)*")
+            st.markdown("*(Acesse o menu lateral **Pares de Rotacao** para ver detalhes, gerar prompts e registrar decisões)*")
     else:
-        with st.expander("🔄 Oportunidades de Rotação (Top 3)", expanded=False):
-            st.info("Nenhuma oportunidade de rotação ativa hoje.")
+        with st.expander("🔄 Pares de rotação identificados (Top 3)", expanded=False):
+            st.info("Nenhum par de rotação ativo hoje.")
 
     # Carregar scores do snapshot para exibir badges coloridos
     _, snap_df = load_panorama_snapshot(snapshot_scope)
@@ -191,16 +208,16 @@ def main():
             scores[row["ticker"]] = row.get("score_total")
 
     tab_actions, tab_holdings, tab_watchlist, tab_risks, tab_cdi = st.tabs(
-        ["🎯 Ações do Dia", "💼 Carteira Cruzada", "👁️ Watchlist", "⚠️ Riscos e Vetos", "📉 Contexto de Juros"]
+        ["🎯 Destaques do Dia", "💼 Carteira Cruzada", "👁️ Watchlist", "⚠️ Riscos e Vetos", "📉 Contexto de Juros"]
     )
     with tab_actions:
         _render_actions_today(report, scores)
     with tab_holdings:
-        _render_holdings(report)
+        _render_holdings(report, bloqueios, datas_preco)
     with tab_watchlist:
-        _render_watchlist(report, scores)
+        _render_watchlist(report, scores, bloqueios, datas_preco)
     with tab_risks:
-        _render_risks(report)
+        _render_risks(report, bloqueios, datas_preco)
     with tab_cdi:
         _render_cdi_context(report, snapshot_scope, meta_hash)
 
@@ -279,7 +296,7 @@ def _render_action_card(d, scores: dict | None) -> None:
 <div class="hoje-card {card_cls}">
   <div class="hoje-card-header">
     <span class="hoje-ticker">{d.ticker}</span>
-    <span class="badge {badge_cls}">{d.acao}</span>
+    <span class="badge {badge_cls}">{rotulo_acao(d.acao)}</span>
     <span style="font-size:.83rem;color:{sc};font-weight:700">{sl}/100</span>
     <span class="hoje-conc">{conc_icon} {d.nivel_concordancia}</span>
   </div>
@@ -292,9 +309,9 @@ def _render_action_card(d, scores: dict | None) -> None:
 
 
 def _render_actions_today(report, scores: dict | None = None):
-    st.subheader("Ações do Dia")
+    st.subheader("Destaques do Dia")
     if not report.action_today:
-        st.info("Nenhuma acao tatica prioritaria hoje.")
+        st.info("Nenhum destaque prioritario nos indicadores hoje.")
         return
 
     # ── Tabela completa — sempre visível ───────────────────────────────────
@@ -303,7 +320,7 @@ def _render_actions_today(report, scores: dict | None = None):
         if s is None: return "n/d"
         return _score_label(s)
     df = pd.DataFrame([{
-        "Ticker": d.ticker, "Acao": d.acao,
+        "Ticker": d.ticker, "Leitura": rotulo_acao(d.acao),
         "Score": _score_badge(d.ticker), "Confianca": d.nivel_concordancia,
         "Otimizador": _rot(d, "otimizador", d.sinal_otimizador),
         "Episodios": _rot(d, "episodio", d.sinal_episodio),
@@ -329,48 +346,53 @@ def _render_actions_today(report, scores: dict | None = None):
             for d in cards_to_show:
                 _render_action_card(d, scores)
 
-    with st.expander("Ver racional das acoes do dia"):
+    with st.expander("Ver racional dos destaques do dia"):
         for d in report.action_today:
             score_val = (scores or {}).get(d.ticker)
             score_txt = f" | Score: {score_val}/100" if score_val is not None else ""
-            st.markdown(f"**{d.ticker}** - {d.acao} ({d.nivel_concordancia}){score_txt}")
+            st.markdown(f"**{d.ticker}** - {rotulo_acao(d.acao)} ({d.nivel_concordancia}){score_txt}")
             for item in rationale_legivel(d.rationale):
                 st.write(f"- {item}")
             st.markdown("---")
 
 
 
-def _render_watchlist(report, scores: dict | None = None):
+def _render_watchlist(report, scores: dict | None = None, bloqueios: dict | None = None, datas: dict | None = None):
     st.subheader("Watchlist")
     if not report.watchlist:
         st.info("Nenhum ticker em observacao especial hoje.")
         return
 
     df = pd.DataFrame([{
-        "Ticker": d.ticker,
-        "Estado": d.acao,
+        "Ticker": d.ticker + sufixo_preco_parado(d.ticker, datas or {}, report.data_referencia),
+        "Estado": rotulo_acao(d.acao),
         "Score": f"{scores.get(d.ticker, 'n/d')}/100" if scores and scores.get(d.ticker) is not None else "n/d",
         "Otimizador": _rot(d, "otimizador", d.sinal_otimizador),
         "Episodios": _rot(d, "episodio", d.sinal_episodio),
         "WalkForward": _rot(d, "walkforward", d.sinal_walkforward),
         "Episodio Hoje": _episode_text(d),
         "Captura Div.": "Aberta" if d.janela_captura_aberta else "Nao",
-        "Prox. Data-com": d.proxima_data_com_estimada.isoformat() if d.proxima_data_com_estimada else "n/d",
+        "Prox. Data-com": (
+            d.proxima_data_com_estimada.isoformat()
+            if d.proxima_data_com_estimada and d.proxima_data_com_estimada >= report.data_referencia
+            else "n/d"
+        ),
         "Flags": _flags_text(d),
+        "Compra bloqueada": (bloqueios or {}).get(d.ticker, "-"),
     } for d in report.watchlist])
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def _badge_html(acao: str) -> str:
     cls = f"badge-{acao}" if acao in ("AUMENTAR","HOLD","REDUZIR","SAIR","EVITAR_NOVOS_APORTES","COMPRAR","VENDER") else "badge-HOLD"
-    return f'<span class="badge {cls}">{acao}</span>'
+    return f'<span class="badge {cls}">{rotulo_acao(acao)}</span>'
 
 
 def _pri_prefix(p: str) -> str:
     return {"ALTA": "⚡ ALTA", "MEDIA": "👀 MÉDIA", "BAIXA": "💤 BAIXA"}.get(p, p)
 
 
-def _render_holdings(report):
+def _render_holdings(report, bloqueios: dict | None = None, datas: dict | None = None):
     st.subheader("Carteira Cruzada com Sinais")
     if not report.holding_advices:
         st.info("Sem posicoes cadastradas na carteira ou snapshot sem dados de carteira.")
@@ -384,16 +406,18 @@ def _render_holdings(report):
                   f"{'+'if pl_pct>=0 else ''}{pl_pct:.1f}%</span>") if pl_pct is not None else "n/d"
         peso_str = f"{a.peso_carteira*100:.1f}%" if a.peso_carteira else "n/d"
         flags_ok = a.flags_resumo and a.flags_resumo != "—"
-        flags_html = f"<span style='color:#c62828;font-size:.78rem'>⚠️ {a.flags_resumo}</span>" if flags_ok else ""
+        flags_html = f"<span style='color:#c62828;font-size:.78rem'>⚠️ {rotulo_flags(a.flags_resumo)}</span>" if flags_ok else ""
         st.markdown(
             f"{_badge_html(a.acao_recomendada)} &nbsp;"
-            f"<strong>{a.ticker}</strong> &nbsp;"
+            f"<strong>{a.ticker}</strong>{sufixo_preco_parado(a.ticker, datas or {}, report.data_referencia)} &nbsp;"
             f"{_pri_prefix(a.prioridade)} &nbsp;·&nbsp;"
             f"Peso {peso_str} &nbsp;·&nbsp; PM R$ {a.preco_medio:.2f} &nbsp;·&nbsp; P&L {pl_str}"
             f"{'&nbsp;·&nbsp;'+flags_html if flags_ok else ''}",
             unsafe_allow_html=True
         )
         st.caption(a.racional)
+        if (bloqueios or {}).get(a.ticker):
+            st.caption(f"🚫 Compra bloqueada: {bloqueios[a.ticker]}")
         st.divider()
 
     if report.structural_alerts:
@@ -405,18 +429,19 @@ def _render_holdings(report):
                 st.info(alert.descricao)
 
 
-def _render_risks(report):
+def _render_risks(report, bloqueios: dict | None = None, datas: dict | None = None):
     st.subheader("Riscos e Vetos")
     if not report.risks:
         st.info("Sem vetos ou flags de risco destacados hoje.")
         return
 
     df = pd.DataFrame([{
-        "Ticker": d.ticker,
-        "Acao": d.acao,
+        "Ticker": d.ticker + sufixo_preco_parado(d.ticker, datas or {}, report.data_referencia),
+        "Leitura": rotulo_acao(d.acao),
         "Confianca": d.nivel_concordancia,
         "Flags": _flags_text(d),
         "Motivo destr.": d.motivo_destruicao or "-",
+        "Compra bloqueada": (bloqueios or {}).get(d.ticker, "-"),
     } for d in report.risks])
     st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -424,7 +449,7 @@ def _render_risks(report):
 def _flags_text(decision) -> str:
     flags = []
     if decision.flag_destruicao_capital:
-        flags.append("destr.capital")
+        flags.append("alerta de risco: VP/cota em queda")
     if decision.flag_emissao_recente:
         flags.append("emissao")
     if decision.flag_pvp_caro:
@@ -449,7 +474,7 @@ def _render_cdi_context(report, snapshot_scope, meta_hash):
     st.subheader("Contexto de Juros (CDI + Focus BCB)")
     st.caption(
         "Diagnostico de sensibilidade ao CDI e expectativas de mercado (Focus BCB). "
-        "NAO altera a decisao de compra/venda — serve para interpretar se P/VP alto "
+        "NAO altera nenhum rotulo — serve para interpretar se P/VP alto "
         "pode ser repricing racional em regime de queda de juros."
     )
 
@@ -528,7 +553,7 @@ def _render_cdi_context(report, snapshot_scope, meta_hash):
     st.subheader("Leitura Macro por Ticker")
     st.caption(
         "Interpretacao contextual gerada pelo sistema a partir de beta, Focus, residuo e R2. "
-        "NAO altera a decisao de compra/venda."
+        "NAO altera nenhum rotulo."
     )
     macro_found = False
     for d in report.decisions:

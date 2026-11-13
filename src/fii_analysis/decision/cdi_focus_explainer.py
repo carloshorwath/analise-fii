@@ -67,7 +67,7 @@ def build_cdi_focus_explanation(
             cdi_sensitivity = compute_cdi_sensitivity(ticker, session, t=data_ref)
         except Exception as exc:
             logger.warning("cdi_sensitivity falhou para {}: {}", ticker, exc)
-            cdi_sensitivity = CdiSensitivityResult(status="CONVERGENCIA_FALHOU")
+            cdi_sensitivity = CdiSensitivityResult(status="ERRO_CODIGO")
 
     # Suporta tanto CdiSensitivityResult quanto dict (do cdi_sensitivity_to_dict)
     if isinstance(cdi_sensitivity, dict):
@@ -190,6 +190,8 @@ def _build_explanation(
             lines.append("Sem dados de CDI no banco para análise de sensibilidade.")
         elif cdi_status == "CONVERGENCIA_FALHOU":
             lines.append("Regressão CDI não convergiu para este fundo.")
+        elif cdi_status == "ERRO_CODIGO":
+            lines.append("Erro de código ao calcular a sensibilidade CDI (ver log) — não é falta de convergência.")
         else:
             lines.append("Sensibilidade CDI indisponível.")
 

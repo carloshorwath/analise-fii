@@ -11,7 +11,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
 
 from src.fii_analysis.evaluation.alertas import gerar_alertas_diarios, ALERTAS_DIR
 from app.components.ui_shell import render_inline_note, render_page_header, render_sidebar_guide
-from app.state import render_footer, safe_page, safe_set_page_config
+from app.state import render_footer, safe_page, safe_set_page_config, set_flash, show_flash
 
 safe_set_page_config(page_title="Alertas", page_icon="bell", layout="wide")
 
@@ -25,14 +25,16 @@ def main():
         "Entender",
     )
     render_inline_note(
-        "Esta pagina funciona melhor como trilha de contexto. Use Hoje e Carteira para acao, e volte aqui quando quiser entender o historico do alerta."
+        "Esta pagina funciona melhor como trilha de contexto. Use Hoje e Carteira para a leitura do dia, e volte aqui quando quiser entender o historico do alerta."
     )
+
+    show_flash()
 
     # --- Generate now ---
     if st.button("Gerar Alertas Agora", type="primary"):
         with st.spinner("Calculando alertas..."):
             gerar_alertas_diarios()
-        st.success("Alertas gerados com sucesso!")
+        set_flash("Alertas gerados com sucesso!")
         st.rerun()
 
     st.markdown("---")

@@ -10,12 +10,16 @@ import pandas as pd
 from scipy import stats
 from sqlalchemy import select
 
+from loguru import logger
+
+from src.fii_analysis.data import corporate_actions as ca
 from src.fii_analysis.data.database import (
     BenchmarkDiario,
     PrecoDiario,
     RelatorioMensal,
     get_cnpj_by_ticker,
 )
+from src.fii_analysis.features.indicators import get_relatorios_ajustados
 
 try:
     from statsmodels.regression.linear_model import OLS
@@ -43,6 +47,14 @@ def get_events(ticker, sinal_key, session, forward_days, bdays_series):
 
     if not relatorios:
         return []
+
+    # Cotas na base ajustada a splits: um desdobramento nao e emissao (nem mascara pl_queda).
+    aj = get_relatorios_ajustados(ticker, session, apenas_entregues=False)
+    cotas_aj = {pd.Timestamp(r.data_referencia).date(): r.cotas_aj for r in aj.itertuples(index=False)}
+
+    def _cotas(rel):
+        v = cotas_aj.get(pd.Timestamp(rel.data_referencia).date())
+        return None if v is None or pd.isna(v) else float(v)
 
     eventos = []
     for i, rel in enumerate(relatorios):
@@ -77,8 +89,8 @@ def get_events(ticker, sinal_key, session, forward_days, bdays_series):
                 rel_ant = relatorios[i - 1]
                 pl_t = rel.patrimonio_liq
                 pl_ant = rel_ant.patrimonio_liq
-                cotas_t = rel.cotas_emitidas
-                cotas_ant = rel_ant.cotas_emitidas
+                cotas_t = _cotas(rel)
+                cotas_ant = _cotas(rel_ant)
                 if all(x is not None for x in [pl_t, pl_ant, cotas_t, cotas_ant]):
                     # sem emissão significativa (< 1% de crescimento de cotas)
                     crescimento_cotas = (float(cotas_t) - float(cotas_ant)) / float(cotas_ant) if float(cotas_ant) > 0 else 0
@@ -103,9 +115,9 @@ def get_events(ticker, sinal_key, session, forward_days, bdays_series):
         elif sinal_key == "emissao_cotas":
             if i >= 1:
                 rel_ant = relatorios[i - 1]
-                if rel.cotas_emitidas is not None and rel_ant.cotas_emitidas is not None:
-                    crescimento = (float(rel.cotas_emitidas) - float(rel_ant.cotas_emitidas)) / float(rel_ant.cotas_emitidas)
-                    is_event = crescimento > 0.02
+                c_t, c_ant = _cotas(rel), _cotas(rel_ant)
+                if c_t is not None and c_ant is not None and c_ant > 0:
+                    is_event = (c_t - c_ant) / c_ant > 0.02
 
         if is_event:
             eventos.append(trading_date)
@@ -139,6 +151,20 @@ def calculate_car(ticker, events, forward_days, session, info_callback=None):
 
     if not precos_rows:
         return pd.DataFrame(), pd.DataFrame()
+
+    # Retorno total so valido a partir de INICIO_RETORNO_TOTAL: eventos anteriores
+    # medem retorno de preco e sao excluidos (a janela de estimacao [-200,-20] de
+    # eventos logo apos o inicio ainda contem retornos de preco — limitacao conhecida).
+    inicio_rt = ca.get_inicio_retorno_total(session)
+    if inicio_rt is not None:
+        n_ev = len(events)
+        events = [e for e in events if pd.Timestamp(e) >= pd.Timestamp(inicio_rt)]
+        if len(events) < n_ev:
+            msg = (f"{ticker}: {n_ev - len(events)} de {n_ev} eventos anteriores a {inicio_rt} "
+                   "excluidos (retorno de preco, nao total).")
+            logger.info(msg)
+            if info_callback:
+                info_callback(msg)
 
     df_p = pd.DataFrame(precos_rows, columns=["data", "fechamento_aj"])
     df_p["fechamento_aj"] = df_p["fechamento_aj"].astype(float)

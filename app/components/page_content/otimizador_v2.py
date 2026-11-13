@@ -6,9 +6,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.components.carteira_ui import load_tickers_ativos
+from app.components.carteira_ui import load_tickers_modelo
 from src.fii_analysis.data.database import get_session_ctx
 from src.fii_analysis.models.threshold_optimizer_v2 import ThresholdOptimizerV2
+
+try:
+    from src.fii_analysis.models.teste_excesso import N_MIN_TESTE
+except ImportError:
+    N_MIN_TESTE = 5
 
 STRATEGY_COLOR = "#2ca02c"
 HOLD_COLOR = "#7f7f7f"
@@ -31,7 +36,7 @@ Diferencial vs V1:
 - Custos de transacao modelados
 - Analise por regime de mercado
 
-**Nao e recomendacao de investimento.** Modelo experimental com poucos eventos.
+**Nao e recomendacao de investimento.** Modelo experimental com poucos eventos; em estudo em painel nenhum indicador mostrou poder de prever retorno.
 """
 
 
@@ -47,7 +52,7 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
         "Forward return em janela fixa de 20 pregões."
     )
 
-    tickers = load_tickers_ativos()
+    tickers = load_tickers_modelo()
     ticker = st.selectbox("Selecione o Ticker", tickers, key=f"{key_prefix}_ticker")
 
     run_key = f"optv2_{ticker}"
@@ -112,12 +117,34 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             if p < 0.05: return "p<0.05"
             return "ns"
 
+        def _fmt_p(p, n_indep):
+            """p so existe com n independente >= minimo; senao n/d (nao '1.000 ns')."""
+            if p is None or (n_indep or 0) < N_MIN_TESTE:
+                return f"n/d (n < {N_MIN_TESTE})"
+            return f"{p:.3f} {_sig(p)}"
+
+        def _deriva_excesso(score, lado):
+            """(deriva, excesso) do lado BUY/SELL; deriva = media_indep - excesso se nao vier pronta."""
+            exc = score.get(f"{lado}_excess_vs_market_independent")
+            media = score.get(f"avg_return_{lado}_independent")
+            deriva = score.get("deriva")
+            if deriva is None and exc is not None and media is not None:
+                deriva = media - exc
+            return deriva, exc
+
+        def _txt_de(score, lado):
+            d, e = _deriva_excesso(score, lado)
+            if d is None or e is None:
+                return ""
+            return f"deriva={d*100:+.2f}% | excesso={e*100:+.2f}% | "
+
         def _render_split(score, label, n_obs, color_fn):
             color_fn(f"**{label}** ({n_obs} pregoes)")
             st.metric("BUY", f"{score['avg_return_buy']*100:.2f}%")
             degen_buy = score.get("buy_se_degenerate", False)
             st.caption(
-                f"p={score['p_value_buy']:.3f} {_sig(score['p_value_buy'])} | "
+                f"p(excesso>0)={_fmt_p(score.get('p_value_buy'), score.get('n_buy_thinned', 0))} | "
+                f"{_txt_de(score, 'buy')}"
                 f"media_indep={score.get('avg_return_buy_independent', 0)*100:+.2f}% | "
                 f"n_bruto={score['n_buy']} | n_indep={score.get('n_buy_thinned', 0)}"
                 + (" SE=0" if degen_buy else "")
@@ -125,9 +152,9 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             st.metric("SELL", f"{score['avg_return_sell']*100:.2f}%")
             degen_sell = score.get("sell_se_degenerate", False)
             st.caption(
-                f"p={score['p_value_sell']:.3f} {_sig(score['p_value_sell'])} "
-                f"| excesso_indep={score.get('sell_excess_vs_market_independent', 0)*100:+.2f}% "
-                f"| n_bruto={score['n_sell']} | n_indep={score.get('n_sell_thinned', 0)}"
+                f"p(excesso<0)={_fmt_p(score.get('p_value_sell'), score.get('n_sell_thinned', 0))} | "
+                f"{_txt_de(score, 'sell')}"
+                f"n_bruto={score['n_sell']} | n_indep={score.get('n_sell_thinned', 0)}"
                 + (" SE=0" if degen_sell else "")
             )
             if degen_buy or degen_sell:
@@ -140,22 +167,22 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             _render_split(result["val_score"], "VALIDACAO", n_splits["val"], st.success)
 
         with col_ts:
-            n_comb = result.get("n_combinations", 1)
             pb_raw = test_result['p_value_buy']
-            pb_bon = min(1.0, pb_raw * n_comb)
             st.warning(f"**TESTE** ({n_splits['test']} pregoes)")
             degen_buy_t = test_result.get("buy_se_degenerate", False)
             degen_sell_t = test_result.get("sell_se_degenerate", False)
             st.metric("BUY", f"{test_result['avg_return_buy']*100:.2f}%")
             st.caption(
-                f"p={pb_raw:.3f} | Bonf={pb_bon:.3f} {_sig(pb_bon)} | "
+                f"p(excesso>0)={_fmt_p(pb_raw, test_result.get('n_buy_thinned', 0))} | "
+                f"{_txt_de(test_result, 'buy')}"
                 f"media_indep={test_result.get('avg_return_buy_independent', 0)*100:+.2f}% | "
                 f"n_bruto={test_result['n_buy']} | n_indep={test_result.get('n_buy_thinned', 0)}"
                 + (" SE=0" if degen_buy_t else "")
             )
             st.metric("SELL", f"{test_result['avg_return_sell']*100:.2f}%")
             st.caption(
-                f"Excesso vs mercado (indep): {test_result.get('sell_excess_vs_market_independent', 0)*100:+.2f}% | "
+                f"p(excesso<0)={_fmt_p(test_result.get('p_value_sell'), test_result.get('n_sell_thinned', 0))} | "
+                f"{_txt_de(test_result, 'sell')}"
                 f"n_bruto={test_result['n_sell']} | n_indep={test_result.get('n_sell_thinned', 0)}"
                 + (" SE=0" if degen_sell_t else "")
             )
@@ -378,9 +405,9 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
             st.markdown("---")
             st.caption("""
             **Como interpretar:**
-            - **Excesso positivo em Desconto** = sinal BUY funciona melhor quando o mercado esta barato — esperado.
-            - **Excesso positivo em Premio** = sinal BUY funciona mesmo quando mercado esta caro — sinal robusto.
-            - **Excesso negativo em qualquer regime** = sinal nao tem vantagem nesse cenario.
+            - **Excesso positivo em Desconto** = retorno BUY acima da deriva quando o P/VP esta abaixo da mediana (descritivo, n pequeno).
+            - **Excesso positivo em Premio** = retorno BUY acima da deriva mesmo com P/VP acima da mediana (descritivo, n pequeno).
+            - **Excesso negativo em qualquer regime** = retorno BUY abaixo da deriva nesse cenario.
             - Regime definido pelo nivel P/VP (variavel de valuation ex-ante), **nao por retornos futuros**.
             """)
 
@@ -497,7 +524,7 @@ def render(*, key_prefix: str = "optv2", show_sidebar_note: bool = True) -> None
                 with c2:
                     st.metric("Retorno Buy & Hold", f"{ret_hold*100:+.2f}%")
                 with c3:
-                    st.metric("Excesso (Alpha)", f"{alpha:+.2f}%", delta=f"{alpha:+.2f}%")
+                    st.metric("Excesso vs Buy & Hold", f"{alpha:+.2f}%", delta=f"{alpha:+.2f}%")
 
                 st.info(SIMULATION_INFO)
 

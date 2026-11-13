@@ -22,8 +22,8 @@ from src.fii_analysis.decision.decision_journal import registrar_decisao, calcul
 
 def test_daily_diff(db_session: Session):
     # 1. Inserir runs
-    dt_ant = date(2024, 1, 1)
-    dt_act = date(2024, 1, 2)
+    dt_ant = date(2024, 1, 2)  # pregoes consecutivos reais (01/01 e feriado)
+    dt_act = date(2024, 1, 3)
     
     run_ant = SnapshotRun(
         id=1,
@@ -137,7 +137,7 @@ def test_daily_diff(db_session: Session):
 
 def test_decision_journal_registration(db_session: Session):
     t_date = date(2024, 6, 1)
-    dec = registrar_decisao(
+    dec, avisos = registrar_decisao(
         session=db_session,
         tipo="ROTACAO",
         ticker_vendido="MOCK12",
@@ -149,6 +149,7 @@ def test_decision_journal_registration(db_session: Session):
         data=t_date,
     )
 
+    assert avisos == []
     assert dec.id is not None
     
     # Buscar da base

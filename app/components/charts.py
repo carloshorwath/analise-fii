@@ -195,6 +195,7 @@ def composicao_pie(comp: dict, ticker: str) -> go.Figure:
     values = []
     _COLORS = {
         "Imoveis": "#636efa",
+        "Part. em sociedades imob.": "#19d3f3",
         "Recebiveis (Titulos)": "#ef553b",
         "Caixa e Liquidez": "#00cc96",
         "Outros Invest.": "#ffa15a",
@@ -203,6 +204,7 @@ def composicao_pie(comp: dict, ticker: str) -> go.Figure:
     }
     _fields = [
         ("pct_imoveis", "Imoveis"),
+        ("pct_sociedades_imobiliarias", "Part. em sociedades imob."),
         ("pct_recebiveis", "Recebiveis (Titulos)"),
         ("pct_caixa", "Caixa e Liquidez"),
         ("pct_investimentos", "Outros Invest."),
@@ -274,8 +276,8 @@ def radar_heatmap(df: pd.DataFrame) -> go.Figure:
     if df.empty:
         return go.Figure()
 
-    cols = ["pvp_baixo", "dy_gap_alto", "saude_ok", "liquidez_ok"]
-    labels = ["P/VP ↓", "DY Gap ↑", "Saúde", "Liquidez"]
+    cols = ["pvp_baixo", "saude_ok", "liquidez_ok", "dy_gap_alto"]
+    labels = ["P/VP ↓", "Saúde", "Liquidez", "Regime: DY Gap ↑"]
 
     # Texto ✓/✗ legível em vez de 0/1
     z_vals = df[cols].astype(int).values.tolist()
